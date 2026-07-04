@@ -121,10 +121,11 @@ StrongBox/SE 실키 경로, biometric userAuth 바인딩, key attestation 체인
 | **M1 키·저장** | keystore(SecureArea 추상화, attestation, userAuth), credential-store(암호화 envelope) | 2–3주 (M0 후반과 병렬) | 키 생성→서명→attestation 검증 E2E |
 | **M2 SD-JWT VC + VCI 발급** | RFC 9901 구현, VCI(HAIP 서브셋: PAR, DPoP, proof jwt, batch, wallet attestation) | 4–6주 | EUDI ref issuer(issuer.eudiw.dev)에서 PID(SD-JWT VC) 발급 성공 |
 | **M3 OpenID4VP 원격 제시** | DCQL 엔진(null/values 매칭 처음부터 스펙대로), JAR, x509_san_dns, direct_post.jwt, KB-JWT, transaction_data | 4–6주 | EUDI ref verifier(verifier.eudiw.dev)와 E2E + OIDF conformance suite VP 통과 |
-| **M4 mdoc** | format-mdoc 전체, VCI로 mdoc 발급 수령, VP에서 mdoc 제시(SessionTranscript/Handover) | 4–6주 | PID 양포맷 + mDL 발급·제시 — **"eIDAS 원격 플로우 코어 완성" 마일스톤** |
+| **M4 mdoc** | format-mdoc 전체, VCI로 mdoc 발급 수령, VP에서 mdoc 제시(SessionTranscript/Handover — DC API Handover 변형 포함) | 4–6주 | PID 양포맷 + mDL 발급·제시 — **"eIDAS 원격 플로우 코어 완성" 마일스톤** |
 | **M5 근접 제시** | 18013-5: engagement(QR/NFC), BLE, session encryption. 실기기 인터롭 매트릭스 | 4–8주 | EUDI ref 앱·상용 reader와 실기기 교차 검증 |
+| **M5b DC API** | Android: CredMan registry 등록 + Intent ingress 어댑터, OpenID4VP-over-DC-API 응답 경로. iOS: IdentityDocumentServices(iOS 26+) 익스텐션 어댑터. 코어는 M4의 Handover 변형 재사용 | 3–4주 (M5와 병렬 가능) | Chrome/Android 데모 verifier와 DC API E2E |
 | **M6 Trust·상태·하드닝** | trust 모듈(LOTL, RP 인증), status list, 트랜잭션 로그, 삭제/백업 정책, 보안 감사 준비, 문서화 | 4–6주 | 외부 보안 리뷰 + 고객 인증 지원 문서 패키지 |
-| **M7+** | DC API(CredMan registry는 조기 가능), ZKP(longfellow 동향 관망), remote WSCD, TS/RN 바인딩 레이어, 월렛 프로바이더 백엔드(WUA 발급 서비스) 레퍼런스 구현, 타 시장 프로파일 | — | — |
+| **M7+** | ZKP(longfellow 동향 관망), remote WSCD, TS/RN 바인딩 레이어, 월렛 프로바이더 백엔드(WUA 발급 서비스) 레퍼런스 구현, 타 시장 프로파일 | — | — |
 
 대략 M0–M4 ≈ 4–5개월(원격 플로우 완성), M5–M6 +2–3개월. 리스크 최대 구간은 M4–M5(mdoc 바이트 정합성 + BLE 기기 파편화).
 

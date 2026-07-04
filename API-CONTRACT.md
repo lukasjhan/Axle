@@ -156,7 +156,7 @@ public final class Wallet {
 ```
 
 - 멀티 인스턴스 허용 (글로벌 상태 전무). `close()`는 멱등.
-- `WalletConfig`: 불변. `TrustConfig(readerRoots, issuerRoots, readerAuthPolicy)`, `IssuanceConfig(clientAuth: None(clientId)|AttestationBased, redirectUri, par: Required|IfSupported|Never = Required, dpop: … = Required)`, `PresentationConfig(clientIdPrefixes = [x509SanDns, x509Hash, redirectUri], responseEncryption, allowPartialDisclosure = false)`, `ProximityConfig(bleRole = Peripheral, …)`. HAIP 기본값(PAR·DPoP Required)이 디폴트.
+- `WalletConfig`: 불변. `TrustConfig(readerRoots, issuerRoots, readerAuthPolicy)`, `IssuanceConfig(clientAuth: None(clientId)|AttestationBased, redirectUri, par: Required|IfSupported|Never = Required, dpop: … = Required)`, `PresentationConfig(clientIdPrefixes = [x509SanDns, x509Hash, redirectUri], responseEncryption)`, `ProximityConfig(bleRole = Peripheral, …)`. HAIP 기본값(PAR·DPoP Required)이 디폴트.
 
 ## 6. 플로우 API
 
@@ -235,8 +235,10 @@ class PresentationRequest {
     val transactionData: List<TransactionData>?
 }
 
-class PresentationSelection {  // queryId → (credentialId, 공개할 claim 경로들)
-    // allowPartialDisclosure=false면 requestedClaims 전체가 강제되고 claim 서브셋 API는 무시됨
+class PresentationSelection {  // queryId → 선택한 credentialId (+ optional 쿼리 제외)
+    // claim 단위 부분 제출 없음: DCQL이 요구한 claim은 전부 공개하거나 해당 쿼리를 거절하거나 둘 중 하나.
+    // 요청 항목의 선택성은 verifier가 claim_sets/credential_sets로 표현하는 것이 스펙의 방식이며 그쪽을 지원.
+    // (18013-5 근접은 프로토콜에 부분 응답(문서별 errors 구조)이 있으므로 근접 한정 재검토는 M5에서)
 }
 ```
 
@@ -335,7 +337,7 @@ sealed class WalletError : Exception() {
     sealed class Issuance : WalletError()     // InvalidOffer, IssuerUnreachable, AuthorizationFailed(oauthError),
                                               // CredentialRequestFailed(vciError), DeferredNotReady, TxCodeInvalid ...
     sealed class Presentation : WalletError() // InvalidRequest, VerifierNotTrusted(policy, chain), QueryNotSatisfiable(missing),
-                                              // ResponseRejected(vpError), TransactionDataUnsupported ...
+                                              // SelectionIncomplete(missingClaims), ResponseRejected(vpError), TransactionDataUnsupported ...
     sealed class Proximity : WalletError()    // ChannelUnavailable(reason), SessionEncryptionFailed, ReaderAuthFailed ...
     sealed class Credential : WalletError()   // NotFound, KeyInvalidated, NoUsableInstance(exhausted one-time keys) ...
     sealed class Key : WalletError()          // UserAuthDenied, UserAuthCanceled, HardwareUnavailable ...
@@ -357,7 +359,7 @@ sealed class WalletError : Exception() {
 ## 10. 오픈 퀘스천 (리뷰 시 결정)
 
 1. ~~네이밍/패키지~~ → **확정 (2026-07-04)**: 제품명 **EUDI Wallet SDK**. Kotlin 패키지 `com.hopae.eudi.wallet`, Swift 모듈 `EudiWalletSDK`, 파사드 타입은 `Wallet`(패키지/모듈이 구분자 — ref 구현의 `EudiWallet` 클래스명과 충돌 회피). 아티팩트: `eudi-wallet-sdk-core` / `-android` / `-apple`.
-2. **`allowPartialDisclosure` 기본값**: EUDI는 iOS만 기본 허용 옵션 보유. v0 기본 false(스펙 보수적)로 뒀는데 UX 요구 확인 필요.
+2. ~~`allowPartialDisclosure`~~ → **확정 (2026-07-04): 드랍.** 부분 제출은 DCQL 의미론상 쿼리 불만족 → verifier가 거절하는 게 정상이라 기능 가치가 없음. 요청 항목의 선택성은 verifier가 `claim_sets`/`credential_sets`로 표현하는 게 스펙의 방식이고 그쪽을 온전히 지원. 사용자가 필수 claim을 빼려 하면 조용히 미제출(Android ref 앱의 동작)이 아니라 `SelectionIncomplete` 타입드 에러로 명시 피드백.
 3. **Android 생체 프롬프트 플러밍**: 어댑터 `ActivityProvider` 방식 vs 앱 콜백 방식 — 어댑터 설계 시 결정.
 4. **`events`/트랜잭션 로그의 영속 책임**: 코어가 StorageDriver에 저장 vs 앱이 Flow 구독해 자체 저장. v0: 코어 저장 + 조회 API 제공 쪽으로 기울어 있음 (ARF 요구 충족을 SDK가 보장).
-5. **DC API**: 플랫폼 종속은 등록/ingress(Android CredentialManager registry, iOS 26 IdentityDocumentServices 익스텐션)에 국한 — 요청 파싱·DCQL 매칭·응답 생성은 코어 openid4vp 엔진 재사용(DC API Handover용 SessionTranscript 변형만 추가). 어댑터 API 표면은 M7 설계 시, Android 선행 가능.
+5. ~~DC API~~ → **확정 (2026-07-04): 정식 스코프 편입 (플랜 M5b).** 플랫폼 종속은 등록/ingress(Android CredentialManager registry, iOS 26 IdentityDocumentServices 익스텐션)에 국한 — 요청 파싱·DCQL 매칭·응답 생성은 코어 openid4vp 엔진 재사용, DC API Handover용 SessionTranscript 변형은 M4에서 구현. Android 어댑터 선행.
