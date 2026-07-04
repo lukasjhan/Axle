@@ -24,7 +24,7 @@ class VerifierInfo(
  * the `trust` module (X.509 lives there); the resolver stays platform-neutral.
  */
 interface RequestTrustVerifier {
-    fun verifyRequestObject(jws: Jws, clientId: String, scheme: String): VerifierInfo
+    suspend fun verifyRequestObject(jws: Jws, clientId: String, scheme: String): VerifierInfo
 }
 
 class ResolvedRequest(
@@ -86,7 +86,7 @@ class AuthorizationRequestResolver(
         )
     }
 
-    private fun verifySigned(jwt: String, clientId: String, scheme: String): Pair<JsonValue.Obj, VerifierInfo> {
+    private suspend fun verifySigned(jwt: String, clientId: String, scheme: String): Pair<JsonValue.Obj, VerifierInfo> {
         val jws = Jws.parse(jwt)
         val claims = JsonValue.parse(jws.payloadBytes.decodeToString()) as? JsonValue.Obj
             ?: throw VpException.InvalidRequest("request object payload must be JSON")

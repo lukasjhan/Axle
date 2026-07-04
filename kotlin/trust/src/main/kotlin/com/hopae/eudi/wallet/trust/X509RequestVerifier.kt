@@ -15,7 +15,7 @@ import com.hopae.eudi.wallet.vp.VpException
  */
 class X509RequestVerifier(private val validator: X509ChainValidator) : RequestTrustVerifier {
 
-    override fun verifyRequestObject(jws: Jws, clientId: String, scheme: String): VerifierInfo {
+    override suspend fun verifyRequestObject(jws: Jws, clientId: String, scheme: String): VerifierInfo {
         val x5c = jws.x5c ?: throw VpException.VerifierNotTrusted("x509 request without x5c")
         val chain = validator.validate(x5c) // throws if chain is not trusted
         val leaf = chain.first()

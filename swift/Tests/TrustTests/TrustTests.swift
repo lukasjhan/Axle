@@ -87,6 +87,27 @@ final class TrustTests: XCTestCase {
         XCTAssertEqual(1, chain.count)
     }
 
+    func testDynamicAnchorSourceRefreshes() async throws {
+        // Source trusts only a rogue CA, then updates to the real one — the validator picks up
+        // the new anchors on the next validate() with no rebuild.
+        let realCa = try makeCa("Real CA")
+        let rogueCa = try makeCa("Rogue CA")
+        let leaf = try makeLeaf(realCa, cn: "Leaf")
+
+        final class MutableSource: TrustAnchorSource, @unchecked Sendable {
+            var current: TrustAnchors
+            init(_ a: TrustAnchors) { current = a }
+            func anchors() async -> TrustAnchors { current }
+        }
+        let source = MutableSource(TrustAnchors(roots: [rogueCa.certificate]))
+        let validator = X509ChainValidator(anchorSource: source, validationTime: validAt)
+
+        do { _ = try await validator.validate([try leaf.der]); XCTFail("rogue-only should reject") } catch is TrustError {}
+        source.current = TrustAnchors(roots: [realCa.certificate])          // trust list "refreshes"
+        let chain = try await validator.validate([try leaf.der])            // now trusted
+        XCTAssertEqual(1, chain.count)
+    }
+
     func testUntrustedCaRejected() async throws {
         let ca = try makeCa("Real CA")
         let rogue = try makeCa("Rogue CA")

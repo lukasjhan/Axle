@@ -29,7 +29,7 @@
 | 갭 | 필요 시점 | 상태 |
 |---|---|---|
 | **JWE** (ECDH-ES + A128/256GCM — VP 응답 암호화 direct_post.jwt) | **M3 필수 경로** | 계획됨 |
-| Trust list(LOTL/ETSI TS 119 612) 자동 소비, CRL/OCSP 실효성 검사 | M6 하드닝 | 계획됨 (현재는 신뢰앵커를 호스트가 주입, 체인 검증만) |
+| Trust list(LOTL/ETSI TS 119 612) 자동 소비 provider, CRL/OCSP 실효성 검사 | M6 하드닝 | **Level 1(동적 앵커 소스) 완료 (2026-07-04)** — X509ChainValidator가 `TrustAnchorSource`(suspend/async)를 validate마다 조회, 런타임 앵커 교체·갱신 가능. **Level 2(LOTL 서명검증+캐시+TTL 갱신 provider) + CRL/OCSP는 M6** |
 | **mdoc DCQL claim path 규칙** (M4) | M4 (mdoc 포맷과) | 계획됨. mso_mdoc claim path는 **앞 두 요소가 반드시 문자열**(namespace + element_id). base 스펙은 정확히 2, 그러나 **Lukas의 릴렉스(`>=2`, upstream iOS 머지)를 채택** — 세 번째부터는 element의 구조화된 값 안으로 들어가는 index/**null 와일드카드**/values 허용(null-match 기능의 본질). `intent_to_retain`은 mdoc 전용. 현행 DcqlEngine 경로 해석기는 이미 >=2·와일드카드를 지원하므로, M4에선 mso_mdoc 쿼리에 "앞 둘=문자열" 검증만 추가하면 됨 |
 | VCI deferred(transaction_id 폴링), batch(>1 proof), notification 엔드포인트 | 실전 심화 | 계획됨 (auth code·PAR·PKCE·DPoP는 ✅ 라이브 검증) |
 | VCI 전체 발급까지 라이브 E2E (브라우저 인증 필요) | 실기기/앱 통합 | 헤드리스 불가 — 실 PAR 왕복까지 검증, 이후 단계는 하네스 앱에서 |

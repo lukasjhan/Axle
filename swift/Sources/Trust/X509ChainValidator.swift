@@ -16,20 +16,41 @@ public struct TrustAnchors {
     }
 }
 
-/// Validates an X.509 chain (leaf-first, excluding the anchor) to a configured `TrustAnchors`
-/// via swift-certificates' `Verifier` with the RFC 5280 policy.
+/// Supplies the current trust anchors at validation time (Level 1 dynamic trust). A static set
+/// is `FixedAnchorSource`; a Level 2 LOTL provider (M6) would cache a signed trust list and
+/// refresh it on a TTL, so anchors update without rebuilding the validator.
+public protocol TrustAnchorSource: Sendable {
+    func anchors() async throws -> TrustAnchors
+}
+
+/// A fixed anchor set — the common case (host injects a known list).
+public struct FixedAnchorSource: TrustAnchorSource {
+    private let value: TrustAnchors
+    public init(_ value: TrustAnchors) { self.value = value }
+    public func anchors() async -> TrustAnchors { value }
+}
+
+/// Validates an X.509 chain (leaf-first, excluding the anchor) to the anchors from a
+/// `TrustAnchorSource` via swift-certificates' `Verifier` with the RFC 5280 policy. The source
+/// is consulted per validation, so a dynamic (cached, TTL-refreshed) trust list plugs in.
 public struct X509ChainValidator {
-    private let anchors: TrustAnchors
+    private let anchorSource: any TrustAnchorSource
     private let validationTime: Date
 
-    public init(anchors: TrustAnchors, validationTime: Date = Date()) {
-        self.anchors = anchors
+    public init(anchorSource: any TrustAnchorSource, validationTime: Date = Date()) {
+        self.anchorSource = anchorSource
         self.validationTime = validationTime
     }
 
-    /// Returns the parsed chain (leaf first) if it validates to an anchor, else throws.
+    /// Convenience for the static case — validate against a fixed anchor set.
+    public init(anchors: TrustAnchors, validationTime: Date = Date()) {
+        self.init(anchorSource: FixedAnchorSource(anchors), validationTime: validationTime)
+    }
+
+    /// Returns the parsed chain (leaf first) if it validates to a current anchor, else throws.
     public func validate(_ chainDer: [[UInt8]]) async throws -> [Certificate] {
         guard let leafDer = chainDer.first else { throw TrustError("empty certificate chain") }
+        let anchors = try await anchorSource.anchors()
         let leaf = try X509Support.parse(leafDer)
         let intermediates = try chainDer.dropFirst().map { try X509Support.parse($0) }
 

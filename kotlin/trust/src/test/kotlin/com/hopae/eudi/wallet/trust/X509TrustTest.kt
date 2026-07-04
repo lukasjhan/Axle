@@ -42,7 +42,7 @@ class X509TrustTest {
     // ---- chain validation ----
 
     @Test
-    fun chainValidatesToAnchor() {
+    fun chainValidatesToAnchor() = runBlocking {
         val ca = TestCerts.makeCa()
         val leaf = TestCerts.makeLeaf(ca, "Leaf")
         val validator = X509ChainValidator(TrustAnchors(listOf(ca.certificate)), at = validAt)
@@ -51,7 +51,7 @@ class X509TrustTest {
     }
 
     @Test
-    fun untrustedCaRejected() {
+    fun untrustedCaRejected(): Unit = runBlocking {
         val ca = TestCerts.makeCa("Real CA")
         val otherCa = TestCerts.makeCa("Rogue CA")
         val leaf = TestCerts.makeLeaf(ca, "Leaf")
@@ -60,17 +60,34 @@ class X509TrustTest {
     }
 
     @Test
-    fun expiredLeafRejected() {
+    fun expiredLeafRejected(): Unit = runBlocking {
         val ca = TestCerts.makeCa()
         val leaf = TestCerts.makeLeaf(ca, "Leaf", notAfter = 1_700_000_000_000L - 1000L) // already expired at validAt
         val validator = X509ChainValidator(TrustAnchors(listOf(ca.certificate)), at = validAt)
         assertFailsWith<TrustException> { validator.validate(listOf(leaf.der)) }
     }
 
+    @Test
+    fun dynamicAnchorSourceRefreshes() = runBlocking {
+        // The source starts trusting only a rogue CA, then updates to the real one — the
+        // validator picks up the new anchors on the next validate() with no rebuild.
+        val realCa = TestCerts.makeCa("Real CA")
+        val rogueCa = TestCerts.makeCa("Rogue CA")
+        val leaf = TestCerts.makeLeaf(realCa, "Leaf")
+
+        var current = TrustAnchors(listOf(rogueCa.certificate))
+        val validator = X509ChainValidator(TrustAnchorSource { current }, at = validAt)
+
+        assertFailsWith<TrustException> { validator.validate(listOf(leaf.der)) } // rogue-only: rejected
+        current = TrustAnchors(listOf(realCa.certificate))                        // trust list "refreshes"
+        val chain = validator.validate(listOf(leaf.der))                          // now trusted
+        assertEquals(leaf.certificate, chain.first())
+    }
+
     // ---- OpenID4VP request verification ----
 
     @Test
-    fun x509SanDnsRequestTrusted() {
+    fun x509SanDnsRequestTrusted() = runBlocking {
         val ca = TestCerts.makeCa()
         val leaf = TestCerts.makeLeaf(ca, "Verifier", dnsName = "verifier.example.com")
         val verifier = X509RequestVerifier(X509ChainValidator(TrustAnchors(listOf(ca.certificate)), at = validAt))
@@ -81,7 +98,7 @@ class X509TrustTest {
     }
 
     @Test
-    fun x509SanDnsMismatchRejected() {
+    fun x509SanDnsMismatchRejected(): Unit = runBlocking {
         val ca = TestCerts.makeCa()
         val leaf = TestCerts.makeLeaf(ca, "Verifier", dnsName = "verifier.example.com")
         val verifier = X509RequestVerifier(X509ChainValidator(TrustAnchors(listOf(ca.certificate)), at = validAt))
@@ -92,7 +109,7 @@ class X509TrustTest {
     }
 
     @Test
-    fun x509HashRequestTrusted() {
+    fun x509HashRequestTrusted() = runBlocking {
         val ca = TestCerts.makeCa()
         val leaf = TestCerts.makeLeaf(ca, "Verifier")
         val validator = X509ChainValidator(TrustAnchors(listOf(ca.certificate)), at = validAt)
@@ -103,7 +120,7 @@ class X509TrustTest {
     }
 
     @Test
-    fun x509HashMismatchRejected() {
+    fun x509HashMismatchRejected(): Unit = runBlocking {
         val ca = TestCerts.makeCa()
         val leaf = TestCerts.makeLeaf(ca, "Verifier")
         val validator = X509ChainValidator(TrustAnchors(listOf(ca.certificate)), at = validAt)
@@ -114,7 +131,7 @@ class X509TrustTest {
     }
 
     @Test
-    fun tamperedRequestSignatureRejected() {
+    fun tamperedRequestSignatureRejected(): Unit = runBlocking {
         val ca = TestCerts.makeCa()
         val leaf = TestCerts.makeLeaf(ca, "Verifier", dnsName = "verifier.example.com")
         val validator = X509ChainValidator(TrustAnchors(listOf(ca.certificate)), at = validAt)
