@@ -3,7 +3,7 @@ import Foundation
 import SdJwt
 
 /// An SD-JWT VC the wallet holds, usable as a DCQL match target and presentable over OpenID4VP.
-public struct HeldSdJwtVc: QueryableCredential {
+public struct HeldSdJwtVc: PresentableCredential {
     public let credentialId: String
     let sdJwt: SdJwt
     let holderSigner: any JwsSigner
@@ -24,23 +24,17 @@ public struct HeldSdJwtVc: QueryableCredential {
         self.claims = try SdJwtHolder.processedClaims(sdJwt)
     }
 
-    /// Selects the `disclosedPaths` disclosures and appends a KB-JWT bound to `audience` + `nonce`.
-    public func present(
-        disclosedPaths: [[String]],
-        audience: String,
-        nonce: String,
-        issuedAt: Int64,
-        transactionData: [String]? = nil
-    ) async throws -> String {
-        let pathSet = Set(disclosedPaths)
+    /// Selects the disclosed disclosures and appends a KB-JWT bound to the verifier client_id + nonce.
+    public func present(_ ctx: PresentationContext) async throws -> String {
+        let pathSet = Set(ctx.disclosedPaths)
         var extra: [(String, JsonValue)] = []
-        if let td = transactionData, !td.isEmpty {
+        if let td = ctx.transactionData, !td.isEmpty {
             extra.append(("transaction_data_hashes", .arr(td.map { .str(sha256B64($0)) })))
             extra.append(("transaction_data_hashes_alg", .str("sha-256")))
         }
         let presented = try await SdJwtHolder.presentWithKeyBinding(
             sdJwt, select: { pathSet.contains($0) },
-            audience: audience, nonce: nonce, issuedAt: issuedAt, signer: holderSigner, extraClaims: extra
+            audience: ctx.clientId, nonce: ctx.nonce, issuedAt: ctx.issuedAt, signer: holderSigner, extraClaims: extra
         )
         return presented.serialize()
     }

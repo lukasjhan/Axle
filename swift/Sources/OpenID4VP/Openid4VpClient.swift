@@ -43,7 +43,7 @@ public struct Openid4VpClient {
         try await resolver.resolve(requestUri)
     }
 
-    public func match(_ request: ResolvedRequest, held: [HeldSdJwtVc]) -> DcqlMatchResult {
+    public func match(_ request: ResolvedRequest, held: [any PresentableCredential]) -> DcqlMatchResult {
         DcqlEngine.match(request.dcqlQuery, held: held)
     }
 
@@ -51,14 +51,17 @@ public struct Openid4VpClient {
         request: ResolvedRequest,
         matches: DcqlMatchResult,
         selection: PresentationSelection,
-        held: [HeldSdJwtVc]
+        held: [any PresentableCredential]
     ) async throws -> SubmitResult {
         let missing = matches.requiredQueryIds.filter { selection.chosen[$0] == nil }
         if !missing.isEmpty { throw VpError.queryNotSatisfiable(missing: Set(missing)) }
 
-        var heldById: [String: HeldSdJwtVc] = [:]
+        var heldById: [String: any PresentableCredential] = [:]
         for h in held { heldById[h.credentialId] = h }
         let iat = clock()
+        // For encrypted responses the mdoc OpenID4VP handover binds the verifier's encryption key.
+        let jwkThumbprint: [UInt8]? = request.responseMode == "direct_post.jwt"
+            ? verifierEncryptionKey(request).map { ecJwkThumbprint($0) } : nil
 
         var vpEntries: [(String, JsonValue)] = []
         for (queryId, credentialId) in selection.chosen {
@@ -68,11 +71,11 @@ public struct Openid4VpClient {
             guard let cred = heldById[credentialId] else {
                 throw VpError.selectionIncomplete("unknown credential \(credentialId)")
             }
-            let presentation = try await cred.present(
+            let presentation = try await cred.present(PresentationContext(
                 disclosedPaths: candidate.disclosedPaths,
-                audience: request.clientId, nonce: request.nonce, issuedAt: iat,
-                transactionData: request.transactionData
-            )
+                clientId: request.clientId, nonce: request.nonce, responseUri: request.responseUri,
+                issuedAt: iat, transactionData: request.transactionData, verifierJwkThumbprint: jwkThumbprint
+            ))
             vpEntries.append((queryId, .arr([.str(presentation)])))
         }
         let vpToken = JsonValue.obj(vpEntries)
