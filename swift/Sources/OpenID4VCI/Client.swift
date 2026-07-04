@@ -142,14 +142,44 @@ public struct Openid4VciClient {
         keys: IssuanceKeys
     ) async throws -> CredentialResponse {
         let dpop = DpopProver(signer: keys.dpopSigner, publicKey: keys.dpopPublicKey, rng: rng, now: clock)
+        let token = try await exchangeCode(
+            prepared.asMetadata, authorizationCode, prepared.redirectUri, prepared.pkce.codeVerifier, dpop
+        )
+        return try await requestCredential(prepared.issuerMetadata, prepared.configurationId, token, dpop, keys)
+    }
+
+    /// Stateless variant of `finishAuthorizationCodeIssuance`: a host that persisted only the
+    /// `code_verifier` + `redirect_uri` across the browser redirect (rather than the whole
+    /// `PreparedAuthorization`) reloads metadata and completes issuance here.
+    public func exchangeAuthorizationCode(
+        credentialIssuer: String,
+        configurationId: String,
+        authorizationCode: String,
+        redirectUri: String,
+        codeVerifier: String,
+        keys: IssuanceKeys
+    ) async throws -> CredentialResponse {
+        let issuerMeta = try await loadIssuerMetadata(credentialIssuer)
+        let asMeta = try await loadAuthorizationServerMetadata(issuerMeta.authorizationServers[0])
+        let dpop = DpopProver(signer: keys.dpopSigner, publicKey: keys.dpopPublicKey, rng: rng, now: clock)
+        let token = try await exchangeCode(asMeta, authorizationCode, redirectUri, codeVerifier, dpop)
+        return try await requestCredential(issuerMeta, configurationId, token, dpop, keys)
+    }
+
+    private func exchangeCode(
+        _ asMeta: AuthorizationServerMetadata,
+        _ authorizationCode: String,
+        _ redirectUri: String,
+        _ codeVerifier: String,
+        _ dpop: DpopProver
+    ) async throws -> TokenResponse {
         var form = "grant_type=\(enc("authorization_code"))"
         form += "&code=\(enc(authorizationCode))"
-        form += "&redirect_uri=\(enc(prepared.redirectUri))"
-        form += "&code_verifier=\(enc(prepared.pkce.codeVerifier))"
+        form += "&redirect_uri=\(enc(redirectUri))"
+        form += "&code_verifier=\(enc(codeVerifier))"
         form += "&client_id=\(enc(clientId))"
-        let tokenResp = try await postFormWithDpop(prepared.asMetadata.tokenEndpoint, form: form, dpop: dpop, accessToken: nil)
-        let token = try TokenResponse.fromObj(try parseObj(tokenResp, "token response"))
-        return try await requestCredential(prepared.issuerMetadata, prepared.configurationId, token, dpop, keys)
+        let tokenResp = try await postFormWithDpop(asMeta.tokenEndpoint, form: form, dpop: dpop, accessToken: nil)
+        return try TokenResponse.fromObj(try parseObj(tokenResp, "token response"))
     }
 
     /// Runs the full pre-authorized code flow and returns the issued credential(s).

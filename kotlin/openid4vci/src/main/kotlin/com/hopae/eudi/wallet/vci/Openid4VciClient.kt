@@ -142,21 +142,49 @@ class Openid4VciClient(
         authorizationCode: String,
         keys: IssuanceKeys,
     ): CredentialResponse {
-        val issuerMeta = prepared.issuerMetadata
-        val asMeta = prepared.asMetadata
         val dpop = DpopProver(keys.dpopSigner, keys.dpopPublicKey, rng, clock)
+        val token = exchangeCode(
+            prepared.asMetadata, authorizationCode, prepared.redirectUri, prepared.pkce.codeVerifier, dpop,
+        )
+        return requestCredential(prepared.issuerMetadata, prepared.configurationId, token, dpop, keys)
+    }
 
+    /**
+     * Stateless variant of [finishAuthorizationCodeIssuance]: a host that persisted only the
+     * `code_verifier` + `redirect_uri` across the browser redirect (rather than the whole
+     * [PreparedAuthorization]) reloads metadata and completes issuance here.
+     */
+    suspend fun exchangeAuthorizationCode(
+        credentialIssuer: String,
+        configurationId: String,
+        authorizationCode: String,
+        redirectUri: String,
+        codeVerifier: String,
+        keys: IssuanceKeys,
+    ): CredentialResponse {
+        val issuerMeta = loadIssuerMetadata(credentialIssuer)
+        val asMeta = loadAuthorizationServerMetadata(issuerMeta.authorizationServers.first())
+        val dpop = DpopProver(keys.dpopSigner, keys.dpopPublicKey, rng, clock)
+        val token = exchangeCode(asMeta, authorizationCode, redirectUri, codeVerifier, dpop)
+        return requestCredential(issuerMeta, configurationId, token, dpop, keys)
+    }
+
+    private suspend fun exchangeCode(
+        asMeta: AuthorizationServerMetadata,
+        authorizationCode: String,
+        redirectUri: String,
+        codeVerifier: String,
+        dpop: DpopProver,
+    ): TokenResponse {
         val form = buildString {
             append("grant_type=").append(enc("authorization_code"))
             append("&code=").append(enc(authorizationCode))
-            append("&redirect_uri=").append(enc(prepared.redirectUri))
-            append("&code_verifier=").append(enc(prepared.pkce.codeVerifier))
+            append("&redirect_uri=").append(enc(redirectUri))
+            append("&code_verifier=").append(enc(codeVerifier))
             append("&client_id=").append(enc(clientId))
         }
         val tokenResp = postFormWithDpop(asMeta.tokenEndpoint, form, dpop, accessToken = null)
-        val token = TokenResponse.fromObj(parseObj(tokenResp, "token response"))
-
-        return requestCredential(issuerMeta, prepared.configurationId, token, dpop, keys)
+        return TokenResponse.fromObj(parseObj(tokenResp, "token response"))
     }
 
     /**
