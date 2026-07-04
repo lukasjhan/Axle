@@ -84,6 +84,7 @@ let package = Package(
         .testTarget(name: "StatusListTests", dependencies: ["StatusList", "WalletTestKit"]),
         .testTarget(name: "TransactionLogTests", dependencies: ["TransactionLog"]),
         .testTarget(name: "ProximityTests", dependencies: ["Proximity", "MDoc", "WalletTestKit"]),
+        .testTarget(name: "GoldenTests", dependencies: ["SdJwt", "CborCose"]),
         .testTarget(
             name: "TrustTests",
             dependencies: ["Trust", "WalletTestKit", .product(name: "X509", package: "swift-certificates")],
