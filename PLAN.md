@@ -118,7 +118,7 @@ StrongBox/SE 실키 경로, biometric userAuth 바인딩, key attestation 체인
 | 단계 | 내용 | 규모 | 완료 기준 |
 |---|---|---|---|
 | **M0 파운데이션** | API 계약 v0 (EudiWallet/wallet-kit API keep-change-drop 분석 기반), 레포/CI(Ubuntu 게이트), 포트 인터페이스 확정, 스펙 버전 매트릭스, cbor-cose 모듈 + 골든 벡터 | 2–3주 | Ubuntu CI에서 양 언어 코어 테스트 그린 + RFC 8949/9052 벡터 100% 통과 |
-| **M1 키·저장** | keystore(SecureArea 추상화, attestation, userAuth), credential-store(암호화 envelope) | 2–3주 (M0 후반과 병렬) | 키 생성→서명→attestation 검증 E2E |
+| **M1 키·저장** | keystore(SecureArea 추상화, attestation, userAuth), credential-store(암호화 envelope) — **코어 완료 (2026-07-04)**: SoftwareSecureArea(3커브) + 포트 계약 스위트 + SecureArea×COSE E2E + credential-store(엔벨로프 CBOR v1 크로스언어 골든, OneTime/Rotate 소비). 하드웨어 어댑터(Keystore/SE)와 attestation E2E는 플랫폼 아티팩트 단계에서 | 2–3주 (M0 후반과 병렬) | 키 생성→서명→attestation 검증 E2E |
 | **M2 SD-JWT VC + VCI 발급** | RFC 9901 구현, VCI(HAIP 서브셋: PAR, DPoP, proof jwt, batch, wallet attestation) | 4–6주 | EUDI ref issuer(issuer.eudiw.dev)에서 PID(SD-JWT VC) 발급 성공 |
 | **M3 OpenID4VP 원격 제시** | DCQL 엔진(null/values 매칭 처음부터 스펙대로), JAR, x509_san_dns, direct_post.jwt, KB-JWT, transaction_data | 4–6주 | EUDI ref verifier(verifier.eudiw.dev)와 E2E + OIDF conformance suite VP 통과 |
 | **M4 mdoc** | format-mdoc 전체, VCI로 mdoc 발급 수령, VP에서 mdoc 제시(SessionTranscript/Handover — DC API Handover 변형 포함) | 4–6주 | PID 양포맷 + mDL 발급·제시 — **"eIDAS 원격 플로우 코어 완성" 마일스톤** |
@@ -167,5 +167,6 @@ dependency가 아니므로 ~/eudi-ref 포크들의 용도 재정의:
 2. ~~레포 부트스트랩~~ → **완료 (2026-07-04)**: `~/eudi-wallet-sdk` 생성(git, main 브랜치). 당분간 spec/문서 + 골든 벡터 홈. 플랫폼 레포(`eudi-wallet-sdk-android`/`-ios`) 분리는 코드 스캐폴드 시점에 확정.
 3. ~~cbor-cose 스파이크~~ → **완료 (2026-07-04)**: 양 언어 deterministic CBOR 코어(`kotlin/cbor`, `swift/Sources/CborCose`)가 RFC 8949 Appendix A 공식 코퍼스 통과 — 양 플랫폼 동일 수치(82 디코드 / 59 값비교 / 65 라운드트립) + deterministic 전용 테스트 12종. **리스크 판정: 낮음.** MapKeyOrder는 8949 bytewise 기본 + 7049 length-first 옵션으로 구현해둠(mdoc 인터롭 시 M4에서 핀 고정). 다음 확장: COSE(RFC 9052 Sign1) + 벡터.
 4. ~~COSE Sign1~~ → **완료 (2026-07-04)**: RFC 9052 COSE_Sign1 — 검증은 코어(JCA/swift-crypto), 서명은 `CoseSigner` 추상화(SecureArea 어댑터 자리). cose-wg 공식 벡터(sign-pass-01/02/03 + sign-fail-02) 양 언어 통과, Sig_structure 바이트 일치("Redo protected" h'A0'→h'' 정규화 포함). 포트 SPI도 코드화됨(`kotlin/wallet-api` · `swift/WalletAPI`) — 계약 v0.1 델타 반영.
-5. 다음: **M1 착수** — `SoftwareSecureArea`(testkit) + 포트 계약 테스트 스위트 → credential-store. 스펙 추적은 `SPEC-MATRIX.md`로.
-6. 팀/기간 확정 후 마일스톤 날짜 부여
+5. ~~M1 코어~~ → **완료 (2026-07-04)**: testkit(`SoftwareSecureArea`·`InMemoryStorageDriver`·계약 스위트) + `SecureAreaCoseSigner` E2E(3커브) + credential-store(엔벨로프 스키마 v1, 크로스언어 골든 벡터, OneTime/Rotate `consumeInstance`). 저장 암호화는 StorageDriver 어댑터 소관(코어는 평문 CBOR를 암호화 드라이버에 위임).
+6. 다음: **M2 착수** — SD-JWT(RFC 9901) 파서/빌더 + KB-JWT → OpenID4VCI 플로우(HAIP 서브셋). 첫 E2E 타깃: EUDI ref issuer에서 PID(SD-JWT VC) 발급.
+7. 팀/기간 확정 후 마일스톤 날짜 부여
