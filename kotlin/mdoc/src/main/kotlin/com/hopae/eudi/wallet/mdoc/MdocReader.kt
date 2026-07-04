@@ -1,0 +1,82 @@
+package com.hopae.eudi.wallet.mdoc
+
+import com.hopae.eudi.wallet.cbor.Cbor
+import com.hopae.eudi.wallet.cbor.CborEncoder
+import com.hopae.eudi.wallet.cbor.cose.CoseHeaders
+import com.hopae.eudi.wallet.cbor.cose.CoseSign1
+import com.hopae.eudi.wallet.cbor.cose.CoseSigner
+import com.hopae.eudi.wallet.spi.SigningAlgorithm
+import com.hopae.eudi.wallet.spi.coseAlgorithm
+import java.time.Instant
+
+/** A document (and its elements) the reader wants from a wallet. */
+class RequestedDocument(val docType: String, val elements: Map<String, List<String>>, val intentToRetain: Boolean = false)
+
+/** Reader authentication material: signs `readerAuth` and presents the reader certificate chain. */
+class ReaderAuthSigner(val signer: CoseSigner, val x5chain: List<ByteArray>, val algorithm: SigningAlgorithm = SigningAlgorithm.ES256)
+
+/** A reader-verified document: integrity- and holder-authenticated disclosed elements. */
+class VerifiedDocument(
+    val docType: String,
+    val elements: Map<String, Map<String, Cbor>>,
+    /** True once the `deviceSignature` bound to this SessionTranscript verified (holder binding). */
+    val deviceAuthenticated: Boolean,
+)
+
+/**
+ * The verifier/reader side of mdoc (ISO 18013-5): builds `DeviceRequest`s (optionally signing
+ * `readerAuth`) and verifies `DeviceResponse`s — issuer trust + digest integrity **and** the
+ * `deviceSignature` holder binding over the SessionTranscript. The wallet side is [MdocPresenter]
+ * / [MdocVerifier]; this is its symmetric counterpart for a reader/verifier app.
+ */
+class MdocReader(
+    private val readerAuth: ReaderAuthSigner? = null,
+    private val issuerTrust: MdocIssuerTrust? = null,
+    private val now: () -> Instant = { Instant.now() },
+) {
+    suspend fun buildDeviceRequest(documents: List<RequestedDocument>, sessionTranscript: Cbor): ByteArray {
+        val docRequests = documents.map { doc ->
+            val nameSpaces = Cbor.CborMap(doc.elements.map { (ns, elems) ->
+                Cbor.Text(ns) to Cbor.CborMap(elems.map { Cbor.Text(it) to Cbor.Bool(doc.intentToRetain) })
+            })
+            val itemsRequest = Cbor.CborMap(listOf(Cbor.Text("docType") to Cbor.Text(doc.docType), Cbor.Text("nameSpaces") to nameSpaces))
+            val itemsRequestBytes = Cbor.Tagged(TAG_ENCODED_CBOR, Cbor.Bytes(CborEncoder.encode(itemsRequest)))
+
+            val entries = mutableListOf<Pair<Cbor, Cbor>>(Cbor.Text("itemsRequest") to itemsRequestBytes)
+            readerAuth?.let { ra ->
+                val readerAuthentication = Cbor.Array(listOf(Cbor.Text("ReaderAuthentication"), sessionTranscript, itemsRequestBytes))
+                val readerAuthBytes = CborEncoder.encode(Cbor.Tagged(TAG_ENCODED_CBOR, Cbor.Bytes(CborEncoder.encode(readerAuthentication))))
+                val sig = CoseSign1.sign(
+                    protected = CoseHeaders.of(algorithm = ra.algorithm.coseAlgorithm),
+                    unprotected = CoseHeaders(Cbor.CborMap(listOf(Cbor.int(33) to Cbor.Array(ra.x5chain.map { Cbor.Bytes(it) })))),
+                    payload = null, detachedPayload = readerAuthBytes, signer = ra.signer,
+                )
+                entries.add(Cbor.Text("readerAuth") to sig.toCbor(tagged = false))
+            }
+            Cbor.CborMap(entries)
+        }
+        val deviceRequest = Cbor.CborMap(
+            listOf(Cbor.Text("version") to Cbor.Text("1.0"), Cbor.Text("docRequests") to Cbor.Array(docRequests))
+        )
+        return CborEncoder.encode(deviceRequest)
+    }
+
+    /**
+     * Verifies each document in a `DeviceResponse`: the issuer signature + digests + validity
+     * (via [MdocVerifier]) and the `deviceSignature` over `DeviceAuthentication` bound to
+     * [sessionTranscript] (proving the response came from the credential's holder, this session).
+     */
+    suspend fun verifyDeviceResponse(deviceResponse: ByteArray, sessionTranscript: Cbor): List<VerifiedDocument> {
+        val trust = issuerTrust ?: throw MdocException("verifyDeviceResponse requires an issuer trust")
+        val verifier = MdocVerifier(trust, now)
+        return DeviceResponse.decode(deviceResponse).documents.map { doc ->
+            val verified = verifier.verify(doc.issuerSigned) // issuerAuth + digests + validity
+            val deviceAuthentication = Cbor.Array(listOf(Cbor.Text("DeviceAuthentication"), sessionTranscript, Cbor.Text(doc.docType), doc.deviceNameSpacesBytes))
+            val deviceAuthBytes = CborEncoder.encode(Cbor.Tagged(TAG_ENCODED_CBOR, Cbor.Bytes(CborEncoder.encode(deviceAuthentication))))
+            if (!doc.deviceSignature.verify(verified.deviceKey, detachedPayload = deviceAuthBytes)) {
+                throw MdocException("deviceSignature invalid — holder binding failed for ${doc.docType}")
+            }
+            VerifiedDocument(verified.docType, verified.elements, deviceAuthenticated = true)
+        }
+    }
+}
