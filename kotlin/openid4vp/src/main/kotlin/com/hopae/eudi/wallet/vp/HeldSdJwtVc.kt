@@ -12,7 +12,7 @@ class HeldSdJwtVc(
     override val credentialId: String,
     val sdJwt: SdJwt,
     private val holderSigner: JwsSigner,
-) : QueryableCredential {
+) : PresentableCredential {
 
     override val format: String = "dc+sd-jwt"
     override val claims: JsonValue.Obj = SdJwtHolder.processedClaims(sdJwt)
@@ -20,29 +20,23 @@ class HeldSdJwtVc(
     override val docType: String? = null
 
     /**
-     * Builds a presentation: selects the [disclosedPaths] disclosures and appends a KB-JWT
-     * bound to [audience] (client_id) + [nonce], optionally with transaction-data hashes.
+     * Builds a presentation: selects the disclosed disclosures and appends a KB-JWT bound to
+     * the verifier client_id + nonce, optionally with transaction-data hashes.
      */
-    suspend fun present(
-        disclosedPaths: List<List<String>>,
-        audience: String,
-        nonce: String,
-        issuedAt: Long,
-        transactionData: List<String>? = null,
-    ): String {
-        val pathSet = disclosedPaths.toSet()
+    override suspend fun present(ctx: PresentationContext): String {
+        val pathSet = ctx.disclosedPaths.toSet()
         val extra = buildList {
-            if (transactionData != null && transactionData.isNotEmpty()) {
-                add("transaction_data_hashes" to JsonValue.Arr(transactionData.map { JsonValue.Str(sha256B64(it)) }))
+            if (!ctx.transactionData.isNullOrEmpty()) {
+                add("transaction_data_hashes" to JsonValue.Arr(ctx.transactionData.map { JsonValue.Str(sha256B64(it)) }))
                 add("transaction_data_hashes_alg" to JsonValue.Str("sha-256"))
             }
         }
         val presented = SdJwtHolder.presentWithKeyBinding(
             issued = sdJwt,
             select = { it in pathSet },
-            audience = audience,
-            nonce = nonce,
-            issuedAt = issuedAt,
+            audience = ctx.clientId,
+            nonce = ctx.nonce,
+            issuedAt = ctx.issuedAt,
             signer = holderSigner,
             extraClaims = extra,
         )

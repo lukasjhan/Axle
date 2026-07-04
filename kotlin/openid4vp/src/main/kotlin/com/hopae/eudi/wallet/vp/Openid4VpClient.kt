@@ -41,7 +41,7 @@ class Openid4VpClient(
 
     suspend fun resolveRequest(requestUri: String): ResolvedRequest = resolver.resolve(requestUri)
 
-    fun match(request: ResolvedRequest, held: List<HeldSdJwtVc>): DcqlMatchResult =
+    fun match(request: ResolvedRequest, held: List<PresentableCredential>): DcqlMatchResult =
         DcqlEngine.match(request.dcqlQuery, held)
 
     /**
@@ -52,13 +52,17 @@ class Openid4VpClient(
         request: ResolvedRequest,
         matches: DcqlMatchResult,
         selection: PresentationSelection,
-        held: List<HeldSdJwtVc>,
+        held: List<PresentableCredential>,
     ): SubmitResult {
         val missing = matches.requiredQueryIds.filter { it !in selection.chosen }.toSet()
         if (missing.isNotEmpty()) throw VpException.QueryNotSatisfiable(missing)
 
         val heldById = held.associateBy { it.credentialId }
         val iat = clock()
+        // For encrypted responses the mdoc OpenID4VP handover binds the verifier's encryption key.
+        val jwkThumbprint = if (request.responseMode == "direct_post.jwt") {
+            verifierEncryptionKey(request)?.let { ecJwkThumbprint(it) }
+        } else null
 
         // vp_token: query id -> [presentation string]
         val vpEntries = mutableListOf<Pair<String, JsonValue>>()
@@ -67,11 +71,15 @@ class Openid4VpClient(
                 ?: throw VpException.SelectionIncomplete("no candidate $credentialId for query $queryId")
             val cred = heldById[credentialId] ?: throw VpException.SelectionIncomplete("unknown credential $credentialId")
             val presentation = cred.present(
-                disclosedPaths = candidate.disclosedPaths,
-                audience = request.clientId,
-                nonce = request.nonce,
-                issuedAt = iat,
-                transactionData = request.transactionData,
+                PresentationContext(
+                    disclosedPaths = candidate.disclosedPaths,
+                    clientId = request.clientId,
+                    nonce = request.nonce,
+                    responseUri = request.responseUri,
+                    issuedAt = iat,
+                    transactionData = request.transactionData,
+                    verifierJwkThumbprint = jwkThumbprint,
+                )
             )
             vpEntries.add(queryId to JsonValue.Arr(listOf(JsonValue.Str(presentation))))
         }
