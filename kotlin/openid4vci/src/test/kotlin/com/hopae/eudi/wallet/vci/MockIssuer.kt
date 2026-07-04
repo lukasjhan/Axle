@@ -128,17 +128,25 @@ class MockIssuer(
 
     private fun handleNonce(): HttpResponse = ok("""{"c_nonce":"${cNonce ?: "c-nonce-xyz"}"}""")
 
+    /** Test-observable: the key_attestation header from the first proof (null if none), and proof count. */
+    var seenKeyAttestation: String? = null
+        private set
+    var seenProofCount: Int = 0
+        private set
+
     private suspend fun handleCredential(request: HttpRequest): HttpResponse {
         val token = accessToken ?: return HttpResponse(401, emptyList(), "no token".encodeToByteArray())
         require(request.headers.any { it.first == "Authorization" && it.second == "DPoP $token" }) { "bad auth" }
         verifyDpop(request, "POST", "$issuer/credential", accessToken = token) // asserts ath binding internally
 
         val body = JsonValue.parse(request.body!!.decodeToString()) as JsonValue.Obj
-        val proofJwt = (((body["proofs"] as JsonValue.Obj)["jwt"] as JsonValue.Arr).items[0] as JsonValue.Str).value
-        val holderKey = verifyKeyProof(proofJwt)
+        val proofs = ((body["proofs"] as JsonValue.Obj)["jwt"] as JsonValue.Arr).items.map { (it as JsonValue.Str).value }
+        seenProofCount = proofs.size
+        seenKeyAttestation = (Jws.parse(proofs.first()).header["key_attestation"] as? JsonValue.Str)?.value
 
-        val credential = issueSdJwtVc(holderKey)
-        return ok("""{"credentials":[{"credential":"$credential"}],"notification_id":"n-1"}""")
+        // One credential per proof (batch issuance), each bound to that proof's holder key.
+        val credentials = proofs.map { proof -> """{"credential":"${issueSdJwtVc(verifyKeyProof(proof))}"}""" }.joinToString(",")
+        return ok("""{"credentials":[$credentials],"notification_id":"n-1"}""")
     }
 
     /** Verifies a DPoP proof; returns its `nonce` claim (null if absent). Throws on any invalidity. */

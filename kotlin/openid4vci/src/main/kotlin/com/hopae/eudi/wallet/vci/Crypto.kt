@@ -81,20 +81,15 @@ class KeyProofSigner(
 ) {
     private val jwk: JsonValue.Obj = JwkEc.toJson(publicKey)
 
-    suspend fun proofJwt(credentialIssuer: String, cNonce: String?, clientId: String? = null): String {
-        val header = JsonValue.Obj(
-            listOf(
-                "typ" to JsonValue.Str("openid4vci-proof+jwt"),
-                "alg" to JsonValue.Str(
-                    when (signer.algorithm) {
-                        com.hopae.eudi.wallet.spi.SigningAlgorithm.ES256 -> "ES256"
-                        com.hopae.eudi.wallet.spi.SigningAlgorithm.ES384 -> "ES384"
-                        com.hopae.eudi.wallet.spi.SigningAlgorithm.ES512 -> "ES512"
-                    }
-                ),
-                "jwk" to jwk,
-            )
+    /** @param keyAttestation optional Key Attestation JWT (OpenID4VCI §8.2.1.1) attesting the proof key. */
+    suspend fun proofJwt(credentialIssuer: String, cNonce: String?, clientId: String? = null, keyAttestation: String? = null): String {
+        val headerFields = mutableListOf<Pair<String, JsonValue>>(
+            "typ" to JsonValue.Str("openid4vci-proof+jwt"),
+            "alg" to JsonValue.Str(jwsAlgName(signer.algorithm)),
+            "jwk" to jwk,
         )
+        keyAttestation?.let { headerFields.add("key_attestation" to JsonValue.Str(it)) }
+        val header = JsonValue.Obj(headerFields)
         val claims = mutableListOf<Pair<String, JsonValue>>(
             "aud" to JsonValue.Str(credentialIssuer),
             "iat" to JsonValue.NumInt(now()),

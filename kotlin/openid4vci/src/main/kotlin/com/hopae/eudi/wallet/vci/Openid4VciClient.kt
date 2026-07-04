@@ -11,13 +11,28 @@ import com.hopae.eudi.wallet.spi.Rng
 import java.net.URLDecoder
 import java.net.URLEncoder
 
-/** Holder key material for issuance: a key-proof (bound into the credential) and a DPoP key. */
+/** A holder key that proves possession and is bound into the issued credential. */
+data class ProofKey(val signer: JwsSigner, val publicKey: EcPublicKey)
+
+/** Source of a Key Attestation JWT (OpenID4VCI §8.2.1.1) for the proof key(s), bound to the c_nonce. */
+fun interface KeyAttestationSource {
+    suspend fun attestation(cNonce: String?): String
+}
+
+/**
+ * Holder key material for issuance: a key-proof (bound into the credential) and a DPoP key.
+ * [additionalProofKeys] enables batch issuance — one credential is issued per proof key.
+ */
 class IssuanceKeys(
     val proofSigner: JwsSigner,
     val proofPublicKey: EcPublicKey,
     val dpopSigner: JwsSigner,
     val dpopPublicKey: EcPublicKey,
-)
+    val additionalProofKeys: List<ProofKey> = emptyList(),
+) {
+    /** All proof keys — the primary key first, then any batch keys. */
+    val proofKeys: List<ProofKey> get() = listOf(ProofKey(proofSigner, proofPublicKey)) + additionalProofKeys
+}
 
 internal const val GRANT_PRE_AUTHORIZED = "urn:ietf:params:oauth:grant-type:pre-authorized_code"
 
@@ -53,6 +68,8 @@ class Openid4VciClient(
     clientId: String = "wallet-dev",
     /** HAIP attestation-based client authentication (adds OAuth-Client-Attestation[-PoP] to PAR/token). */
     private val clientAuth: WalletClientAuth? = null,
+    /** Optional Key Attestation for the proof key(s), added to each key-proof header (HAIP). */
+    private val keyAttestation: KeyAttestationSource? = null,
 ) {
     /** With attestation-based client auth the client_id is the wallet instance's attestation subject. */
     private val clientId: String = clientAuth?.clientId ?: clientId
@@ -275,15 +292,19 @@ class Openid4VciClient(
     ): CredentialResponse {
         val cNonce = token.cNonce ?: issuerMeta.nonceEndpoint?.let { fetchCNonce(it) }
 
-        val proofSigner = KeyProofSigner(keys.proofSigner, keys.proofPublicKey, clock)
-        val proofJwt = proofSigner.proofJwt(issuerMeta.credentialIssuer, cNonce, clientId)
+        // One key-proof per proof key (batch issuance yields one credential per proof).
+        val keyAttestationJwt = keyAttestation?.attestation(cNonce)
+        val proofJwts = keys.proofKeys.map { pk ->
+            KeyProofSigner(pk.signer, pk.publicKey, clock)
+                .proofJwt(issuerMeta.credentialIssuer, cNonce, clientId, keyAttestationJwt)
+        }
 
         val requestFormat = issuerMeta.credentialConfigurationsSupported[configurationId]?.format ?: "dc+sd-jwt"
         val requestBody = JsonValue.Obj(
             listOf(
                 "credential_configuration_id" to JsonValue.Str(configurationId),
                 "proofs" to JsonValue.Obj(
-                    listOf("jwt" to JsonValue.Arr(listOf(JsonValue.Str(proofJwt))))
+                    listOf("jwt" to JsonValue.Arr(proofJwts.map { JsonValue.Str(it) }))
                 ),
             )
         ).serialize()
