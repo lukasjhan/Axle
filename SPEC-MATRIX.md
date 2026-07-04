@@ -30,6 +30,7 @@
 | **JWE** (ECDH-ES + A128/256GCM — VP 응답 암호화 direct_post.jwt) | **M3 필수 경로** | 계획됨 |
 | x5c **이슈어 키 해석 + 체인 검증** (실제 EUDI 이슈어가 x5c로 서명 — 메타데이터 아님) | M3 (trust 모듈과) | 리프 키 추출은 테스트 헬퍼(X5cLeafKeyResolver, JVM)로 실증 ✅ / **production 리졸버(양 언어)+체인 검증은 M3** (Swift는 swift-certificates 필요) |
 | VP 요청 **x509_san_dns 검증** (verifier 요청 서명·SAN 매칭) | trust 모듈 (M3 계속) | Kotlin은 JCA로 구현 ✅ / **Swift는 swift-certificates 필요**. unsigned/비-x509 요청은 양 언어 지원 |
+| **mdoc DCQL claim path 규칙** (M4) | M4 (mdoc 포맷과) | 계획됨. mso_mdoc claim path는 **앞 두 요소가 반드시 문자열**(namespace + element_id). base 스펙은 정확히 2, 그러나 **Lukas의 릴렉스(`>=2`, upstream iOS 머지)를 채택** — 세 번째부터는 element의 구조화된 값 안으로 들어가는 index/**null 와일드카드**/values 허용(null-match 기능의 본질). `intent_to_retain`은 mdoc 전용. 현행 DcqlEngine 경로 해석기는 이미 >=2·와일드카드를 지원하므로, M4에선 mso_mdoc 쿼리에 "앞 둘=문자열" 검증만 추가하면 됨 |
 | VCI deferred(transaction_id 폴링), batch(>1 proof), notification 엔드포인트 | 실전 심화 | 계획됨 (auth code·PAR·PKCE·DPoP는 ✅ 라이브 검증) |
 | VCI 전체 발급까지 라이브 E2E (브라우저 인증 필요) | 실기기/앱 통합 | 헤드리스 불가 — 실 PAR 왕복까지 검증, 이후 단계는 하네스 앱에서 |
 | PAR dpop_jkt 바인딩(인가코드↔DPoP키 결속) | 하드닝 | 계획됨 |
