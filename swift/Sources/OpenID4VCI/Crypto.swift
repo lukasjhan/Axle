@@ -88,12 +88,15 @@ public struct KeyProofSigner {
         self.now = now
     }
 
-    public func proofJwt(credentialIssuer: String, cNonce: String?, clientId: String? = nil) async throws -> String {
-        let header = JsonValue.obj([
+    /// - Parameter keyAttestation: optional Key Attestation JWT (OpenID4VCI §8.2.1.1) attesting the proof key.
+    public func proofJwt(credentialIssuer: String, cNonce: String?, clientId: String? = nil, keyAttestation: String? = nil) async throws -> String {
+        var headerFields: [(String, JsonValue)] = [
             ("typ", .str("openid4vci-proof+jwt")),
             ("alg", .str(jwsAlgName(signer.algorithm))),
             ("jwk", jwk),
-        ])
+        ]
+        if let keyAttestation { headerFields.append(("key_attestation", .str(keyAttestation))) }
+        let header = JsonValue.obj(headerFields)
         var claims: [(String, JsonValue)] = []
         if let clientId { claims.append(("iss", .str(clientId))) }
         claims.append(("aud", .str(credentialIssuer)))

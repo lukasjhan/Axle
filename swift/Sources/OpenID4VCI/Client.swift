@@ -20,22 +20,45 @@ public struct PreparedAuthorization {
 }
 
 /// Holder key material for issuance: a key-proof (bound into the credential) and a DPoP key.
+/// A holder key that proves possession and is bound into the issued credential.
+public struct ProofKey {
+    public let signer: any JwsSigner
+    public let publicKey: EcPublicKey
+    public init(signer: any JwsSigner, publicKey: EcPublicKey) {
+        self.signer = signer; self.publicKey = publicKey
+    }
+}
+
+/// Source of a Key Attestation JWT (OpenID4VCI §8.2.1.1) for the proof key(s), bound to the c_nonce.
+public protocol KeyAttestationSource: Sendable {
+    func attestation(cNonce: String?) async throws -> String
+}
+
 public struct IssuanceKeys {
     public let proofSigner: any JwsSigner
     public let proofPublicKey: EcPublicKey
     public let dpopSigner: any JwsSigner
     public let dpopPublicKey: EcPublicKey
+    /// Additional proof keys for batch issuance — one credential is issued per proof key.
+    public let additionalProofKeys: [ProofKey]
 
     public init(
         proofSigner: any JwsSigner,
         proofPublicKey: EcPublicKey,
         dpopSigner: any JwsSigner,
-        dpopPublicKey: EcPublicKey
+        dpopPublicKey: EcPublicKey,
+        additionalProofKeys: [ProofKey] = []
     ) {
         self.proofSigner = proofSigner
         self.proofPublicKey = proofPublicKey
         self.dpopSigner = dpopSigner
         self.dpopPublicKey = dpopPublicKey
+        self.additionalProofKeys = additionalProofKeys
+    }
+
+    /// All proof keys — the primary key first, then any batch keys.
+    public var proofKeys: [ProofKey] {
+        [ProofKey(signer: proofSigner, publicKey: proofPublicKey)] + additionalProofKeys
     }
 }
 
@@ -51,15 +74,19 @@ public struct Openid4VciClient {
     private let clientId: String
     /// HAIP attestation-based client authentication (adds OAuth-Client-Attestation[-PoP] to PAR/token).
     private let clientAuth: WalletClientAuth?
+    /// Optional Key Attestation for the proof key(s), added to each key-proof header (HAIP).
+    private let keyAttestation: (any KeyAttestationSource)?
 
     public init(http: any HttpTransport, rng: any Rng, clock: @escaping () -> Int64,
-                clientId: String = "wallet-dev", clientAuth: WalletClientAuth? = nil) {
+                clientId: String = "wallet-dev", clientAuth: WalletClientAuth? = nil,
+                keyAttestation: (any KeyAttestationSource)? = nil) {
         self.http = http
         self.rng = rng
         self.clock = clock
         // With attestation-based client auth the client_id is the wallet instance's attestation subject.
         self.clientId = clientAuth?.clientId ?? clientId
         self.clientAuth = clientAuth
+        self.keyAttestation = keyAttestation
     }
 
     /// Client-attestation headers bound to the authorization server (empty when not configured).
@@ -277,13 +304,19 @@ public struct Openid4VciClient {
             cNonce = try await fetchCNonce(nonceEndpoint)
         }
 
-        let proofSigner = KeyProofSigner(signer: keys.proofSigner, publicKey: keys.proofPublicKey, now: clock)
-        let proofJwt = try await proofSigner.proofJwt(credentialIssuer: issuerMeta.credentialIssuer, cNonce: cNonce, clientId: clientId)
+        // One key-proof per proof key (batch issuance yields one credential per proof).
+        let keyAttestationJwt = try await keyAttestation?.attestation(cNonce: cNonce)
+        var proofJwts: [JsonValue] = []
+        for pk in keys.proofKeys {
+            let proofSigner = KeyProofSigner(signer: pk.signer, publicKey: pk.publicKey, now: clock)
+            proofJwts.append(.str(try await proofSigner.proofJwt(
+                credentialIssuer: issuerMeta.credentialIssuer, cNonce: cNonce, clientId: clientId, keyAttestation: keyAttestationJwt)))
+        }
 
         let requestFormat = issuerMeta.credentialConfigurationsSupported[configurationId]?.format ?? "dc+sd-jwt"
         let requestBody = JsonValue.obj([
             ("credential_configuration_id", .str(configurationId)),
-            ("proofs", .obj([("jwt", .arr([.str(proofJwt)]))])),
+            ("proofs", .obj([("jwt", .arr(proofJwts))])),
         ]).serialize()
 
         let credResp = try await postJsonWithDpop(

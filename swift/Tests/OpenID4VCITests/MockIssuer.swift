@@ -25,6 +25,9 @@ actor MockIssuer: HttpTransport {
     private let authCode = "AUTH-CODE-XYZ"
     private var authCodeChallenge: String?
     private(set) var seenPar = false
+    /// Test-observable: the key_attestation header from the first proof, and the proof count.
+    private(set) var seenKeyAttestation: String?
+    private(set) var seenProofCount = 0
 
     init(area: SoftwareSecureArea, issuerKey: KeyInfo, now: Int64) {
         self.area = area
@@ -127,12 +130,22 @@ actor MockIssuer: HttpTransport {
             preconditionFailure("bad credential request body")
         }
         let body = JsonValue.obj(entries)
-        guard case let .arr(jwts)? = body["proofs"]?["jwt"], case let .str(proofJwt) = jwts[0] else {
+        guard case let .arr(jwts)? = body["proofs"]?["jwt"], !jwts.isEmpty else {
             preconditionFailure("no proof jwt")
         }
-        let holderKey = try await verifyKeyProof(proofJwt)
-        let credential = try await issueSdJwtVc(holderKey: holderKey)
-        return ok(#"{"credentials":[{"credential":"\#(credential)"}],"notification_id":"n-1"}"#)
+        seenProofCount = jwts.count
+        if case let .str(first) = jwts[0], case let .str(ka)? = (try? Jws.parse(first))?.header["key_attestation"] {
+            seenKeyAttestation = ka
+        }
+
+        // One credential per proof (batch issuance), each bound to that proof's holder key.
+        var creds: [String] = []
+        for j in jwts {
+            guard case let .str(proofJwt) = j else { continue }
+            let holderKey = try await verifyKeyProof(proofJwt)
+            creds.append(#"{"credential":"\#(try await issueSdJwtVc(holderKey: holderKey))"}"#)
+        }
+        return ok(#"{"credentials":[\#(creds.joined(separator: ","))],"notification_id":"n-1"}"#)
     }
 
     /// Verifies a DPoP proof; returns its `nonce` claim (nil if absent). Fails on any invalidity.
