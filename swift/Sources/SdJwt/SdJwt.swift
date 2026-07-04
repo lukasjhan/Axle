@@ -309,6 +309,15 @@ public enum SdJwtVerifier {
 
 public enum SdJwtHolder {
 
+    /// Processed claim tree of a held credential (disclosures resolved), without verifying the issuer signature.
+    public static func processedClaims(_ issued: SdJwt) throws -> JsonValue {
+        let jws = try Jws.parse(issued.jwt)
+        guard let text = String(bytes: jws.payloadBytes, encoding: .utf8),
+              let payload = try? JsonValue.parse(text), case .obj = payload
+        else { throw SdJwtError("issuer payload must be an object") }
+        return try SdProcessor(issued.disclosures).process(payload)
+    }
+
     /// Selects disclosures by processed-claim path. Ancestors of a selected disclosure
     /// (recursive disclosures) are included automatically.
     public static func present(_ issued: SdJwt, select: ([String]) -> Bool) throws -> SdJwt {
@@ -336,7 +345,8 @@ public enum SdJwtHolder {
         audience: String,
         nonce: String,
         issuedAt: Int64,
-        signer: any JwsSigner
+        signer: any JwsSigner,
+        extraClaims: [(String, JsonValue)] = []
     ) async throws -> SdJwt {
         let bare = try present(issued, select: select)
         let sdHash = Base64Url.encode(sha256([UInt8](bare.presentationWithoutKb().utf8)))
@@ -349,7 +359,7 @@ public enum SdJwtHolder {
             ("aud", .str(audience)),
             ("nonce", .str(nonce)),
             ("sd_hash", .str(sdHash)),
-        ])
+        ] + extraClaims)
         let kb = try await Jws.sign(header: header, payload: [UInt8](payload.serialize().utf8), signer: signer)
         return SdJwt(jwt: bare.jwt, disclosures: bare.disclosures, kbJwt: kb.compact())
     }

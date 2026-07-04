@@ -9,7 +9,8 @@
 | OpenID4VCI | **1.0 Final** (2025-09-16) | ✅ `openid4vci` — **실제 issuer.eudiw.dev에서 진짜 PID(SD-JWT VC) 발급·검증 완료 (2026-07-04)**. authorization code+PAR 그랜트, scope 선호(favorScopes), 오퍼 딥링크 해석. 절차는 `INTEROP.md`. deferred·batch·notification은 잔여 |
 | DPoP | RFC 9449 | ✅ `openid4vci` — jti/htm/htu/ath + DPoP-Nonce 재시도 |
 | PKCE | RFC 7636 (S256) | ✅ `openid4vci` |
-| OpenID4VP | **1.0 Final** (2025-07-09), DCQL | ⬜ M3 |
+| OpenID4VP | **1.0 Final** (2025-07-09), DCQL | ✅ `openid4vp` (양 언어) — DCQL 엔진(null 와일드카드·values·claim_sets·credential_sets), 요청 해석(JAR request_uri), vp_token 제시(SD-JWT+KB-JWT), direct_post + direct_post.jwt(JWE), 제시 세션. mdoc 제시는 M4 |
+| JWE | RFC 7518 ECDH-ES direct + A128/192/256GCM | ✅ `sdjwt` (양 언어) — Concat KDF RFC 7518 Appendix C 벡터 통과, direct_post.jwt 응답 암호화 |
 | HAIP | **1.0 Final** | ⬜ M2–M3 기본값에 반영 (PAR·DPoP Required 등) |
 | JOSE (JWS) | RFC 7515/7518 서브셋 (compact, ES256/384/512) | ✅ `sdjwt` — 자체 구현, alg 고정 검증(협상 금지) |
 | SD-JWT | **RFC 9901** | ✅ `sdjwt` — 발급/제시/검증, KB-JWT, 재귀·배열 disclosure, RFC 예제 83벡터 양 언어 통과 |
@@ -28,6 +29,7 @@
 |---|---|---|
 | **JWE** (ECDH-ES + A128/256GCM — VP 응답 암호화 direct_post.jwt) | **M3 필수 경로** | 계획됨 |
 | x5c **이슈어 키 해석 + 체인 검증** (실제 EUDI 이슈어가 x5c로 서명 — 메타데이터 아님) | M3 (trust 모듈과) | 리프 키 추출은 테스트 헬퍼(X5cLeafKeyResolver, JVM)로 실증 ✅ / **production 리졸버(양 언어)+체인 검증은 M3** (Swift는 swift-certificates 필요) |
+| VP 요청 **x509_san_dns 검증** (verifier 요청 서명·SAN 매칭) | trust 모듈 (M3 계속) | Kotlin은 JCA로 구현 ✅ / **Swift는 swift-certificates 필요**. unsigned/비-x509 요청은 양 언어 지원 |
 | VCI deferred(transaction_id 폴링), batch(>1 proof), notification 엔드포인트 | 실전 심화 | 계획됨 (auth code·PAR·PKCE·DPoP는 ✅ 라이브 검증) |
 | VCI 전체 발급까지 라이브 E2E (브라우저 인증 필요) | 실기기/앱 통합 | 헤드리스 불가 — 실 PAR 왕복까지 검증, 이후 단계는 하네스 앱에서 |
 | PAR dpop_jkt 바인딩(인가코드↔DPoP키 결속) | 하드닝 | 계획됨 |
