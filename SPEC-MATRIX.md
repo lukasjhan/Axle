@@ -9,8 +9,9 @@
 | OpenID4VCI | **1.0 Final** (2025-09-16) | ⬜ M2 |
 | OpenID4VP | **1.0 Final** (2025-07-09), DCQL | ⬜ M3 |
 | HAIP | **1.0 Final** | ⬜ M2–M3 기본값에 반영 (PAR·DPoP Required 등) |
-| SD-JWT | **RFC 9901** | ⬜ M2 |
-| SD-JWT VC | draft-ietf-oauth-sd-jwt-vc (착수 시점 최신으로 핀) | ⬜ M2 |
+| JOSE (JWS) | RFC 7515/7518 서브셋 (compact, ES256/384/512) | ✅ `sdjwt` — 자체 구현, alg 고정 검증(협상 금지) |
+| SD-JWT | **RFC 9901** | ✅ `sdjwt` — 발급/제시/검증, KB-JWT, 재귀·배열 disclosure, RFC 예제 83벡터 양 언어 통과 |
+| SD-JWT VC | draft-ietf-oauth-sd-jwt-vc (착수 시점 최신으로 핀) | 🔶 vct/cnf는 구현됨, VC 프로파일 규칙은 VCI와 함께 (M2 잔여) |
 | Token Status List | IETF 최종 단계 — M6 시작 시 RFC 여부 재확인 | ⬜ M6 |
 | ISO/IEC 18013-5 | :2021 (+ 18013-7 / DC API Handover) | ⬜ M4–M5 |
 | W3C Digital Credentials API | Android CredMan / iOS 26 IdentityDocumentServices | ⬜ M5b (어댑터) |
