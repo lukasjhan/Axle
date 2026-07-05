@@ -9,3 +9,6 @@ swift/.swiftpm/
 local.properties
 node_modules/
 tools/headless-interop/package-lock.json
+
+# NestJS wallet-provider build output
+wallet-provider/dist/
