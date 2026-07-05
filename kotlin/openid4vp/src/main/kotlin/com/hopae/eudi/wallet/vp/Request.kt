@@ -77,17 +77,11 @@ class AuthorizationRequestResolver(
         val (claims, verifier) = if (trimmed.startsWith("{")) {
             val c = JsonValue.parse(trimmed) as? JsonValue.Obj ?: throw VpException.InvalidRequest("DC API request must be JSON")
             val signedRequest = c.str("request")
-            if (signedRequest != null) {
-                // OpenID4VP 1.0 signed DC API: data is {"request": "<JWS>"} (JAR); the claims live in the JWS.
-                val (jwsClaims, v) = verifySigned(signedRequest, origin, "x509_san_dns")
-                jwsClaims to VerifierInfo(jwsClaims.str("client_id") ?: origin, v.clientIdScheme, v.certificateChainDer, v.commonName, v.trusted)
-            } else {
-                val clientId = c.str("client_id") ?: origin
-                c to VerifierInfo(clientId, "web-origin", null, null, trusted = false)
-            }
+            // OpenID4VP 1.0 signed DC API: data is {"request": "<JWS>"} (JAR); the claims live in the JWS.
+            if (signedRequest != null) verifySignedDcApi(signedRequest, origin)
+            else c to VerifierInfo(c.str("client_id") ?: origin, "web-origin", null, null, trusted = false)
         } else {
-            val (c, v) = verifySigned(trimmed, origin, "x509_san_dns")
-            c to VerifierInfo(c.str("client_id") ?: origin, v.clientIdScheme, v.certificateChainDer, v.commonName, v.trusted)
+            verifySignedDcApi(trimmed, origin) // bare JWS
         }
         return build(claims, verifier.clientId, verifier.clientIdScheme, verifier, origin)
     }
@@ -113,6 +107,19 @@ class AuthorizationRequestResolver(
             verifier = verifier,
             origin = origin,
         )
+    }
+
+    /** Signed DC API request: the client_id (and thus its prefix/scheme) come from the JWS claims, not query params. */
+    private suspend fun verifySignedDcApi(jwt: String, origin: String): Pair<JsonValue.Obj, VerifierInfo> {
+        val jws = Jws.parse(jwt)
+        val claims = JsonValue.parse(jws.payloadBytes.decodeToString()) as? JsonValue.Obj
+            ?: throw VpException.InvalidRequest("signed DC API request payload must be JSON")
+        val clientId = claims.str("client_id") ?: origin
+        // OpenID4VP 1.0: the scheme is the client_id prefix (no separate client_id_scheme parameter).
+        val scheme = clientIdScheme(clientId, null)
+        val verifier = trust?.verifyRequestObject(jws, clientId, scheme)
+            ?: VerifierInfo(clientId, scheme, jws.x5c, null, trusted = false)
+        return claims to verifier
     }
 
     private suspend fun verifySigned(jwt: String, clientId: String, scheme: String): Pair<JsonValue.Obj, VerifierInfo> {

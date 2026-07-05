@@ -99,11 +99,7 @@ public struct AuthorizationRequestResolver {
             let envelope = try JsonValue.parse(trimmed)
             if case let .str(signedRequest)? = envelope["request"] {
                 // OpenID4VP 1.0 signed DC API: data is {"request": "<JWS>"} (JAR); the claims live in the JWS.
-                let (c, v) = try await parseSignedRequest(signedRequest, origin, "x509_san_dns")
-                claims = c
-                var clientId = origin
-                if case let .str(cid)? = c["client_id"] { clientId = cid }
-                verifier = VerifierInfo(clientId: clientId, clientIdScheme: v.clientIdScheme, certificateChainDer: v.certificateChainDer, commonName: v.commonName, trusted: v.trusted)
+                (claims, verifier) = try await verifySignedDcApi(signedRequest, origin)
             } else {
                 claims = envelope
                 var clientId = origin
@@ -111,11 +107,7 @@ public struct AuthorizationRequestResolver {
                 verifier = VerifierInfo(clientId: clientId, clientIdScheme: "web-origin", certificateChainDer: nil, commonName: nil, trusted: false)
             }
         } else {
-            let (c, v) = try await parseSignedRequest(trimmed, origin, "x509_san_dns")
-            claims = c
-            var clientId = origin
-            if case let .str(cid)? = c["client_id"] { clientId = cid }
-            verifier = VerifierInfo(clientId: clientId, clientIdScheme: v.clientIdScheme, certificateChainDer: v.certificateChainDer, commonName: v.commonName, trusted: v.trusted)
+            (claims, verifier) = try await verifySignedDcApi(trimmed, origin) // bare JWS
         }
         return try build(claims, verifier.clientId, verifier.clientIdScheme, verifier, origin: origin)
     }
@@ -153,6 +145,25 @@ public struct AuthorizationRequestResolver {
             }
         }
         return .obj(entries)
+    }
+
+    /// Signed DC API request: the client_id (and thus its prefix/scheme) come from the JWS claims, not query params.
+    private func verifySignedDcApi(_ jwt: String, _ origin: String) async throws -> (JsonValue, VerifierInfo) {
+        let jws = try Jws.parse(jwt)
+        guard let text = String(bytes: jws.payloadBytes, encoding: .utf8),
+              let claims = try? JsonValue.parse(text), case .obj = claims
+        else { throw VpError.invalidRequest("signed DC API request payload must be JSON") }
+        var clientId = origin
+        if case let .str(cid)? = claims["client_id"] { clientId = cid }
+        // OpenID4VP 1.0: the scheme is the client_id prefix (no separate client_id_scheme parameter).
+        let scheme = clientIdScheme(clientId, nil)
+        let verifier: VerifierInfo
+        if let trust {
+            verifier = try await trust.verifyRequestObject(jws, clientId: clientId, scheme: scheme)
+        } else {
+            verifier = VerifierInfo(clientId: clientId, clientIdScheme: scheme, certificateChainDer: jws.x5c, commonName: nil, trusted: false)
+        }
+        return (claims, verifier)
     }
 
     private func parseSignedRequest(_ jwt: String, _ clientId: String, _ scheme: String) async throws -> (JsonValue, VerifierInfo) {
