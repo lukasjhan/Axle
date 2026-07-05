@@ -184,9 +184,7 @@ class AuthorizationRequestResolver(
                         "mso_mdoc" to JsonValue.Obj(listOf("alg_values" to JsonValue.Arr(listOf(JsonValue.Str("ES256"))))),
                     ),
                 ),
-                // OpenID4VP 1.0 final renamed this from client_id_schemes_supported; send both for interop.
                 "client_id_prefixes_supported" to JsonValue.Arr(listOf("x509_san_dns", "x509_hash", "redirect_uri").map { JsonValue.Str(it) }),
-                "client_id_schemes_supported" to JsonValue.Arr(listOf("x509_san_dns", "x509_hash", "redirect_uri").map { JsonValue.Str(it) }),
                 "request_object_signing_alg_values_supported" to JsonValue.Arr(listOf(JsonValue.Str("ES256"))),
                 "response_types_supported" to JsonValue.Arr(listOf(JsonValue.Str("vp_token"))),
                 "response_modes_supported" to JsonValue.Arr(listOf("direct_post", "direct_post.jwt").map { JsonValue.Str(it) }),

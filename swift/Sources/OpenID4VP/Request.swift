@@ -214,9 +214,8 @@ private let walletMetadataJson: String = JsonValue.obj([
         ])),
         ("mso_mdoc", JsonValue.obj([("alg_values", JsonValue.arr([.str("ES256")]))])),
     ])),
-    // OpenID4VP 1.0 final renamed this from client_id_schemes_supported; send both for interop.
+    // OpenID4VP 1.0 final: client_id_prefixes_supported (renamed from client_id_schemes_supported).
     ("client_id_prefixes_supported", JsonValue.arr([.str("x509_san_dns"), .str("x509_hash"), .str("redirect_uri")])),
-    ("client_id_schemes_supported", JsonValue.arr([.str("x509_san_dns"), .str("x509_hash"), .str("redirect_uri")])),
     ("request_object_signing_alg_values_supported", JsonValue.arr([.str("ES256")])),
     ("response_types_supported", JsonValue.arr([.str("vp_token")])),
     ("response_modes_supported", JsonValue.arr([.str("direct_post"), .str("direct_post.jwt")])),
