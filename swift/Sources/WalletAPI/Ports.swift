@@ -90,32 +90,7 @@ public protocol HttpTransport: Sendable {
     func execute(_ request: HttpRequest) async throws -> HttpResponse
 }
 
-/// ISO 18013-5 transport layer. The session layer (encryption) lives in core on top of this.
-public enum RetrievalMethod: Sendable {
-    case bleServer, bleClient, nfc
-}
-
-/// Engagement-derived parameters for opening a channel. Shape is pinned in M5.
-public struct ChannelSessionInfo: Sendable {
-    public let method: RetrievalMethod
-    public let parameters: [UInt8]?
-
-    public init(method: RetrievalMethod, parameters: [UInt8]? = nil) {
-        self.method = method
-        self.parameters = parameters
-    }
-}
-
-public protocol DeviceChannelFactory: Sendable {
-    var method: RetrievalMethod { get }
-    func open(session: ChannelSessionInfo) async throws -> any DeviceChannel
-}
-
-public protocol DeviceChannel: Sendable {
-    func send(_ data: [UInt8]) async throws
-    var incoming: AsyncStream<[UInt8]> { get }
-    func close() async throws
-}
+// ISO 18013-5 proximity transport is the ProximityTransport port (send/receive/close).
 
 /// Wallet-provider backend port: WUA and key attestations (HAIP wallet attestation).
 public protocol WalletAttestationProvider: Sendable {
