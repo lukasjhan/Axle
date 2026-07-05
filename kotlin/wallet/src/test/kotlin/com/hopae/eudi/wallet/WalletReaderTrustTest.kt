@@ -36,7 +36,7 @@ class WalletReaderTrustTest {
     }
 
     /** A JAR (signed request object) delivered inline via `request=`, with the reader cert in the x5c header. */
-    private suspend fun signedRequestUrl(leaf: TestCerts.Cert, clientId: String, scheme: String): String {
+    private suspend fun signedRequestUrl(leaf: TestCerts.Cert, clientId: String): String {
         val claims = """{"nonce":"vp-nonce-123","response_mode":"direct_post","response_uri":"https://verifier.example/response",""" +
             """"state":"xyz","dcql_query":{"credentials":[{"id":"pid","format":"dc+sd-jwt","meta":{"vct_values":["urn:eudi:pid:1"]},""" +
             """"claims":[{"path":["family_name"]}]}]}}"""
@@ -48,7 +48,7 @@ class WalletReaderTrustTest {
             ),
         )
         val jws = Jws.sign(header, claims.encodeToByteArray(), leafSigner(leaf.keyPair.private))
-        return "openid4vp://?client_id=${URLEncoder.encode(clientId, "UTF-8")}&client_id_scheme=$scheme&request=${URLEncoder.encode(jws.compact(), "UTF-8")}"
+        return "openid4vp://?client_id=${URLEncoder.encode(clientId, "UTF-8")}&request=${URLEncoder.encode(jws.compact(), "UTF-8")}"
     }
 
     @Test
@@ -60,7 +60,7 @@ class WalletReaderTrustTest {
             WalletPorts(listOf(SoftwareSecureArea()), InMemoryStorageDriver(), noHttp),
         )
 
-        val session = wallet.presentation.start(signedRequestUrl(leaf, "x509_san_dns:verifier.example.com", "x509_san_dns"))
+        val session = wallet.presentation.start(signedRequestUrl(leaf, "x509_san_dns:verifier.example.com"))
         val resolved = withTimeout(15_000) { session.state.first { it is PresentationState.RequestResolved || it is PresentationState.Failed } }
         assertTrue(resolved is PresentationState.RequestResolved, "resolved: $resolved")
         val verifier = resolved.request.verifier
@@ -81,7 +81,7 @@ class WalletReaderTrustTest {
             WalletPorts(listOf(SoftwareSecureArea()), InMemoryStorageDriver(), noHttp),
         )
 
-        val session = wallet.presentation.start(signedRequestUrl(rogueLeaf, "x509_san_dns:verifier.example.com", "x509_san_dns"))
+        val session = wallet.presentation.start(signedRequestUrl(rogueLeaf, "x509_san_dns:verifier.example.com"))
         val terminal = withTimeout(15_000) { session.state.first { it.isTerminal } }
         assertTrue(terminal is PresentationState.Failed, "terminal: $terminal")
         assertTrue(terminal.error is WalletError.Presentation.VerifierNotTrusted, "error: ${terminal.error}")

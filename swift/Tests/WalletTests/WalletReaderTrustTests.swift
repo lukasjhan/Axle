@@ -21,7 +21,7 @@ final class WalletReaderTrustTests: XCTestCase {
             config: WalletConfig(trust: TrustConfig(readerAnchorsDer: [try ca.der])),
             ports: WalletPorts(secureAreas: [SoftwareSecureArea()], storage: InMemoryStorageDriver(), http: NoHttp()))
 
-        let url = try await TestCerts.signedRequestUrl(leaf: leaf, clientId: "x509_san_dns:verifier.example.com", scheme: "x509_san_dns", requestClaims: requestClaims)
+        let url = try await TestCerts.signedRequestUrl(leaf: leaf, clientId: "x509_san_dns:verifier.example.com", requestClaims: requestClaims)
         let session = wallet.presentation.start(url)
         var captured: PresentationRequest?
         var terminal: PresentationState?
@@ -48,7 +48,7 @@ final class WalletReaderTrustTests: XCTestCase {
             config: WalletConfig(trust: TrustConfig(readerAnchorsDer: [try trustedCa.der])),
             ports: WalletPorts(secureAreas: [SoftwareSecureArea()], storage: InMemoryStorageDriver(), http: NoHttp()))
 
-        let url = try await TestCerts.signedRequestUrl(leaf: rogueLeaf, clientId: "x509_san_dns:verifier.example.com", scheme: "x509_san_dns", requestClaims: requestClaims)
+        let url = try await TestCerts.signedRequestUrl(leaf: rogueLeaf, clientId: "x509_san_dns:verifier.example.com", requestClaims: requestClaims)
         let session = wallet.presentation.start(url)
         var terminal: PresentationState?
         for await state in session.states {

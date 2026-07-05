@@ -53,7 +53,7 @@ public enum TestCerts {
     }
 
     /// A JAR (signed request object) delivered inline via `request=`, with the reader cert in the x5c header.
-    public static func signedRequestUrl(leaf: Cert, clientId: String, scheme: String, requestClaims: String) async throws -> String {
+    public static func signedRequestUrl(leaf: Cert, clientId: String, requestClaims: String) async throws -> String {
         let header = JsonValue.obj([
             ("alg", .str("ES256")),
             ("typ", .str("oauth-authz-req+jwt")),
@@ -61,7 +61,7 @@ public enum TestCerts {
         ])
         let jws = try await Jws.sign(header: header, payload: [UInt8](requestClaims.utf8), signer: LeafSigner(d: leaf.key.rawRepresentation))
         func enc(_ s: String) -> String { s.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? s }
-        return "openid4vp://?client_id=\(enc(clientId))&client_id_scheme=\(scheme)&request=\(enc(jws.compact()))"
+        return "openid4vp://?client_id=\(enc(clientId))&request=\(enc(jws.compact()))"
     }
 
     private struct LeafSigner: JwsSigner {

@@ -70,7 +70,7 @@ public struct AuthorizationRequestResolver {
     public func resolve(_ requestUri: String) async throws -> ResolvedRequest {
         let params = try parseQuery(requestUri)
         guard let clientId = params["client_id"] else { throw VpError.invalidRequest("missing client_id") }
-        let scheme = clientIdScheme(clientId, params["client_id_scheme"])
+        let scheme = clientIdScheme(clientId)
 
         let claims: JsonValue
         let verifier: VerifierInfo
@@ -156,7 +156,7 @@ public struct AuthorizationRequestResolver {
         var clientId = origin
         if case let .str(cid)? = claims["client_id"] { clientId = cid }
         // OpenID4VP 1.0: the scheme is the client_id prefix (no separate client_id_scheme parameter).
-        let scheme = clientIdScheme(clientId, nil)
+        let scheme = clientIdScheme(clientId)
         let verifier: VerifierInfo
         if let trust {
             verifier = try await trust.verifyRequestObject(jws, clientId: clientId, scheme: scheme)
@@ -205,10 +205,9 @@ public struct AuthorizationRequestResolver {
         return s.addingPercentEncoding(withAllowedCharacters: allowed) ?? s
     }
 
-    private func clientIdScheme(_ clientId: String, _ explicit: String?) -> String {
-        if let explicit { return explicit }
-        if clientId.contains(":") { return String(clientId.split(separator: ":")[0]) }
-        return "redirect_uri"
+    /// OpenID4VP 1.0: the client_id scheme is its prefix (e.g. `x509_san_dns:…`), or `redirect_uri` if unprefixed.
+    private func clientIdScheme(_ clientId: String) -> String {
+        clientId.contains(":") ? String(clientId.split(separator: ":")[0]) : "redirect_uri"
     }
 
     private func parseQuery(_ uri: String) throws -> [String: String] {

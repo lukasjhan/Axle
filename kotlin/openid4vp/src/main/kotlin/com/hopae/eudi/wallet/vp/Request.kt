@@ -56,7 +56,7 @@ class AuthorizationRequestResolver(
     suspend fun resolve(requestUri: String): ResolvedRequest {
         val params = parseQuery(requestUri)
         val clientId = params["client_id"] ?: throw VpException.InvalidRequest("missing client_id")
-        val scheme = clientIdScheme(clientId, params["client_id_scheme"])
+        val scheme = clientIdScheme(clientId)
 
         val uriMethod = params["request_uri_method"]?.lowercase() ?: "get"
         val (claims, verifier) = when {
@@ -116,7 +116,7 @@ class AuthorizationRequestResolver(
             ?: throw VpException.InvalidRequest("signed DC API request payload must be JSON")
         val clientId = claims.str("client_id") ?: origin
         // OpenID4VP 1.0: the scheme is the client_id prefix (no separate client_id_scheme parameter).
-        val scheme = clientIdScheme(clientId, null)
+        val scheme = clientIdScheme(clientId)
         val verifier = trust?.verifyRequestObject(jws, clientId, scheme)
             ?: VerifierInfo(clientId, scheme, jws.x5c, null, trusted = false)
         return claims to verifier
@@ -164,11 +164,9 @@ class AuthorizationRequestResolver(
         return resp.body.decodeToString().trim()
     }
 
-    private fun clientIdScheme(clientId: String, explicit: String?): String = when {
-        explicit != null -> explicit
-        clientId.contains(":") -> clientId.substringBefore(":")
-        else -> "redirect_uri"
-    }
+    /** OpenID4VP 1.0: the client_id scheme is its prefix (e.g. `x509_san_dns:…`), or `redirect_uri` if unprefixed. */
+    private fun clientIdScheme(clientId: String): String =
+        if (clientId.contains(":")) clientId.substringBefore(":") else "redirect_uri"
 
     private fun parseQuery(uri: String): Map<String, String> {
         val query = uri.substringAfter('?', "")
