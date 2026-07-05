@@ -1,5 +1,7 @@
 package com.hopae.eudi.demo.ui
 
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -52,16 +54,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hopae.eudi.demo.DemoWallet
 import com.hopae.eudi.demo.LogStore
+import com.hopae.eudi.demo.PendingAuth
 import com.hopae.eudi.demo.PortraitCaptureActivity
 import com.hopae.eudi.wallet.Credential
 import com.hopae.eudi.wallet.CredentialOffer
 import com.hopae.eudi.wallet.IssuanceRequest
+import com.hopae.eudi.wallet.IssuanceSession
 import com.hopae.eudi.wallet.IssuanceState
 import com.hopae.eudi.wallet.Lifecycle
 import com.hopae.eudi.wallet.PresentationRequest
@@ -92,6 +97,14 @@ fun WalletApp(wallet: Wallet) {
     var consent by remember { mutableStateOf<PendingConsent?>(null) }
     var busy by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val openAuth: (String, IssuanceSession) -> Unit = { url, session ->
+        PendingAuth.session = session
+        LogStore.log("Opening browser for authorization…")
+        runCatching {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.onFailure { LogStore.log("❌ open browser: ${it.message}") }
+    }
 
     val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         val uri = result.contents
@@ -172,7 +185,7 @@ fun WalletApp(wallet: Wallet) {
             onConfirm = {
                 offerToConfirm = null
                 if (offer.requiresTxCode) txCodeFor = offer
-                else scope.launch { busy = "Issuing…"; runIssuance(wallet, offer, null); refreshKey++; busy = null }
+                else scope.launch { busy = "Issuing…"; runIssuance(wallet, offer, null, openAuth); refreshKey++; busy = null }
             },
             onCancel = { offerToConfirm = null; LogStore.log("Issuance cancelled") },
         )
@@ -182,7 +195,7 @@ fun WalletApp(wallet: Wallet) {
         TxCodeDialog(
             onSubmit = { code ->
                 txCodeFor = null
-                scope.launch { busy = "Issuing…"; runIssuance(wallet, offer, code); refreshKey++; busy = null }
+                scope.launch { busy = "Issuing…"; runIssuance(wallet, offer, code, openAuth); refreshKey++; busy = null }
             },
             onDismiss = { txCodeFor = null; LogStore.log("Issuance cancelled (no tx_code)") },
         )
@@ -234,7 +247,12 @@ fun WalletApp(wallet: Wallet) {
     }
 }
 
-private suspend fun runIssuance(wallet: Wallet, offer: CredentialOffer, txCode: String?) {
+private suspend fun runIssuance(
+    wallet: Wallet,
+    offer: CredentialOffer,
+    txCode: String?,
+    openAuth: (String, IssuanceSession) -> Unit,
+) {
     val configId = offer.credentialConfigurationIds.first()
     LogStore.log("Issuance: start (config=$configId)")
     runCatching {
@@ -243,7 +261,7 @@ private suspend fun runIssuance(wallet: Wallet, offer: CredentialOffer, txCode: 
             LogStore.log("  issuance → ${s::class.simpleName}")
             when (s) {
                 is IssuanceState.TxCodeRequired -> txCode?.let { session.submitTxCode(it) }
-                is IssuanceState.AuthorizationRequired -> LogStore.log("  authorize in a browser: ${s.authorizationUrl}")
+                is IssuanceState.AuthorizationRequired -> openAuth(s.authorizationUrl, session)
                 is IssuanceState.Completed -> LogStore.log("✅ Issued ${s.result.issued.size} credential(s)")
                 is IssuanceState.Failed -> LogStore.log("❌ ${s.error.message}")
                 else -> {}
@@ -342,7 +360,7 @@ private fun CredentialDetailDialog(c: Credential, onCopy: () -> Unit, onDelete: 
                         Spacer(Modifier.height(12.dp))
                         Text("CLAIMS", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.height(4.dp))
-                        lc.claims.forEach { DetailRow(it.path.joinToString(" › "), it.value.display()) }
+                        lc.claims.forEach { DetailRow(claimLabel(c, it.path), it.value.display()) }
                     }
                 }
             }
@@ -370,6 +388,12 @@ private fun DetailRow(name: String, value: String) {
 private fun credentialTitle(c: Credential): String = when (val f = c.format) {
     is CredentialFormat.SdJwtVc -> f.vct
     is CredentialFormat.MsoMdoc -> f.docType
+}
+
+/** mdoc claim paths start with the namespace (same for every element) — drop it for readability. */
+private fun claimLabel(c: Credential, path: List<String>): String {
+    val p = if (c.format is CredentialFormat.MsoMdoc && path.size > 1) path.drop(1) else path
+    return p.joinToString(" › ")
 }
 
 private fun formatLabel(format: CredentialFormat): String = when (format) {
@@ -420,7 +444,7 @@ private fun TrustBadge(trusted: Boolean) {
 private fun credentialText(c: Credential): String = buildString {
     appendLine("${formatLabel(c.format)} · ${credentialTitle(c)}")
     c.issuer?.displayName?.let { appendLine("Issuer: $it") }
-    (c.lifecycle as? Lifecycle.Issued)?.claims?.forEach { appendLine("${it.path.joinToString(".")}: ${it.value.display()}") }
+    (c.lifecycle as? Lifecycle.Issued)?.claims?.forEach { appendLine("${claimLabel(c, it.path)}: ${it.value.display()}") }
 }
 
 @Composable
