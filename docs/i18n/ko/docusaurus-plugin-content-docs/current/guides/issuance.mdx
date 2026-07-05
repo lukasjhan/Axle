@@ -1,0 +1,326 @@
+---
+title: 발급 (OpenID4VCI)
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# 발급
+
+발급은 **일시정지 가능한 상태머신**입니다. 크리덴셜 오퍼를 리졸브하거나(또는 발급기관을 직접 지정하고),
+세션을 종료 상태까지 구동합니다. 세션은 사람이나 앱의 개입이 필요한 모든 지점 — 브라우저 인가,
+트랜잭션 코드 — 에서 멈췄다가, 앱이 다시 콜백하면 재개합니다.
+
+두 플랫폼은 동일한 상태머신을 모델링합니다. Kotlin은 코루틴 `StateFlow`로, Swift는 `AsyncStream`으로
+노출합니다.
+
+## 세션 상태머신
+
+`wallet.issuance.start(…)`는 `IssuanceSession`을 반환합니다. 세션은 상태의 시퀀스를 방출하며, 그중
+둘은 **종료 상태**(`isTerminal == true`)입니다. 모든 흐름은 이 종료 상태 중 하나에서 끝납니다.
+
+| 단계 | Kotlin `IssuanceState` | Swift `IssuanceState` | 의미 |
+|---|---|---|---|
+| 준비 | `Preparing` | `.preparing` | 발급기관 메타데이터 조회, PAR + PKCE 구성. |
+| 인가 | `AuthorizationRequired(authorizationUrl)` | `.authorizationRequired(String)` | 인가 코드 흐름에서 URL을 브라우저로 열고, `completeAuthorization`을 호출합니다. |
+| 트랜잭션 코드 | `TxCodeRequired` | `.txCodeRequired` | 발급기관이 대역 외(out-of-band) 코드를 요구합니다. `submitTxCode`를 호출합니다. |
+| 처리 | `Processing` | `.processing` | 코드를 교환하고 크리덴셜을 요청합니다. |
+| 완료 | `Completed(result)` | `.completed(IssuanceResult)` | **종료.** `result.issued`는 저장된 `CredentialId` 목록입니다. |
+| 실패 | `Failed(error)` | `.failed(IssuanceError)` | **종료.** 오류를 담습니다. |
+
+세션 제어: `submitTxCode(code)`, `completeAuthorization(redirectUri)`, `cancel()`.
+Kotlin은 `session.state`에서, Swift는 `session.states`에서(그리고 동기 스냅샷 `session.currentState`에서)
+현재 값을 읽습니다.
+
+### 종료 상태 대기
+
+아래의 모든 흐름에서 재사용하게 될 관용구는 "상태머신이 종료 상태에 도달할 때까지 구동한다"입니다.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+import kotlinx.coroutines.flow.first
+
+when (val terminal = session.state.first { it.isTerminal }) {
+    is IssuanceState.Completed -> terminal.result.issued   // List<CredentialId>
+    is IssuanceState.Failed    -> handle(terminal.error)
+    else -> {}
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+for await state in session.states {
+    if case .completed(let result) = state {
+        let ids = result.issued   // [CredentialId]
+    }
+    if case .failed(let error) = state {
+        handle(error)
+    }
+    if state.isTerminal { break }
+}
+```
+
+</TabItem>
+</Tabs>
+
+## 사전 인가 코드 흐름
+
+가장 흔한 흐름입니다. 발급기관이 오퍼(딥 링크, QR, 또는 원시 JSON)를 전달하면, 이를 리졸브하고 오퍼의
+구성(configuration) 중 하나에 대해 요청을 시작합니다. 이미 알고 있는 트랜잭션 코드가 오퍼에 포함되어
+있다면 `txCode`를 미리 채웁니다. 그런 다음 세션을 종료 상태까지 구동합니다.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+import kotlinx.coroutines.flow.first
+
+val offer = wallet.issuance.resolveOffer(offerUri)   // deep link / QR / raw JSON
+
+val session = wallet.issuance.start(
+    IssuanceRequest.fromOffer(
+        offer,
+        configurationId = offer.credentialConfigurationIds.first(),
+        txCode = "1234",   // pre-known transaction code, if any
+    ),
+)
+
+when (val terminal = session.state.first { it.isTerminal }) {
+    is IssuanceState.Completed -> terminal.result.issued   // stored credential ids
+    is IssuanceState.Failed    -> handle(terminal.error)
+    else -> {}
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+let offer = try await wallet.issuance.resolveOffer(offerUri)   // deep link / QR / raw JSON
+
+let session = wallet.issuance.start(
+    IssuanceRequest.fromOffer(
+        offer,
+        configurationId: offer.credentialConfigurationIds.first!,
+        txCode: "1234"   // pre-known transaction code, if any
+    )
+)
+
+for await state in session.states {
+    if case .completed(let result) = state {
+        let ids = result.issued   // stored credential ids
+    }
+    if case .failed(let error) = state {
+        handle(error)
+    }
+    if state.isTerminal { break }
+}
+```
+
+</TabItem>
+</Tabs>
+
+`offer.requiresTxCode`는 발급기관이 트랜잭션 코드를 요구할지 여부를 미리 알려주므로, 사용자에게 코드를
+입력받을지 결정할 수 있습니다.
+
+## 대화형 트랜잭션 코드
+
+아직 갖고 있지 않은 `tx_code`를 오퍼가 요구한다면 — 예를 들어 발급기관이 SMS나 이메일로 보내는 코드 —
+`txCode` **없이** 시작합니다. 세션은 `TxCodeRequired`에서 멈춥니다. 사용자로부터 코드를 받아
+`submitTxCode`를 호출한 뒤 종료 상태까지 이어갑니다.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+import kotlinx.coroutines.flow.first
+
+val session = wallet.issuance.start(
+    IssuanceRequest.fromOffer(offer, offer.credentialConfigurationIds.first()),  // no txCode
+)
+
+// The session pauses here until the code arrives out-of-band:
+session.state.first { it is IssuanceState.TxCodeRequired }
+session.submitTxCode(userEnteredCode)   // e.g. from SMS / email
+
+val terminal = session.state.first { it.isTerminal }   // Completed | Failed
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+let session = wallet.issuance.start(
+    IssuanceRequest.fromOffer(offer, configurationId: offer.credentialConfigurationIds.first!)  // no txCode
+)
+
+for await state in session.states {
+    if case .txCodeRequired = state {
+        session.submitTxCode(userEnteredCode)   // e.g. from SMS / email
+    }
+    if state.isTerminal { break }   // .completed | .failed
+}
+```
+
+</TabItem>
+</Tabs>
+
+## 인가 코드 흐름 (브라우저)
+
+오퍼가 없는 경우 — 월렛이 개시하는(wallet-initiated) 요청 — 또는 오퍼가 인가 코드 그랜트를 사용하는
+경우에는, 발급기관 URL과 구성 id를 사용해 `fromIssuer`를 씁니다. 세션은 `AuthorizationRequired`에서
+멈추며, 그 값은 인가 URL입니다. 이를 브라우저로 열고, 브라우저가 `redirectUri`로 다시 리다이렉트하면 전체
+리다이렉트를 `completeAuthorization`에 넘기면 세션이 재개됩니다.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+import kotlinx.coroutines.flow.first
+
+val session = wallet.issuance.start(
+    IssuanceRequest.fromIssuer(
+        credentialIssuer = "https://issuer.example.org",
+        configurationId = "eu.europa.ec.eudi.pid_jwt_vc_json",
+    ),
+)
+
+// 1. Pause at AuthorizationRequired — open the URL in a browser:
+val pending = session.state.first { it is IssuanceState.AuthorizationRequired }
+openInBrowser((pending as IssuanceState.AuthorizationRequired).authorizationUrl)
+
+// 2. From your redirect (deep-link) handler, feed the full redirect back in:
+session.completeAuthorization(redirectUri)   // "eudi-wallet://authorize?code=…&state=…"
+
+// 3. It resumes to a terminal state:
+val terminal = session.state.first { it.isTerminal }
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+let session = wallet.issuance.start(
+    IssuanceRequest.fromIssuer(
+        "https://issuer.example.org",
+        configurationId: "eu.europa.ec.eudi.pid_jwt_vc_json"
+    )
+)
+
+// Drive the session; open the browser when it pauses:
+for await state in session.states {
+    if case .authorizationRequired(let url) = state {
+        openInBrowser(url)   // system browser / ASWebAuthenticationSession
+    }
+    if state.isTerminal { break }   // .completed | .failed
+}
+
+// From your redirect (deep-link) handler, feed the full redirect back in:
+func onRedirect(_ redirectUri: String) {
+    session.completeAuthorization(redirectUri)   // "eudi-wallet://authorize?code=…&state=…"
+}
+```
+
+</TabItem>
+</Tabs>
+
+`clientId`와 `redirectUri`는 `IssuanceConfig`에서 가져옵니다(기본값 `"wallet-dev"` 및
+`"eudi-wallet://authorize"`).
+
+## SDK가 대신 처리해 주는 것
+
+세션 API 아래의 모든 것은 SDK가 대신 처리합니다 — 이 와이어 수준의 세부 사항은 직접 다룰 일이 없습니다.
+
+- **PAR + PKCE + DPoP** (RFC 9449) — 푸시 인가 요청, code-verifier 바인딩, 모든 토큰·크리덴셜 호출에
+  대한 소유 증명(proof-of-possession) JWT.
+- **키 어테스테이션** — HAIP §8.2.1.1에 따른 소유 증명 및 키 어테스테이션 JWT.
+- **배치 발급** — 하나의 요청으로 크리덴셜 인스턴스 N개를 요청합니다(아래 키 정책 참고).
+- **지연(Deferred)** (§9) — 크리덴셜이 준비될 때까지 지연 엔드포인트를 폴링합니다.
+- **알림(Notification)** (§10) — `credential_accepted` 알림을 자동으로 전송합니다.
+- **갱신 / 재발급** — 리프레시 토큰을 저장하고 재사용해 크리덴셜을 갱신합니다.
+- **메타데이터 캡처** — 발급 시점에 발급기관 신원과 표시 메타데이터가 크리덴셜에 저장됩니다
+  (`credential.issuer`, `credential.display`).
+
+모든 크리덴셜은 여러분의 `SecureArea` 안에서 새로 생성된 홀더 키에 바인딩되며, 개인 키는 결코 밖으로
+나가지 않습니다.
+
+## 지연 및 재발급
+
+두 작업 모두 위의 흐름과 똑같이 구동하는 `IssuanceSession`을 반환합니다.
+
+`resumeDeferred(id)`는 발급기관이 수락했지만 아직 발급을 마치지 못한 크리덴셜(지연 트랜잭션)을 재개합니다.
+`reissue(id)`는 저장된 리프레시 토큰과 메타데이터를 사용해 기존 크리덴셜을 갱신합니다.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+import kotlinx.coroutines.flow.first
+
+// Deferred — resume a not-yet-ready credential:
+val deferred = wallet.issuance.resumeDeferred(credentialId)
+deferred.state.first { it.isTerminal }
+
+// Reissue — renew an existing credential via its stored refresh token:
+val renewed = wallet.issuance.reissue(credentialId)
+renewed.state.first { it.isTerminal }
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+// Deferred — resume a not-yet-ready credential:
+let deferred = wallet.issuance.resumeDeferred(credentialId)
+for await state in deferred.states where state.isTerminal { break }
+
+// Reissue — renew an existing credential via its stored refresh token:
+let renewed = wallet.issuance.reissue(credentialId)
+for await state in renewed.states where state.isTerminal { break }
+```
+
+</TabItem>
+</Tabs>
+
+## 키 정책과 배치 크기
+
+`CredentialPolicy`는 몇 개의 홀더 키를 생성하고 제시 시점에 어떻게 소비할지를 제어합니다. 기본값은
+`CredentialPolicy(batchSize = 1, use = Rotate)`입니다.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+IssuanceRequest.fromOffer(
+    offer,
+    configurationId = offer.credentialConfigurationIds.first(),
+    policy = CredentialPolicy(batchSize = 5, use = KeyUse.OneTime),
+)
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+IssuanceRequest.fromOffer(
+    offer,
+    configurationId: offer.credentialConfigurationIds.first!,
+    policy: CredentialPolicy(batchSize: 5, use: .oneTime)
+)
+```
+
+</TabItem>
+</Tabs>
+
+- **`OneTime`** (Kotlin `KeyUse.OneTime` / Swift `.oneTime`) — 각 제시마다 새로운 인스턴스를 소비하므로
+  두 제시가 같은 키를 공유하지 않습니다. 이는 검증기관 간 **비연결성(unlinkability)**을 제공합니다.
+  재발급 전까지 예상되는 제시 횟수를 감당할 만큼 충분히 큰 `batchSize`와 함께 사용하십시오.
+- **`Rotate`** (Kotlin `KeyUse.Rotate` / Swift `.rotate`) — 인스턴스를 제시 간에 **재사용**합니다.
+  키와 발급 왕복이 더 적지만, 같은 키로 이뤄진 제시들은 상호 연결(correlate)될 수 있습니다.
+
+`batchSize`는 한 번의 배치로 요청하는 인스턴스의 개수입니다. `OneTime`에서는 각 인스턴스가 한 번씩
+소비되며, 잔량이 부족해지면 `reissue(id)`로 보충합니다.

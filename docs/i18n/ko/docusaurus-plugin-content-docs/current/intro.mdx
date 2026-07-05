@@ -1,0 +1,67 @@
+---
+slug: /
+sidebar_position: 1
+title: 소개
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# EUDI Wallet SDK
+
+**eIDAS 2.0**(ARF / HAIP) 기반으로 디지털 크리덴셜을 발급·저장·제시하는 **풀 스크래치** EUDI(유럽 디지털 신원) 월렛 SDK입니다. **Kotlin**과 **Swift** 두 네이티브 구현으로 제공되며, API 계약만 공유합니다.
+
+## 설계 원칙
+
+- **헤드리스.** UI 없음. 앱이 임베드하는 B2B 라이브러리이고, 화면은 앱이 소유합니다.
+- **네이티브 2벌.** Kotlin 구현과 Swift 구현이 **API 계약만** 공유합니다 — 공유 런타임 없이 각 플랫폼에 이디오매틱하게.
+- **풀 스크래치.** EU 레퍼런스 월렛은 상호운용 대상일 뿐 의존성이 아닙니다. CBOR/COSE, SD-JWT VC, mdoc, OpenID4VCI/VP, X.509 트러스트까지 모든 계층을 자체 구현했습니다.
+- **eIDAS 2.0 우선.** ARF·HAIP 프로파일이 기능을 이끕니다.
+- **포트 & 어댑터.** 코어는 순수하고 Linux에서 테스트 가능하며, 호스트가 얇은 플랫폼 기능(키·저장·HTTP·BLE)을 생성자 주입으로 넣습니다 — DI 프레임워크 없음.
+
+## 무엇을 하나
+
+| 기능 | 표준 |
+|---|---|
+| **발급** | OpenID4VCI 1.0 — 사전인가·인가코드, PAR, PKCE, DPoP, 키 어테스테이션, 배치, deferred, notification, refresh |
+| **저장** | DCQL 매칭·상태(IETF Token Status List)·라이프사이클을 갖춘 크리덴셜 저장소 |
+| **원격 제시** | OpenID4VP 1.0 — DCQL, `direct_post`(`.jwt`), 서명 request object(리더 트러스트) |
+| **브라우저 제시** | W3C Digital Credentials API (origin 바인딩) |
+| **근접 제시** | ISO/IEC 18013-5 device retrieval — engagement, ECDH 세션, 리더 인증 |
+| **포맷** | SD-JWT VC (RFC 9901), ISO 18013-5 mdoc, CBOR/COSE, X.509 PKIX |
+| **감사** | 트랜잭션 로그(ARF/GDPR) — relying party, 공개된 클레임, 신뢰 판단 |
+
+## 하나의 파사드
+
+모든 것은 조립된 `Wallet` 하나로 접근합니다:
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+val wallet = Wallet.create(config, ports)
+
+wallet.credentials    // 목록 / 조회 / 삭제 / DCQL 매칭 / 상태
+wallet.issuance       // OpenID4VCI 발급 세션
+wallet.presentation   // OpenID4VP 원격 + DC API
+wallet.proximity      // ISO 18013-5 대면
+wallet.transactions   // 감사 이력
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+let wallet = Wallet.create(config: config, ports: ports)
+
+wallet.credentials    // 목록 / 조회 / 삭제 / DCQL 매칭 / 상태
+wallet.issuance       // OpenID4VCI 발급 세션
+wallet.presentation   // OpenID4VP 원격 + DC API
+wallet.proximity      // ISO 18013-5 대면
+wallet.transactions   // 감사 이력
+```
+
+</TabItem>
+</Tabs>
+
+**[시작하기](./getting-started)**에서 월렛을 조립하거나 **[아키텍처](./architecture)**에서 모듈 구성을 보세요.

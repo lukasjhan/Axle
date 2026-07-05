@@ -1,0 +1,73 @@
+---
+slug: /
+sidebar_position: 1
+title: Introduction
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# EUDI Wallet SDK
+
+A **from-scratch** EUDI (European Digital Identity) wallet SDK for issuing, storing, and presenting
+digital credentials under **eIDAS 2.0** (ARF / HAIP). It ships as two native implementations —
+**Kotlin** and **Swift** — that share only an API contract.
+
+## Design principles
+
+- **Headless.** No UI. The SDK is a B2B library your app embeds; you own the screens.
+- **Native two-fold.** A Kotlin implementation and a Swift implementation that share only an API
+  contract — no shared runtime, each idiomatic to its platform.
+- **Full scratch.** The EU reference wallet is an interop target, not a dependency. Every layer —
+  CBOR/COSE, SD-JWT VC, mdoc, OpenID4VCI/VP, X.509 trust — is implemented in-house.
+- **eIDAS 2.0 first.** ARF and HAIP profiles drive the feature set.
+- **Ports & adapters.** The core is pure and Linux-testable; the host injects thin platform
+  capabilities (keys, storage, HTTP, BLE) through constructor injection — no DI framework.
+
+## What it does
+
+| Capability | Standards |
+|---|---|
+| **Issuance** | OpenID4VCI 1.0 — pre-authorized & authorization-code, PAR, PKCE, DPoP, key attestation, batch, deferred, notification, refresh |
+| **Storage** | Credential store with DCQL matching, status (IETF Token Status List), lifecycle |
+| **Remote presentation** | OpenID4VP 1.0 — DCQL, `direct_post`(`.jwt`), signed request objects (reader trust) |
+| **Browser presentation** | W3C Digital Credentials API (origin-bound) |
+| **Proximity** | ISO/IEC 18013-5 device retrieval — engagement, ECDH session, reader authentication |
+| **Formats** | SD-JWT VC (RFC 9901), ISO 18013-5 mdoc, CBOR/COSE, X.509 PKIX |
+| **Audit** | Transaction log (ARF/GDPR) — relying party, disclosed claims, trust decision |
+
+## One facade
+
+Everything is reached through a single assembled `Wallet`:
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+val wallet = Wallet.create(config, ports)
+
+wallet.credentials    // list / get / delete / DCQL match / status
+wallet.issuance       // OpenID4VCI issuance sessions
+wallet.presentation   // OpenID4VP remote + DC API
+wallet.proximity      // ISO 18013-5 in-person
+wallet.transactions   // audit history
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+let wallet = Wallet.create(config: config, ports: ports)
+
+wallet.credentials    // list / get / delete / DCQL match / status
+wallet.issuance       // OpenID4VCI issuance sessions
+wallet.presentation   // OpenID4VP remote + DC API
+wallet.proximity      // ISO 18013-5 in-person
+wallet.transactions   // audit history
+```
+
+</TabItem>
+</Tabs>
+
+Continue to **[Getting started](./getting-started)** to assemble a wallet, or
+**[Architecture](./architecture)** for the module layout.

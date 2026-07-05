@@ -1,0 +1,81 @@
+---
+title: 트러스트 & 감사
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# 트러스트 & 감사
+
+## 트러스트 앵커
+
+트러스트는 `WalletConfig.trust`에 DER 인증서 목록으로 설정하므로, 공개 API는 X.509 타입에서 자유롭습니다:
+
+- **`issuerAnchorsDer`** — Token Status List와 mdoc 발급자 인증에서 발급자 인증서를 검증합니다.
+- **`readerAnchorsDer`** — 두 플로우가 공유하는 하나의 validator: 원격 **서명 VP request object**(`X509RequestVerifier`)와 근접 **mdoc 리더 인증**(`X5cMdocReaderTrust`).
+
+체인 검증은 실제 PKIX입니다(앵커까지 경로 구성, 유효기간, basic constraints). 설정된 앵커로 체인되지 않는 인증서는 **신뢰되지 않습니다** — 인증서가 있다는 것만으로는 결코 충분하지 않습니다.
+
+## 상태
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+when (wallet.credentials.status(id)) {
+    CredentialStatus.Valid -> Unit
+    CredentialStatus.Invalid, CredentialStatus.Suspended -> showRevoked()
+    CredentialStatus.Unknown -> Unit
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+switch try await wallet.credentials.status(id) {
+case .valid: break
+case .invalid, .suspended: showRevoked()
+case .unknown: break
+}
+```
+
+</TabItem>
+</Tabs>
+
+폐기는 IETF **Token Status List**를 사용합니다 — SDK가 상태 토큰을 가져와 검증(서명 + 발급자 체인)하고 캐시한 뒤 크리덴셜의 인덱스를 읽습니다.
+
+## 트랜잭션 로그
+
+모든 제시는 투명성(ARF / GDPR)을 위해 기록됩니다. 포트로 `TransactionLogStore`(영속)를 제공하고, 파사드로 이력을 조회합니다:
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+val history = wallet.transactions.history()                         // 최신순
+val byRp = wallet.transactions.query(relyingPartyId = "verifier.example")
+
+val entry = history.first()
+entry.relyingParty   // RelyingParty(id, name, trusted, certificateChainDer)
+entry.documents      // 크리덴셜별: format, type, 공개된 클레임 경로
+entry.status         // SUCCESS | INCOMPLETE | ERROR
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+let history = await wallet.transactions.history()                   // 최신순
+let byRp = await wallet.transactions.query(relyingPartyId: "verifier.example")
+
+let entry = history[0]
+entry.relyingParty   // RelyingParty(id, name, trusted, certificateChainDer)
+entry.documents      // 크리덴셜별: format, type, 공개된 클레임 경로
+entry.status         // .success | .incomplete | .error
+```
+
+</TabItem>
+</Tabs>
+
+relying party에는 크리덴셜을 **누구에게** 제시했는지와 **신뢰가 암호학적으로 확립됐는지**가 기록됩니다 — 원격/DC API는 검증된 request object에서, 근접은 리더 인증에서. 공개된 클레임 경로와 (선택적으로) 원본 요청/응답도 분쟁 해결용으로 보관됩니다.

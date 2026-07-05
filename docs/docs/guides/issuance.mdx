@@ -1,0 +1,329 @@
+---
+title: Issuance (OpenID4VCI)
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Issuance
+
+Issuance is a **suspending state machine**. You resolve a credential offer (or point the wallet
+straight at an issuer), then drive a session toward a terminal state. The session pauses at every
+point that needs a human or the app — browser authorization, a transaction code — and resumes when
+you call back into it.
+
+Both platforms model the same machine. Kotlin exposes it as a coroutine `StateFlow`; Swift exposes it
+as an `AsyncStream`.
+
+## The session state machine
+
+`wallet.issuance.start(…)` returns an `IssuanceSession`. It emits a sequence of states; two of them
+are **terminal** (`isTerminal == true`), and every flow ends on one of those.
+
+| Stage | Kotlin `IssuanceState` | Swift `IssuanceState` | Meaning |
+|---|---|---|---|
+| Preparing | `Preparing` | `.preparing` | Fetching issuer metadata, building PAR + PKCE. |
+| Authorization | `AuthorizationRequired(authorizationUrl)` | `.authorizationRequired(String)` | Open the URL in a browser (authorization-code flow), then call `completeAuthorization`. |
+| Tx code | `TxCodeRequired` | `.txCodeRequired` | The issuer expects an out-of-band code; call `submitTxCode`. |
+| Processing | `Processing` | `.processing` | Exchanging the code and requesting the credential(s). |
+| Completed | `Completed(result)` | `.completed(IssuanceResult)` | **Terminal.** `result.issued` is the list of stored `CredentialId`s. |
+| Failed | `Failed(error)` | `.failed(IssuanceError)` | **Terminal.** Carries the error. |
+
+Session controls: `submitTxCode(code)`, `completeAuthorization(redirectUri)`, and `cancel()`.
+Kotlin reads the current value from `session.state`; Swift from `session.states` (and the synchronous
+snapshot `session.currentState`).
+
+### Awaiting a terminal state
+
+The idiom you will reuse in every flow below is "run until the machine reaches a terminal state":
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+import kotlinx.coroutines.flow.first
+
+when (val terminal = session.state.first { it.isTerminal }) {
+    is IssuanceState.Completed -> terminal.result.issued   // List<CredentialId>
+    is IssuanceState.Failed    -> handle(terminal.error)
+    else -> {}
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+for await state in session.states {
+    if case .completed(let result) = state {
+        let ids = result.issued   // [CredentialId]
+    }
+    if case .failed(let error) = state {
+        handle(error)
+    }
+    if state.isTerminal { break }
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Pre-authorized code flow
+
+The most common flow: the issuer hands you an offer (deep link, QR, or raw JSON). You resolve it,
+start a request for one of its configurations, and — if the offer carries a transaction code you
+already know — pre-fill `txCode`. Then you drive the session to a terminal state.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+import kotlinx.coroutines.flow.first
+
+val offer = wallet.issuance.resolveOffer(offerUri)   // deep link / QR / raw JSON
+
+val session = wallet.issuance.start(
+    IssuanceRequest.fromOffer(
+        offer,
+        configurationId = offer.credentialConfigurationIds.first(),
+        txCode = "1234",   // pre-known transaction code, if any
+    ),
+)
+
+when (val terminal = session.state.first { it.isTerminal }) {
+    is IssuanceState.Completed -> terminal.result.issued   // stored credential ids
+    is IssuanceState.Failed    -> handle(terminal.error)
+    else -> {}
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+let offer = try await wallet.issuance.resolveOffer(offerUri)   // deep link / QR / raw JSON
+
+let session = wallet.issuance.start(
+    IssuanceRequest.fromOffer(
+        offer,
+        configurationId: offer.credentialConfigurationIds.first!,
+        txCode: "1234"   // pre-known transaction code, if any
+    )
+)
+
+for await state in session.states {
+    if case .completed(let result) = state {
+        let ids = result.issued   // stored credential ids
+    }
+    if case .failed(let error) = state {
+        handle(error)
+    }
+    if state.isTerminal { break }
+}
+```
+
+</TabItem>
+</Tabs>
+
+`offer.requiresTxCode` tells you up front whether the issuer will demand a transaction code, so you
+can decide whether to prompt the user.
+
+## Interactive transaction code
+
+If the offer requires a `tx_code` you don't have yet — for example, one the issuer sends by SMS or
+email — start **without** `txCode`. The session pauses at `TxCodeRequired`; collect the code from the
+user and call `submitTxCode`, then continue to a terminal state.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+import kotlinx.coroutines.flow.first
+
+val session = wallet.issuance.start(
+    IssuanceRequest.fromOffer(offer, offer.credentialConfigurationIds.first()),  // no txCode
+)
+
+// The session pauses here until the code arrives out-of-band:
+session.state.first { it is IssuanceState.TxCodeRequired }
+session.submitTxCode(userEnteredCode)   // e.g. from SMS / email
+
+val terminal = session.state.first { it.isTerminal }   // Completed | Failed
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+let session = wallet.issuance.start(
+    IssuanceRequest.fromOffer(offer, configurationId: offer.credentialConfigurationIds.first!)  // no txCode
+)
+
+for await state in session.states {
+    if case .txCodeRequired = state {
+        session.submitTxCode(userEnteredCode)   // e.g. from SMS / email
+    }
+    if state.isTerminal { break }   // .completed | .failed
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Authorization-code flow (browser)
+
+When there is no offer — a wallet-initiated request — or when the offer uses the authorization-code
+grant, use `fromIssuer` with the issuer URL and configuration id. The session pauses at
+`AuthorizationRequired`, whose value is the authorization URL. Open it in a browser; when the browser
+redirects back to your `redirectUri`, hand the full redirect to `completeAuthorization` and the
+session resumes.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+import kotlinx.coroutines.flow.first
+
+val session = wallet.issuance.start(
+    IssuanceRequest.fromIssuer(
+        credentialIssuer = "https://issuer.example.org",
+        configurationId = "eu.europa.ec.eudi.pid_jwt_vc_json",
+    ),
+)
+
+// 1. Pause at AuthorizationRequired — open the URL in a browser:
+val pending = session.state.first { it is IssuanceState.AuthorizationRequired }
+openInBrowser((pending as IssuanceState.AuthorizationRequired).authorizationUrl)
+
+// 2. From your redirect (deep-link) handler, feed the full redirect back in:
+session.completeAuthorization(redirectUri)   // "eudi-wallet://authorize?code=…&state=…"
+
+// 3. It resumes to a terminal state:
+val terminal = session.state.first { it.isTerminal }
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+let session = wallet.issuance.start(
+    IssuanceRequest.fromIssuer(
+        "https://issuer.example.org",
+        configurationId: "eu.europa.ec.eudi.pid_jwt_vc_json"
+    )
+)
+
+// Drive the session; open the browser when it pauses:
+for await state in session.states {
+    if case .authorizationRequired(let url) = state {
+        openInBrowser(url)   // system browser / ASWebAuthenticationSession
+    }
+    if state.isTerminal { break }   // .completed | .failed
+}
+
+// From your redirect (deep-link) handler, feed the full redirect back in:
+func onRedirect(_ redirectUri: String) {
+    session.completeAuthorization(redirectUri)   // "eudi-wallet://authorize?code=…&state=…"
+}
+```
+
+</TabItem>
+</Tabs>
+
+The `clientId` and `redirectUri` come from your `IssuanceConfig` (defaults `"wallet-dev"` and
+`"eudi-wallet://authorize"`).
+
+## What the SDK handles for you
+
+Everything below the session API is done for you — you never touch these wire details:
+
+- **PAR + PKCE + DPoP** (RFC 9449) — pushed authorization requests, code-verifier binding, and
+  proof-of-possession JWTs on every token and credential call.
+- **Key attestation** — proof-of-possession and key-attestation JWTs per HAIP §8.2.1.1.
+- **Batch issuance** — request N instances of a credential in one shot (see key policy below).
+- **Deferred** (§9) — polls the deferred endpoint until the credential is ready.
+- **Notification** (§10) — sends the `credential_accepted` notification automatically.
+- **Refresh / reissuance** — stores the refresh token and reuses it to renew credentials.
+- **Metadata capture** — the issuer identity and display metadata are stored on the credential at
+  issuance time (`credential.issuer`, `credential.display`).
+
+Every credential is bound to a fresh holder key created inside your `SecureArea`; private keys never
+leave it.
+
+## Deferred and reissuance
+
+Both operations return an `IssuanceSession` that you drive exactly like the flows above.
+
+`resumeDeferred(id)` resumes a credential the issuer accepted but hadn't finished minting (a deferred
+transaction). `reissue(id)` renews an existing credential using its stored refresh token and metadata.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+import kotlinx.coroutines.flow.first
+
+// Deferred — resume a not-yet-ready credential:
+val deferred = wallet.issuance.resumeDeferred(credentialId)
+deferred.state.first { it.isTerminal }
+
+// Reissue — renew an existing credential via its stored refresh token:
+val renewed = wallet.issuance.reissue(credentialId)
+renewed.state.first { it.isTerminal }
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+// Deferred — resume a not-yet-ready credential:
+let deferred = wallet.issuance.resumeDeferred(credentialId)
+for await state in deferred.states where state.isTerminal { break }
+
+// Reissue — renew an existing credential via its stored refresh token:
+let renewed = wallet.issuance.reissue(credentialId)
+for await state in renewed.states where state.isTerminal { break }
+```
+
+</TabItem>
+</Tabs>
+
+## Key policy and batch size
+
+`CredentialPolicy` controls how many holder keys are minted and how they are consumed at presentation
+time. It defaults to `CredentialPolicy(batchSize = 1, use = Rotate)`.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+IssuanceRequest.fromOffer(
+    offer,
+    configurationId = offer.credentialConfigurationIds.first(),
+    policy = CredentialPolicy(batchSize = 5, use = KeyUse.OneTime),
+)
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+IssuanceRequest.fromOffer(
+    offer,
+    configurationId: offer.credentialConfigurationIds.first!,
+    policy: CredentialPolicy(batchSize: 5, use: .oneTime)
+)
+```
+
+</TabItem>
+</Tabs>
+
+- **`OneTime`** (Kotlin `KeyUse.OneTime` / Swift `.oneTime`) — each presentation consumes a fresh
+  instance, so no two presentations share a key. This gives **unlinkability** across verifiers.
+  Pair it with a `batchSize` large enough to cover expected presentations before reissuance.
+- **`Rotate`** (Kotlin `KeyUse.Rotate` / Swift `.rotate`) — instances are **reused** across
+  presentations. Fewer keys and issuance round-trips, but presentations made with the same key are
+  correlatable.
+
+`batchSize` is the number of instances requested in a single batch. With `OneTime`, each instance is
+spent once; when they run low, `reissue(id)` tops them up.

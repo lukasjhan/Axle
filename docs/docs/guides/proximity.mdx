@@ -1,0 +1,389 @@
+---
+title: Proximity (ISO 18013-5)
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Proximity presentation
+
+**Proximity** is in-person, offline presentation of an mdoc — for example a mobile driving licence
+(mDL) — to a nearby **reader** over a short-range transport (BLE / NFC). No network is involved: the
+wallet and the reader exchange credentials directly, device to device.
+
+The SDK owns the **entire ISO/IEC 18013-5 device-retrieval exchange**:
+
+- **Device engagement** — generating the engagement structure the reader scans to start the session.
+- **ECDH session keys** — deriving the shared secret and encrypting every message.
+- **Message encryption** — sealing `SessionData` frames both ways.
+- **`DeviceRequest` parsing** — decoding what doctype(s) and elements the reader asked for.
+- **Reader authentication** — verifying the reader's `readerAuth` signature and certificate chain.
+- **Device-signed `DeviceResponse`** — selectively disclosing the requested elements and signing them
+  with the credential's device (holder) key.
+
+You provide only the **transport** — the radio bytes in and out. Everything cryptographic and
+protocol-level lives inside the SDK.
+
+## The flow
+
+Call `present(transport)` with your `ProximityTransport`, then observe the session state. The state
+machine walks through `GeneratingEngagement` → `EngagementReady` (show a QR for the reader) →
+`RequestReceived` (inspect and respond) → `Completed`.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+val session = wallet.proximity.present(transport)   // your ProximityTransport
+
+session.state.collect { s ->
+    when (s) {
+        is ProximityState.EngagementReady ->
+            showQr(s.deviceEngagement)                       // render for the reader to scan
+
+        is ProximityState.RequestReceived -> {
+            val request = s.request
+            // request.documents        — requested doctype(s) + elements
+            // request.reader.trusted   — reader authentication result
+            // request.reader.commonName
+            session.respond(ProximitySelection.auto(request))   // or a user-chosen selection
+        }
+
+        is ProximityState.Completed -> onDone()
+        is ProximityState.Declined  -> onDeclined()
+        is ProximityState.Failed    -> onError(s.error)
+        else -> { /* GeneratingEngagement, Submitting */ }
+    }
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+let session = wallet.proximity.present(transport)   // your ProximityTransport
+
+for await state in session.states {
+    switch state {
+    case .engagementReady(let deviceEngagement):
+        showQr(deviceEngagement)                          // render for the reader to scan
+
+    case .requestReceived(let request):
+        // request.documents        — requested doctype(s) + elements
+        // request.reader.trusted   — reader authentication result
+        // request.reader.commonName
+        session.respond(.auto(request))                   // or a user-chosen selection
+
+    case .completed:
+        onDone()
+    case .declined:
+        onDeclined()
+    case .failed(let error):
+        onError(error)
+    default:
+        break   // generatingEngagement, submitting
+    }
+}
+```
+
+</TabItem>
+</Tabs>
+
+`EngagementReady` carries the `deviceEngagement` bytes. Render them as a QR code (or hand them to an
+NFC tap) so the reader can scan the engagement and open the session. Once the reader connects and
+sends its `DeviceRequest`, the SDK decrypts and parses it and emits `RequestReceived`.
+
+The terminal states are `Completed`, `Declined`, and `Failed`; every state exposes `.isTerminal`.
+
+### Inspecting the request
+
+`RequestReceived` gives you a `ProximityRequest`. Inspect `documents` to see what the reader asked
+for, check `reader` for the authentication result, and use `satisfiable` to decide whether you can
+answer at all. `ProximitySelection.auto(request)` builds a response from the matching stored
+credentials; `decline()` refuses.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+is ProximityState.RequestReceived -> {
+    val request = s.request
+
+    for (doc in request.documents) {
+        doc.docType             // e.g. "org.iso.18013.5.1.mDL"
+        doc.requestedElements   // Map<namespace, List<elementId>>
+        doc.candidate           // matching CredentialId, or null if nothing stored answers it
+    }
+
+    val reader = request.reader
+    if (reader.trusted) {
+        reader.commonName       // verified reader identity from readerAuth
+    }
+
+    if (request.satisfiable) {
+        session.respond(ProximitySelection.auto(request))
+    } else {
+        session.decline()
+    }
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+case .requestReceived(let request):
+    for doc in request.documents {
+        doc.docType             // e.g. "org.iso.18013.5.1.mDL"
+        doc.requestedElements   // [namespace: [elementId]]
+        doc.candidate           // matching CredentialId, or nil if nothing stored answers it
+    }
+
+    let reader = request.reader
+    if reader.trusted {
+        reader.commonName       // verified reader identity from readerAuth
+    }
+
+    if request.satisfiable {
+        session.respond(.auto(request))
+    } else {
+        session.decline()
+    }
+```
+
+</TabItem>
+</Tabs>
+
+## The transport port
+
+The SDK drives a framed, encrypted message exchange but never touches the radio. You implement the
+`ProximityTransport` port — three methods, one for each direction plus teardown:
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+interface ProximityTransport {
+    suspend fun send(message: ByteArray)   // framed SessionData → reader
+    suspend fun receive(): ByteArray       // framed SessionData ← reader
+    suspend fun close()
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+protocol ProximityTransport: Sendable {
+    func send(_ message: [UInt8]) async throws   // framed SessionData → reader
+    func receive() async throws -> [UInt8]        // framed SessionData ← reader
+    func close() async
+}
+```
+
+</TabItem>
+</Tabs>
+
+The bytes crossing `send` / `receive` are already the ISO 18013-5 session messages. Your job is only
+to move them over the wire.
+
+### A BLE implementation
+
+A BLE transport is an ISO 18013-5 GATT **peripheral**. It advertises the service UUID carried in the
+`deviceEngagement`, exposes the ISO 18013-5 **state**, **client2server**, and **server2device**
+characteristics, forwards inbound notifications into `receive()`, and turns each `send()` into a
+characteristic write. NFC is analogous — a different radio, the same `send` / `receive` contract. The
+SDK never opens a socket, advertises, or reads a characteristic; it only calls your port.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+// A BLE peripheral that carries ISO 18013-5 mdoc device retrieval.
+// The SDK calls send()/receive(); you bridge them to GATT.
+class BleProximityTransport(
+    private val serviceUuid: UUID,        // from the DeviceEngagement
+) : ProximityTransport {
+
+    private val inbound = Channel<ByteArray>(Channel.UNLIMITED)
+
+    // Advertise `serviceUuid`; expose the state / client2server / server2device
+    // characteristics (ISO 18013-5 §8). Route inbound notifications into `inbound`.
+
+    override suspend fun send(message: ByteArray) {
+        // write `message` to the outbound characteristic (chunked to the MTU)
+    }
+
+    override suspend fun receive(): ByteArray =
+        inbound.receive()                 // fed by notifications from the reader
+
+    override suspend fun close() {
+        // stop advertising, tear down the GATT server
+        inbound.close()
+    }
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+// A BLE peripheral that carries ISO 18013-5 mdoc device retrieval.
+// The SDK calls send()/receive(); you bridge them to CoreBluetooth.
+final class BleProximityTransport: ProximityTransport {
+
+    let serviceUUID: CBUUID               // from the DeviceEngagement
+
+    // Advertise `serviceUUID`; expose the state / client2server / server2device
+    // characteristics (ISO 18013-5 §8). Route inbound notifications into a buffer.
+
+    func send(_ message: [UInt8]) async throws {
+        // write `message` to the outbound characteristic (chunked to the MTU)
+    }
+
+    func receive() async throws -> [UInt8] {
+        // await the next notification from the reader
+    }
+
+    func close() async {
+        // stop advertising, tear down the peripheral manager
+    }
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Reader authentication
+
+If the `DeviceRequest` carries `readerAuth` and its certificate chains to a trust anchor configured
+in `readerAnchorsDer`, then `request.reader.trusted` is `true`, and the reader's CommonName and full
+certificate chain are recorded in the audit log. A missing, rogue, or unverifiable reader signature
+yields `trusted = false`.
+
+This is the **same trust model as remote signed requests** (OpenID4VP): the SDK verifies, records the
+outcome, and surfaces it — but does **not** block on it. The wallet shows the user whether the reader
+is trusted; the **user still decides** whether to disclose.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+// Configure the reader (verifier) trust anchors when assembling the wallet.
+val config = WalletConfig(
+    trust = TrustConfig(
+        issuerAnchorsDer = issuerAnchors,
+        readerAnchorsDer = readerAnchors,   // trusted reader roots (DER-encoded)
+    ),
+)
+
+// Later, on each request:
+val reader = request.reader
+reader.trusted               // chained to a configured anchor + valid readerAuth
+reader.commonName            // reader CN, when present
+reader.certificateChainDer   // full presented chain (also written to the audit log)
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+// Configure the reader (verifier) trust anchors when assembling the wallet.
+let config = WalletConfig(
+    trust: TrustConfig(
+        issuerAnchorsDer: issuerAnchors,
+        readerAnchorsDer: readerAnchors     // trusted reader roots (DER-encoded)
+    )
+)
+
+// Later, on each request:
+let reader = request.reader
+reader.trusted               // chained to a configured anchor + valid readerAuth
+reader.commonName            // reader CN, when present
+reader.certificateChainDer   // full presented chain (also written to the audit log)
+```
+
+</TabItem>
+</Tabs>
+
+Every completed exchange lands in `wallet.transactions`, with the relying party (reader), its trust
+verdict and chain, and the exact claims disclosed — see **[Trust and audit](./trust-and-audit)**.
+
+## Testability
+
+Because engagement, session encryption, and the `DeviceResponse` signature are pure, the whole
+exchange is unit-testable with an **in-memory transport** — no Bluetooth, no NFC, no device. You
+implement the same `ProximityTransport` port with in-process queues instead of a radio, and drive the
+other end from a mock reader. On device, you swap that one class for the BLE/NFC implementation; the
+rest of your code is unchanged.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+// In-memory transport: two queues wired to a mock reader — no radio.
+class InMemoryTransport : ProximityTransport {
+    val toReader = Channel<ByteArray>(Channel.UNLIMITED)   // SDK.send() lands here
+    val toWallet = Channel<ByteArray>(Channel.UNLIMITED)   // SDK.receive() reads here
+
+    override suspend fun send(message: ByteArray) = toReader.send(message)
+    override suspend fun receive(): ByteArray = toWallet.receive()
+    override suspend fun close() { toReader.close(); toWallet.close() }
+}
+
+@Test
+fun `reader retrieves the requested elements`() = runTest {
+    val transport = InMemoryTransport()
+    val session = wallet.proximity.present(transport)
+
+    // A mock reader reads `transport.toReader`, replies into `transport.toWallet`,
+    // and the SDK runs engagement, session encryption and DeviceResponse signing
+    // fully in-process.
+
+    val done = session.state.first { it.isTerminal }
+    assertTrue(done is ProximityState.Completed)
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+// In-memory transport: two queues wired to a mock reader — no radio.
+final class InMemoryTransport: ProximityTransport, @unchecked Sendable {
+    let toReader: AsyncStream<[UInt8]>                       // SDK.send() lands here
+    private let toReaderIn: AsyncStream<[UInt8]>.Continuation
+    private var toWallet: AsyncStream<[UInt8]>.Iterator      // SDK.receive() reads here
+
+    init(fromReader: AsyncStream<[UInt8]>) {
+        var cont: AsyncStream<[UInt8]>.Continuation!
+        self.toReader = AsyncStream { cont = $0 }
+        self.toReaderIn = cont
+        self.toWallet = fromReader.makeAsyncIterator()
+    }
+
+    func send(_ message: [UInt8]) async throws { toReaderIn.yield(message) }
+    func receive() async throws -> [UInt8] { await toWallet.next() ?? [] }
+    func close() async { toReaderIn.finish() }
+}
+
+func testReaderRetrievesRequestedElements() async {
+    let transport = InMemoryTransport(fromReader: mockReaderReplies)
+    let session = wallet.proximity.present(transport)
+
+    // The mock reader consumes `transport.toReader` and feeds `mockReaderReplies`;
+    // the SDK runs engagement, session encryption and DeviceResponse signing
+    // fully in-process.
+
+    for await state in session.states where state.isTerminal {
+        if case .completed = state { /* pass */ }
+        break
+    }
+}
+```
+
+</TabItem>
+</Tabs>
+
+The in-memory transport keeps proximity logic testable on a plain CI runner (including Linux); only
+the radio adapter needs a real device.

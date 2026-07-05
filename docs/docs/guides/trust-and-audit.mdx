@@ -1,0 +1,91 @@
+---
+title: Trust & Audit
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Trust & audit
+
+## Trust anchors
+
+Trust is configured as DER certificate lists on `WalletConfig.trust`, so the public API stays free of
+X.509 types:
+
+- **`issuerAnchorsDer`** — validates issuer certificates for the Token Status List and mdoc issuer
+  authentication.
+- **`readerAnchorsDer`** — one validator shared by two flows: remote **signed VP request objects**
+  (`X509RequestVerifier`) and proximity **mdoc reader authentication** (`X5cMdocReaderTrust`).
+
+Chain validation is real PKIX (path building to an anchor, validity, basic constraints). A
+certificate that does not chain to a configured anchor is **not trusted** — presence of a certificate
+is never sufficient.
+
+## Status
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+when (wallet.credentials.status(id)) {
+    CredentialStatus.Valid -> Unit
+    CredentialStatus.Invalid, CredentialStatus.Suspended -> showRevoked()
+    CredentialStatus.Unknown -> Unit
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+switch try await wallet.credentials.status(id) {
+case .valid: break
+case .invalid, .suspended: showRevoked()
+case .unknown: break
+}
+```
+
+</TabItem>
+</Tabs>
+
+Revocation uses the IETF **Token Status List** — the SDK fetches and verifies the status token
+(signature + issuer chain), caches it, and reads the credential's index.
+
+## Transaction log
+
+Every presentation is recorded for transparency (ARF / GDPR). Provide a `TransactionLogStore`
+(persistence) via ports; query history through the facade:
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+val history = wallet.transactions.history()                         // most recent first
+val byRp = wallet.transactions.query(relyingPartyId = "verifier.example")
+
+val entry = history.first()
+entry.relyingParty   // RelyingParty(id, name, trusted, certificateChainDer)
+entry.documents      // per-credential: format, type, disclosed claim paths
+entry.status         // SUCCESS | INCOMPLETE | ERROR
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+let history = await wallet.transactions.history()                   // most recent first
+let byRp = await wallet.transactions.query(relyingPartyId: "verifier.example")
+
+let entry = history[0]
+entry.relyingParty   // RelyingParty(id, name, trusted, certificateChainDer)
+entry.documents      // per-credential: format, type, disclosed claim paths
+entry.status         // .success | .incomplete | .error
+```
+
+</TabItem>
+</Tabs>
+
+The relying party records **who** the credential went to and **whether trust was cryptographically
+established** — for remote/DC API from the verified request object, for proximity from reader
+authentication. The disclosed claim paths and (optionally) raw request/response are kept for dispute
+resolution.

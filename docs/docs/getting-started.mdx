@@ -1,0 +1,387 @@
+---
+sidebar_position: 3
+title: Getting started
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Getting started
+
+## What is a wallet?
+
+A `Wallet` is the single object your app talks to. It owns the credential store and exposes
+every capability of the SDK through a small set of services:
+
+```
+wallet.credentials    // list / get / delete / DCQL match / status / changes
+wallet.issuance       // OpenID4VCI issuance sessions
+wallet.presentation   // OpenID4VP remote + Digital Credentials API
+wallet.proximity      // ISO 18013-5 in-person
+wallet.transactions   // audit history
+```
+
+You assemble it **once** — passing a `WalletConfig` (trust anchors and issuance defaults) and a
+`WalletPorts` bundle (the thin platform adapters the pure core needs) — and then hold onto it for
+the lifetime of your app. The core is fully implemented in Kotlin and mirrored in Swift; both share
+the same API contract, so the shapes below are identical across platforms.
+
+## Assemble a wallet
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+val wallet = Wallet.create(
+    config = WalletConfig(
+        trust = TrustConfig(
+            issuerAnchorsDer = issuerCaDerList,   // verifies issuer certs & Token Status Lists
+            readerAnchorsDer = readerCaDerList,   // verifies signed VP requests / mdoc reader auth
+        ),
+        issuance = IssuanceConfig(
+            clientId = "wallet-dev",
+            redirectUri = "eudi-wallet://authorize",
+        ),
+    ),
+    ports = WalletPorts(
+        secureAreas = listOf(androidKeystoreSecureArea),  // hardware-backed keys
+        storage = encryptedStorageDriver,                 // your persistence adapter
+        http = okHttpTransport,                            // your HTTP adapter
+        // walletAttestation, clock, rng, logger, transactionLogStore all have defaults
+    ),
+)
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+let wallet = Wallet.create(
+    config: WalletConfig(
+        trust: TrustConfig(
+            issuerAnchorsDer: issuerCAs,   // verifies issuer certs & Token Status Lists
+            readerAnchorsDer: readerCAs    // verifies signed VP requests / mdoc reader auth
+        ),
+        issuance: IssuanceConfig(
+            clientId: "wallet-dev",
+            redirectUri: "eudi-wallet://authorize"
+        )
+    ),
+    ports: WalletPorts(
+        secureAreas: [secureEnclaveSecureArea],  // hardware-backed keys
+        storage: encryptedStorageDriver,          // your persistence adapter
+        http: urlSessionTransport                 // your HTTP adapter
+        // walletAttestation, clock, rng, logger, transactionLogStore all have defaults
+    )
+)
+```
+
+</TabItem>
+</Tabs>
+
+### `WalletConfig`
+
+Both fields have defaults, so `WalletConfig()` is valid for a first run against an issuer that does
+not require trust anchors.
+
+| Field | Type | Purpose |
+|---|---|---|
+| `trust` | `TrustConfig` | X.509 trust anchors used across the SDK. `issuerAnchorsDer` validates issuer signing certificates and status-list signers; `readerAnchorsDer` validates signed presentation requests (OpenID4VP JAR) and mdoc reader authentication. Anchors are DER-encoded certificates (`List<ByteArray>` / `[[UInt8]]`). |
+| `issuance` | `IssuanceConfig` | Defaults applied to issuance flows: `clientId` (default `"wallet-dev"`) and `redirectUri` (default `"eudi-wallet://authorize"`). Set these to the values your issuer registered for your app. |
+
+### `WalletPorts`
+
+Ports are the boundary between the pure, platform-agnostic core and the host. Three are **required**;
+the rest have sensible defaults.
+
+| Port | Required? | Notes |
+|---|---|---|
+| `secureAreas` | **Yes** | One or more `SecureArea` key stores. In production this must be **Android Keystore** on Android and the **Secure Enclave** on iOS — keys are hardware-backed and never leave the device. |
+| `storage` | **Yes** | A `StorageDriver` for encrypted persistence of credentials and SDK state. |
+| `http` | **Yes** | An `HttpTransport` (e.g. OkHttp / URLSession) used for all network calls. It **must honour** `request.followRedirects`. |
+| `walletAttestation` | No | `WalletAttestationProvider` for wallet key attestation; defaults to none. |
+| `clock` | No | `WalletClock`; defaults to the system clock. |
+| `rng` | No | `Rng`; defaults to the platform secure RNG. |
+| `logger` | No | `WalletLogger`; defaults to none. |
+| `transactionLogStore` | No | Backing store for the audit log; defaults to an in-memory store. Provide a persistent one to keep history across restarts. |
+
+:::warning Production keys
+`SoftwareSecureArea` and `InMemoryStorageDriver` exist **only for tests** (they ship in the test kit).
+Never use them in a released build — they hold key material and credentials in process memory.
+:::
+
+For unit tests you can wire the software adapters and skip trust anchors entirely:
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+// Tests only — never ship SoftwareSecureArea / InMemoryStorageDriver
+val wallet = Wallet.create(
+    config = WalletConfig(),                       // all defaults
+    ports = WalletPorts(
+        secureAreas = listOf(SoftwareSecureArea()),
+        storage = InMemoryStorageDriver(),
+        http = fakeHttpTransport,
+    ),
+)
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+// Tests only — never ship SoftwareSecureArea / InMemoryStorageDriver
+let wallet = Wallet.create(
+    config: WalletConfig(),                        // all defaults
+    ports: WalletPorts(
+        secureAreas: [SoftwareSecureArea()],
+        storage: InMemoryStorageDriver(),
+        http: fakeHttpTransport
+    )
+)
+```
+
+</TabItem>
+</Tabs>
+
+## Thread-safety and shutdown
+
+`Wallet` is **thread-safe** and **multi-instance** — you may share one instance across coroutines /
+tasks, or create several independent wallets in the same process. When you are done (for example on
+logout or teardown), call `close()` to cancel any in-flight issuance, presentation, or proximity
+sessions and release resources.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+wallet.close()
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+wallet.close()
+```
+
+</TabItem>
+</Tabs>
+
+## List credentials
+
+`wallet.credentials.list()` returns a parsed, format-agnostic view of every stored credential.
+Reads are suspending (Kotlin) / `async` (Swift). Without a filter it returns everything
+(`CredentialFilter.All` / `.all`).
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+val credentials: List<Credential> = wallet.credentials.list()   // CredentialFilter.All by default
+val one: Credential? = wallet.credentials.get(credentialId)
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+let credentials: [Credential] = try await wallet.credentials.list()   // .all by default
+let one: Credential? = try await wallet.credentials.get(credentialId)
+```
+
+</TabItem>
+</Tabs>
+
+## Read parsed claims and lifecycle
+
+Each `Credential` carries format-agnostic metadata (`id`, `format`, `issuer`, `display`,
+`configurationId`) plus a `lifecycle`. Once a credential is **issued**, its lifecycle exposes the
+decoded `claims` (each a `path` + `value`, with `value.display()` for a human-readable form) and the
+number of remaining single-use `instances`.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+val credential = wallet.credentials.get(credentialId) ?: return
+
+// Format-agnostic type name
+val typeName = when (val f = credential.format) {
+    is CredentialFormat.SdJwtVc -> f.vct        // SD-JWT VC type
+    is CredentialFormat.MsoMdoc -> f.docType    // mdoc docType
+}
+credential.issuer?.let { println("Issued by ${it.displayName} (${it.url})") }
+
+// Parsed claims are available once the credential is issued
+when (val lifecycle = credential.lifecycle) {
+    is Lifecycle.Issued -> {
+        for (claim in lifecycle.claims) {
+            val path = claim.path.joinToString(".")   // e.g. "address.locality"
+            println("$path = ${claim.value.display()}")
+        }
+        println("${lifecycle.instances} unused instance(s) remaining")
+    }
+    else -> println("not issued yet")
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+guard let credential = try await wallet.credentials.get(credentialId) else { return }
+
+// Format-agnostic type name
+let typeName: String
+switch credential.format {
+case .sdJwtVc(let vct): typeName = vct        // SD-JWT VC type
+case .msoMdoc(let docType): typeName = docType  // mdoc docType
+}
+if let issuer = credential.issuer {
+    print("Issued by \(issuer.displayName) (\(issuer.url))")
+}
+
+// Parsed claims are available once the credential is issued
+if case let .issued(issued) = credential.lifecycle {
+    for claim in issued.claims {
+        let path = claim.path.joined(separator: ".")   // e.g. "address.locality"
+        print("\(path) = \(claim.value.display())")
+    }
+    print("\(issued.instances) unused instance(s) remaining")
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Check revocation status
+
+`status(id)` resolves the credential's live revocation state against its IETF **Token Status List**.
+`Unknown` means the status list could not be reached — treat it as "retry", not "revoked".
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+when (wallet.credentials.status(credentialId)) {
+    CredentialStatus.Valid     -> allow()
+    CredentialStatus.Suspended -> warnTemporarilyBlocked()
+    CredentialStatus.Invalid   -> blockRevoked()
+    CredentialStatus.Unknown   -> retryLater()   // status list unreachable
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+switch try await wallet.credentials.status(credentialId) {
+case .valid:     allow()
+case .suspended: warnTemporarilyBlocked()
+case .invalid:   blockRevoked()
+case .unknown:   retryLater()   // status list unreachable
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Match against a DCQL query
+
+`match(dcqlJson)` asks which stored credentials satisfy a **DCQL** (`dcql_query`) — the same engine
+the presentation flow uses, so you can preview satisfiability before a request ever arrives. Given
+this small query for a PID:
+
+```json
+{
+  "credentials": [
+    {
+      "id": "pid",
+      "format": "dc+sd-jwt",
+      "meta": { "vct_values": ["urn:eudi:pid:1"] },
+      "claims": [
+        { "path": ["family_name"] },
+        { "path": ["given_name"] },
+        { "path": ["age_equal_or_over", "18"] }
+      ]
+    }
+  ]
+}
+```
+
+`byQuery` is keyed by the DCQL credential `id` (`"pid"` above); each `MatchedCredential` tells you
+which stored credential answers it and exactly which paths would be disclosed.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+val match = wallet.credentials.match(dcqlJson)
+if (match.satisfiable) {
+    val candidates = match.byQuery.getValue("pid")   // keyed by the DCQL credential id
+    for (m in candidates) {
+        println("credential ${m.credential.id} would disclose ${m.disclosedPaths}")
+    }
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+let match = try await wallet.credentials.match(dcqlJson)
+if match.satisfiable {
+    let candidates = match.byQuery["pid"] ?? []   // keyed by the DCQL credential id
+    for m in candidates {
+        print("credential \(m.credential.id) would disclose \(m.disclosedPaths)")
+    }
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Observe credential changes
+
+The store emits a change event whenever a credential is added, updated, or removed — for example
+after issuance completes, after a presentation consumes a single-use instance, or after a status
+refresh. Kotlin exposes a `Flow`; Swift an `AsyncStream`. Use it to keep your UI in sync.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+wallet.credentials.changes.collect { change ->
+    when (change) {
+        is CredentialChange.Added   -> onAdded(change.id)
+        is CredentialChange.Updated -> onUpdated(change.id)
+        is CredentialChange.Removed -> onRemoved(change.id)
+    }
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+for await change in await wallet.credentials.changes() {
+    switch change {
+    case .added(let id):   onAdded(id)
+    case .updated(let id): onUpdated(id)
+    case .removed(let id): onRemoved(id)
+    }
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Next steps
+
+Now that the wallet is assembled, put it to work:
+
+- **[Issuance](./guides/issuance)** — obtain credentials over OpenID4VCI (pre-authorized & authorization-code flows).
+- **[Presentation](./guides/presentation)** — present remotely (OpenID4VP) or through the browser (Digital Credentials API).
+- **[Proximity](./guides/proximity)** — present in person over ISO/IEC 18013-5 device retrieval.

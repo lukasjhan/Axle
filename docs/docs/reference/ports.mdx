@@ -1,0 +1,165 @@
+---
+title: Ports
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Ports
+
+The host implements these and injects them via `WalletPorts`. The SDK provides defaults for `Rng`,
+`WalletClock`, and `TransactionLogStore` — you must supply at least `SecureArea`, `StorageDriver`,
+and `HttpTransport`.
+
+## SecureArea
+
+Creates and uses key material that never leaves the secure boundary. Back it with Android Keystore or
+iOS Secure Enclave; a software implementation exists for tests.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+interface SecureArea {
+    val id: SecureAreaId
+    suspend fun createKey(spec: KeySpec): KeyInfo
+    suspend fun publicKey(handle: KeyHandle): EcPublicKey
+    // signing is exposed via SecureAreaJwsSigner / SecureAreaCoseSigner
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+public protocol SecureArea {
+    var id: SecureAreaId { get }
+    func createKey(spec: KeySpec) async throws -> KeyInfo
+    func publicKey(key: KeyHandle) async throws -> EcPublicKey
+    // signing is exposed via SecureAreaJwsSigner / SecureAreaCoseSigner
+}
+```
+
+</TabItem>
+</Tabs>
+
+## StorageDriver
+
+Byte persistence keyed by collection + key, plus a transaction scope. Wrap it with encryption at rest
+for production.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+interface StorageDriver {
+    suspend fun put(collection: String, key: String, value: ByteArray)
+    suspend fun get(collection: String, key: String): ByteArray?
+    suspend fun delete(collection: String, key: String)
+    suspend fun keys(collection: String): List<String>
+    suspend fun transaction(block: suspend StorageTx.() -> Unit)
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+public protocol StorageDriver: Sendable {
+    func put(collection: String, key: String, value: [UInt8]) async throws
+    func get(collection: String, key: String) async throws -> [UInt8]?
+    func delete(collection: String, key: String) async throws
+    func keys(collection: String) async throws -> [String]
+    func transaction(_ block: (any StorageTx) async throws -> Void) async throws
+}
+```
+
+</TabItem>
+</Tabs>
+
+## HttpTransport
+
+Must honour `request.followRedirects` — the OpenID flows depend on intercepting redirects.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+interface HttpTransport {
+    suspend fun execute(request: HttpRequest): HttpResponse
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+public protocol HttpTransport: Sendable {
+    func execute(_ request: HttpRequest) async throws -> HttpResponse
+}
+```
+
+</TabItem>
+</Tabs>
+
+## ProximityTransport
+
+A duplex framed-message channel for ISO 18013-5 (see [Proximity](../guides/proximity)). The SDK
+drives the message exchange; you supply the BLE/NFC radio.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+interface ProximityTransport {
+    suspend fun send(message: ByteArray)
+    suspend fun receive(): ByteArray
+    suspend fun close()
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+public protocol ProximityTransport: Sendable {
+    func send(_ message: [UInt8]) async throws
+    func receive() async throws -> [UInt8]
+    func close() async
+}
+```
+
+</TabItem>
+</Tabs>
+
+## TransactionLogStore
+
+Append-only audit persistence — the facade wraps it as `wallet.transactions`.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+interface TransactionLogStore {
+    suspend fun append(entry: TransactionLogEntry)
+    suspend fun all(): List<TransactionLogEntry>
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+public protocol TransactionLogStore: Sendable {
+    func append(_ entry: TransactionLogEntry) async
+    func all() async -> [TransactionLogEntry]
+}
+```
+
+</TabItem>
+</Tabs>
+
+## WalletAttestationProvider
+
+Optional — the link to your Wallet Provider backend for wallet-unit attestation (WUA) and
+attestation-based client authentication during issuance.

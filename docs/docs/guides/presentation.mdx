@@ -1,0 +1,255 @@
+---
+title: Presentation (OpenID4VP)
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Presentation
+
+Remote and browser presentation share one **session** shape: **resolve → consent → submit**. The SDK
+resolves the verifier's request, matches it against your stored credentials, waits for you to approve a
+selection, and then builds and sends a selectively-disclosed, holder-bound response. Kotlin exposes the
+session as a `StateFlow<PresentationState>`; Swift as an `AsyncStream<PresentationState>`.
+
+## The session lifecycle
+
+Every presentation walks the same states. The `resolve` and `submit` phases are driven by the SDK; the
+`consent` phase in the middle is yours — you inspect the resolved request, let the user choose, and call
+`respond(...)` or `decline()`.
+
+| Phase | Kotlin `PresentationState` | Swift `PresentationState` |
+|---|---|---|
+| resolve | `ResolvingRequest` → `RequestResolved(request)` | `.resolvingRequest` → `.requestResolved(request)` |
+| consent | *(your UI — `respond` / `decline`)* | *(your UI — `respond` / `decline`)* |
+| submit | `Submitting` | `.submitting` |
+| terminal | `Completed(redirectUri, dcApiResponse)` · `Declined` · `Failed(error)` | `.completed(redirectUri:, dcApiResponse:)` · `.declined` · `.failed(error)` |
+
+`state.isTerminal` is `true` for `Completed`, `Declined`, and `Failed`.
+
+## Remote (URL / QR)
+
+A remote flow starts from an `openid4vp://…` deep link or a `request_uri` captured from a QR code. Start
+the session, then await `RequestResolved`:
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+import kotlinx.coroutines.flow.first
+
+val session = wallet.presentation.start(requestUri)   // openid4vp://… or a request_uri
+
+val resolved = session.state.first {
+    it is PresentationState.RequestResolved || it is PresentationState.Failed
+}
+val request = (resolved as PresentationState.RequestResolved).request
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+let session = wallet.presentation.start(requestUri)   // openid4vp://… or a request_uri
+
+var request: PresentationRequest?
+for await state in session.states {
+    if case let .requestResolved(resolved) = state { request = resolved; break }
+    if state.isTerminal { break }   // .failed before it ever resolved
+}
+guard let request else { return }
+```
+
+</TabItem>
+</Tabs>
+
+### Inspect who is asking and what answers it
+
+`request.verifier` tells you who the request is from, and `request.queries` lists what is being asked —
+each query carries the stored credentials that can answer it as `candidates`:
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+val v = request.verifier
+// v.clientId, v.clientIdScheme, v.commonName (from the certificate), v.trusted
+println("${v.commonName ?: v.clientId} · trusted=${v.trusted}")
+
+for (query in request.queries) {
+    // query.queryId, query.required
+    for (candidate in query.candidates) {
+        // candidate.credentialId — a stored credential that satisfies this query
+        // candidate.disclosedPaths — the claims that would be revealed if chosen
+    }
+}
+
+request.satisfiable        // true if every required query has at least one candidate
+request.transactionData    // optional transaction data to confirm (e.g. payment), or null
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+let v = request.verifier
+// v.clientId, v.clientIdScheme, v.commonName (from the certificate), v.trusted
+print("\(v.commonName ?? v.clientId) · trusted=\(v.trusted)")
+
+for query in request.queries {
+    // query.queryId, query.required
+    for candidate in query.candidates {
+        // candidate.credentialId — a stored credential that satisfies this query
+        // candidate.disclosedPaths — the claims that would be revealed if chosen
+    }
+}
+
+request.satisfiable        // true if every required query has at least one candidate
+request.transactionData    // optional transaction data to confirm (e.g. payment), or nil
+```
+
+</TabItem>
+</Tabs>
+
+### Respond and await the result
+
+After the user approves, hand the SDK a selection and await the terminal state. `Completed.redirectUri`
+is an optional post-success redirect supplied by the verifier:
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+session.respond(PresentationSelection.auto(request))   // or a user-chosen selection
+// session.decline() instead, if the user refuses
+
+val done = session.state.first { it.isTerminal }
+when (done) {
+    is PresentationState.Completed -> done.redirectUri   // optional redirect after success
+    is PresentationState.Declined  -> { /* user refused */ }
+    is PresentationState.Failed    -> done.error
+    else -> {}
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+session.respond(PresentationSelection.auto(request))   // or a user-chosen selection
+// session.decline() instead, if the user refuses
+
+for await state in session.states {
+    switch state {
+    case let .completed(redirectUri, _): _ = redirectUri   // optional redirect after success
+    case .declined: break                                  // user refused
+    case let .failed(error): _ = error
+    default: break
+    }
+    if state.isTerminal { break }
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Selective disclosure & holder binding
+
+Only the claims covered by the request are disclosed — everything else in the credential stays hidden.
+The response is **holder-bound**: it is signed by the credential's holder key, which never leaves your
+`SecureArea`.
+
+- **SD-JWT VC** — a **KB-JWT** (Key Binding JWT) signed over the presentation, binding the disclosed
+  claims to the audience and nonce.
+- **mdoc** — a `DeviceResponse` whose device signature is computed over the OpenID4VP
+  `SessionTranscript`, binding the response to this exact request.
+
+## Selection: automatic or explicit
+
+`PresentationSelection.auto(request)` picks the first candidate for each required query — ideal once the
+user has approved a single obvious match. For a real consent UI, build the selection explicitly by
+mapping each `queryId` to the `credentialId` the user chose:
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+// Automatic: first candidate for each required query
+session.respond(PresentationSelection.auto(request))
+
+// Explicit: map each query to the chosen credential
+val chosen: Map<String, CredentialId> = request.queries.associate { query ->
+    query.queryId to query.candidates.first().credentialId
+}
+session.respond(PresentationSelection(chosen = chosen))
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+// Automatic: first candidate for each required query
+session.respond(PresentationSelection.auto(request))
+
+// Explicit: map each query to the chosen credential
+var chosen: [String: CredentialId] = [:]
+for query in request.queries {
+    chosen[query.queryId] = query.candidates.first!.credentialId
+}
+session.respond(PresentationSelection(chosen: chosen))
+```
+
+</TabItem>
+</Tabs>
+
+Presenting a credential issued with `KeyUse.OneTime` consumes one of its instances (for unlinkability);
+`Rotate` credentials are reused across presentations.
+
+## Digital Credentials API (browser)
+
+When the request arrives through the platform Digital Credentials API, the browser hands you the request
+object and the caller's `origin` directly. **No HTTP is performed** — the finished response object is
+returned to you so your app can pass it back to `navigator.credentials.get()`:
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+val session = wallet.presentation.startDcApi(requestObject, origin)
+// resolve → inspect → respond, exactly as above
+val completed = session.state.first { it.isTerminal } as PresentationState.Completed
+val response = completed.dcApiResponse   // hand back to navigator.credentials.get()
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+let session = wallet.presentation.startDcApi(requestObject, origin: origin)
+// resolve → inspect → respond, exactly as above
+var response: String?
+for await state in session.states {
+    if case let .completed(_, dcApiResponse) = state { response = dcApiResponse; break }
+    if state.isTerminal { break }
+}
+```
+
+</TabItem>
+</Tabs>
+
+An mdoc DC API response is **origin-bound**: the caller `origin` is folded into the DC API handover that
+the device signature covers, so the response cannot be replayed from another site.
+
+## Reader trust
+
+When you configure `readerAnchorsDer` in `TrustConfig`, signed request objects (JAR) are verified before
+the request is ever surfaced to you. Verification requires all of:
+
+1. the reader **certificate chain validates** to one of your configured anchors,
+2. the **JWS signature** on the request object verifies, and
+3. the **`client_id` scheme** (`x509_san_dns` or `x509_hash`) matches the signing certificate.
+
+Only when all three hold is `request.verifier.trusted == true`. A signed request that fails any of them
+does not resolve — the session ends in `Failed` with a `VerifierNotTrusted` error. With no reader anchors
+configured, requests still resolve but arrive as untrusted (`trusted == false`), and it is your UI's
+responsibility to reflect that to the user.
