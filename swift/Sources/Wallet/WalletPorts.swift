@@ -1,3 +1,4 @@
+import TransactionLog
 import WalletAPI
 
 /// Host-supplied adapters. The SDK owns credential/key/attestation lifecycle; the app injects thin
@@ -12,13 +13,13 @@ public struct WalletPorts {
     public let clock: any WalletClock
     public let rng: any Rng
     public let logger: (any WalletLogger)?
-    /// Audit log of presentations/issuances. Defaults to no-op; production wallets should persist.
-    public let transactionLog: any TransactionLog
+    /// Append-only persistence for the audit log (ARF/GDPR). Defaults to in-memory; production wallets persist.
+    public let transactionLogStore: any TransactionLogStore
 
     public init(secureAreas: [any SecureArea], storage: any StorageDriver, http: any HttpTransport,
                 walletAttestation: (any WalletAttestationProvider)? = nil,
                 clock: any WalletClock = SystemClock(), rng: any Rng = SystemRng(),
-                logger: (any WalletLogger)? = nil, transactionLog: any TransactionLog = NoOpTransactionLog()) {
+                logger: (any WalletLogger)? = nil, transactionLogStore: any TransactionLogStore = InMemoryTransactionLogStore()) {
         precondition(!secureAreas.isEmpty, "WalletPorts requires at least one SecureArea")
         self.secureAreas = secureAreas
         self.storage = storage
@@ -27,7 +28,7 @@ public struct WalletPorts {
         self.clock = clock
         self.rng = rng
         self.logger = logger
-        self.transactionLog = transactionLog
+        self.transactionLogStore = transactionLogStore
     }
 
     var defaultSecureArea: any SecureArea { secureAreas[0] }

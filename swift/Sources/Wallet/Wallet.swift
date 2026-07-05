@@ -2,7 +2,9 @@ import CredentialStore
 import Foundation
 import OpenID4VCI
 import OpenID4VP
+import SdJwt
 import StatusList
+import TransactionLog
 import Trust
 import WalletAPI
 
@@ -14,6 +16,8 @@ public struct Wallet {
     public let issuance: IssuanceService
     public let presentation: PresentationService
     public let proximity: ProximityService
+    /// Audit history of presentations/issuances (ARF/GDPR) — query with `history()` / `query(...)`.
+    public let transactions: TransactionLog
     private let ports: WalletPorts
 
     /// Idempotent; no resources held yet.
@@ -38,13 +42,15 @@ public struct Wallet {
         let vpTrust: (any RequestTrustVerifier)? = config.trust.readerAnchorsDer.isEmpty ? nil :
             X509RequestVerifier(validator: X509ChainValidator(anchorSource: LazyIssuerAnchorSource(ders: config.trust.readerAnchorsDer), validationTime: ports.clock.now()))
         let vp = Openid4VpClient(http: ports.http, clock: clockSeconds, trust: vpTrust)
-        let presentation = PresentationService(vp: vp, store: store, txlog: ports.transactionLog,
-                                               secureAreas: ports.secureAreas, clock: ports.clock, rng: ports.rng)
-        let proximity = ProximityService(store: store, txlog: ports.transactionLog,
-                                         secureAreas: ports.secureAreas, clock: ports.clock, rng: ports.rng)
+        let txlog = TransactionLog(
+            store: ports.transactionLogStore,
+            idGenerator: { "txn-" + Base64Url.encode(ports.rng.nextBytes(12)) },
+            clock: clockSeconds)
+        let presentation = PresentationService(vp: vp, store: store, txlog: txlog, secureAreas: ports.secureAreas)
+        let proximity = ProximityService(store: store, txlog: txlog, secureAreas: ports.secureAreas)
 
         return Wallet(credentials: CredentialsService(store: store, statusClient: statusClient),
-                      issuance: issuance, presentation: presentation, proximity: proximity, ports: ports)
+                      issuance: issuance, presentation: presentation, proximity: proximity, transactions: txlog, ports: ports)
     }
 }
 

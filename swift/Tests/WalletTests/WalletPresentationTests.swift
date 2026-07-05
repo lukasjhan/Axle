@@ -2,6 +2,7 @@ import CborCose
 import CredentialStore
 import Foundation
 import SdJwt
+import TransactionLog
 import Wallet
 import WalletAPI
 import WalletTestKit
@@ -11,12 +12,6 @@ import XCTest
 final class WalletPresentationTests: XCTestCase {
 
     private let now = Date(timeIntervalSince1970: 1_700_000_000)
-
-    private actor RecordingLog: TransactionLog {
-        private(set) var entries: [TransactionLogEntry] = []
-        func record(_ entry: TransactionLogEntry) async throws { entries.append(entry) }
-        func list() async throws -> [TransactionLogEntry] { entries }
-    }
 
     /// DC API must not perform any HTTP — the request/response are handed over by the platform.
     private struct NoHttp: HttpTransport {
@@ -50,8 +45,8 @@ final class WalletPresentationTests: XCTestCase {
         let storage = InMemoryStorageDriver()
         let issuerPublic = try await seedPid(area, storage)
         let verifier = MockVerifier(issuerPublic: issuerPublic)
-        let log = RecordingLog()
-        let wallet = Wallet.create(config: WalletConfig(), ports: WalletPorts(secureAreas: [area], storage: storage, http: verifier, transactionLog: log))
+        let logStore = InMemoryTransactionLogStore()
+        let wallet = Wallet.create(config: WalletConfig(), ports: WalletPorts(secureAreas: [area], storage: storage, http: verifier, transactionLogStore: logStore))
 
         let session = wallet.presentation.start(await verifier.requestUri("direct_post"))
         var captured: PresentationRequest?
@@ -73,11 +68,14 @@ final class WalletPresentationTests: XCTestCase {
         if case let .str(gn)? = claims["given_name"] { XCTAssertEqual("Jongho", gn) } else { XCTFail("given_name") }
         XCTAssertNil(claims["birthdate"], "unrequested claim must not be disclosed")
 
-        let entries = await log.entries
+        let entries = await logStore.all()
         XCTAssertEqual(1, entries.count)
         XCTAssertEqual(.success, entries[0].status)
-        XCTAssertTrue(entries[0].credentialIds.contains("pid-1"))
-        XCTAssertTrue(Set(entries[0].claimsDisclosed).isSuperset(of: ["family_name", "given_name"]))
+        XCTAssertEqual("verifier.example", entries[0].relyingParty?.id)
+        XCTAssertEqual(false, entries[0].relyingParty?.trusted) // unsigned request → not cryptographically trusted
+        XCTAssertTrue(entries[0].documents.contains { $0.type == "urn:eudi:pid:1" })
+        let loggedPaths = entries[0].documents.flatMap { $0.claims.map { $0.path } }
+        XCTAssertTrue(loggedPaths.contains(["family_name"]) && loggedPaths.contains(["given_name"]))
         wallet.close()
     }
 
@@ -86,8 +84,8 @@ final class WalletPresentationTests: XCTestCase {
         let storage = InMemoryStorageDriver()
         let issuerPublic = try await seedPid(area, storage)
         let verifier = MockVerifier(issuerPublic: issuerPublic)
-        let log = RecordingLog()
-        let wallet = Wallet.create(config: WalletConfig(), ports: WalletPorts(secureAreas: [area], storage: storage, http: verifier, transactionLog: log))
+        let logStore = InMemoryTransactionLogStore()
+        let wallet = Wallet.create(config: WalletConfig(), ports: WalletPorts(secureAreas: [area], storage: storage, http: verifier, transactionLogStore: logStore))
 
         let session = wallet.presentation.start(await verifier.requestUri("direct_post"))
         var terminal: PresentationState?
@@ -99,8 +97,8 @@ final class WalletPresentationTests: XCTestCase {
 
         let claims = await verifier.verifiedClaims
         XCTAssertNil(claims, "nothing presented on decline")
-        let entries = await log.entries
-        XCTAssertEqual(.declined, entries[0].status)
+        let entries = await logStore.all()
+        XCTAssertEqual(.incomplete, entries[0].status)
         wallet.close()
     }
 
@@ -120,8 +118,8 @@ final class WalletPresentationTests: XCTestCase {
             lifecycle: .issued(policy: CredentialPolicy(), instances: [CredentialInstance(key: deviceKey.handle, payload: bytes)])))
 
         let verifier = MockMdocVerifier()
-        let log = RecordingLog()
-        let wallet = Wallet.create(config: WalletConfig(), ports: WalletPorts(secureAreas: [area], storage: storage, http: verifier, transactionLog: log))
+        let logStore = InMemoryTransactionLogStore()
+        let wallet = Wallet.create(config: WalletConfig(), ports: WalletPorts(secureAreas: [area], storage: storage, http: verifier, transactionLogStore: logStore))
 
         let session = wallet.presentation.start(await verifier.requestUri())
         var terminal: PresentationState?
@@ -134,9 +132,9 @@ final class WalletPresentationTests: XCTestCase {
         // verifier verified the device signature and got only the requested elements (age_over_18 withheld)
         let disclosed = await verifier.disclosedElements
         XCTAssertEqual(Set(["family_name", "given_name"]), disclosed)
-        let entries = await log.entries
+        let entries = await logStore.all()
         XCTAssertEqual(.success, entries[0].status)
-        XCTAssertTrue(entries[0].credentialIds.contains("mdl-1"))
+        XCTAssertTrue(entries[0].documents.contains { $0.type == "org.iso.18013.5.1.mDL" })
         wallet.close()
     }
 
@@ -156,8 +154,8 @@ final class WalletPresentationTests: XCTestCase {
             lifecycle: .issued(policy: CredentialPolicy(), instances: [CredentialInstance(key: deviceKey.handle, payload: bytes)])))
 
         let verifier = MockDcApiVerifier()
-        let log = RecordingLog()
-        let wallet = Wallet.create(config: WalletConfig(), ports: WalletPorts(secureAreas: [area], storage: storage, http: NoHttp(), transactionLog: log))
+        let logStore = InMemoryTransactionLogStore()
+        let wallet = Wallet.create(config: WalletConfig(), ports: WalletPorts(secureAreas: [area], storage: storage, http: NoHttp(), transactionLogStore: logStore))
 
         let session = wallet.presentation.startDcApi(verifier.requestObject(), origin: verifier.origin)
         var terminal: PresentationState?
@@ -171,7 +169,7 @@ final class WalletPresentationTests: XCTestCase {
 
         // response is origin-bound and selectively disclosed
         XCTAssertEqual(Set(["family_name", "given_name"]), try verifier.verify(response))
-        let entries = await log.entries
+        let entries = await logStore.all()
         XCTAssertEqual(.success, entries[0].status)
         wallet.close()
     }

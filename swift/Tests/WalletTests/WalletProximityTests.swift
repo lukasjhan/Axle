@@ -3,6 +3,7 @@ import CredentialStore
 import Foundation
 import MDoc
 import Proximity
+import TransactionLog
 import Wallet
 import WalletAPI
 import WalletTestKit
@@ -12,12 +13,6 @@ import XCTest
 final class WalletProximityTests: XCTestCase {
 
     private let now = Date(timeIntervalSince1970: 1_700_000_000)
-
-    private actor RecordingLog: TransactionLog {
-        private(set) var entries: [TransactionLogEntry] = []
-        func record(_ entry: TransactionLogEntry) async throws { entries.append(entry) }
-        func list() async throws -> [TransactionLogEntry] { entries }
-    }
 
     /// A one-directional async mailbox (send/receive), used to build a duplex in-memory transport.
     private actor Mailbox {
@@ -61,8 +56,8 @@ final class WalletProximityTests: XCTestCase {
             id: CredentialId("mdl-1"), format: .msoMdoc(docType: docType), createdAt: now,
             lifecycle: .issued(policy: CredentialPolicy(), instances: [CredentialInstance(key: deviceKey.handle, payload: mdocBytes)])))
 
-        let log = RecordingLog()
-        let wallet = Wallet.create(config: WalletConfig(), ports: WalletPorts(secureAreas: [area], storage: storage, http: NoHttp(), transactionLog: log))
+        let logStore = InMemoryTransactionLogStore()
+        let wallet = Wallet.create(config: WalletConfig(), ports: WalletPorts(secureAreas: [area], storage: storage, http: NoHttp(), transactionLogStore: logStore))
 
         let toDevice = Mailbox(), toReader = Mailbox()
         let session = wallet.proximity.present(DeviceTransport(inbound: toDevice, outbound: toReader))
@@ -110,7 +105,7 @@ final class WalletProximityTests: XCTestCase {
         let deviceAuthBytes = try CborEncoder.encode(.tagged(24, .bytes(try CborEncoder.encode(deviceAuth))))
         XCTAssertTrue(deviceSignature.verify(publicKey: deviceKey.publicKey, detachedPayload: deviceAuthBytes), "device signature over proximity transcript")
 
-        let entries = await log.entries
+        let entries = await logStore.all()
         XCTAssertEqual(.success, entries.first?.status)
     }
 

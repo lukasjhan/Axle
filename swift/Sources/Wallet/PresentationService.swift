@@ -4,6 +4,7 @@ import Foundation
 import MDoc
 import OpenID4VP
 import SdJwt
+import TransactionLog
 import Trust
 import WalletAPI
 
@@ -11,10 +12,8 @@ import WalletAPI
 public struct PresentationService {
     let vp: Openid4VpClient
     let store: DefaultCredentialStore
-    let txlog: any TransactionLog
+    let txlog: TransactionLog
     let secureAreas: [any SecureArea]
-    let clock: any WalletClock
-    let rng: any Rng
 
     /// Remote (URL/QR) presentation: resolve → match stored credentials → consent → direct_post submit.
     public func start(_ requestUri: String) -> PresentationSession {
@@ -135,25 +134,28 @@ public struct PresentationService {
     }
 
     private func recordSuccess(_ resolved: ResolvedRequest, _ selection: PresentationSelection, _ matches: DcqlMatchResult) async throws {
-        var disclosed: [String] = []
-        for (queryId, credentialId) in selection.chosen {
-            if let candidate = matches.candidatesByQuery[queryId]?.first(where: { $0.credential.credentialId == credentialId.value }) {
-                disclosed.append(contentsOf: candidate.disclosedPaths.map { $0.joined(separator: ".") })
-            }
-        }
-        let ids = Array(Set(selection.chosen.values.map { $0.value }))
-        try await txlog.record(TransactionLogEntry(
-            id: newLogId(), type: .presentation, timestamp: clock.now(), relyingParty: resolved.verifier.clientId,
-            credentialIds: ids, claimsDisclosed: disclosed, status: .success))
+        await txlog.recordPresentation(relyingParty: relyingPartyOf(resolved), documents: loggedDocuments(selection, matches), status: .success)
     }
 
     private func recordDeclined(_ resolved: ResolvedRequest) async throws {
-        try await txlog.record(TransactionLogEntry(
-            id: newLogId(), type: .presentation, timestamp: clock.now(), relyingParty: resolved.verifier.clientId,
-            credentialIds: [], claimsDisclosed: [], status: .declined))
+        await txlog.recordPresentation(relyingParty: relyingPartyOf(resolved), documents: [], status: .incomplete)
     }
 
-    private func newLogId() -> String { "txn-" + Base64Url.encode(rng.nextBytes(12)) }
+    private func relyingPartyOf(_ resolved: ResolvedRequest) -> RelyingParty {
+        RelyingParty(id: resolved.verifier.clientId, name: resolved.verifier.commonName,
+                     trusted: resolved.verifier.trusted, certificateChainDer: resolved.verifier.certificateChainDer ?? [])
+    }
+
+    private func loggedDocuments(_ selection: PresentationSelection, _ matches: DcqlMatchResult) -> [LoggedDocument] {
+        selection.chosen.compactMap { queryId, credentialId in
+            guard let candidate = matches.candidatesByQuery[queryId]?.first(where: { $0.credential.credentialId == credentialId.value }) else { return nil }
+            return LoggedDocument(
+                format: candidate.credential.format,
+                type: candidate.credential.vct ?? candidate.credential.docType,
+                queryId: queryId,
+                claims: candidate.disclosedPaths.map { LoggedClaim(path: $0) })
+        }
+    }
 
     private func catchingVp<T>(_ block: () async throws -> T) async throws -> T {
         do {

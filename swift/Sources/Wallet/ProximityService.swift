@@ -4,16 +4,15 @@ import Foundation
 import MDoc
 import Proximity
 import SdJwt
+import TransactionLog
 import WalletAPI
 
 /// ISO 18013-5 proximity presentation (API-CONTRACT.md §6.3). Generates device engagement, establishes the
 /// encrypted session over the app-provided `ProximityTransport`, and replies with a device-signed DeviceResponse.
 public struct ProximityService {
     let store: DefaultCredentialStore
-    let txlog: any TransactionLog
+    let txlog: TransactionLog
     let secureAreas: [any SecureArea]
-    let clock: any WalletClock
-    let rng: any Rng
 
     /// Starts a proximity session over `transport`: engage → session → reader request → consent → reply.
     public func present(_ transport: any ProximityTransport) -> ProximitySession {
@@ -85,23 +84,21 @@ public struct ProximityService {
     }
 
     private func recordSuccess(_ request: ProximityRequest, _ selection: ProximitySelection) async throws {
-        var disclosed: [String] = []
-        for doc in request.documents where selection.chosen[doc.docType] != nil {
-            for (ns, els) in doc.requestedElements { disclosed.append(contentsOf: els.map { "\(ns).\($0)" }) }
+        let documents = request.documents.filter { selection.chosen[$0.docType] != nil }.map { doc in
+            LoggedDocument(format: "mso_mdoc", type: doc.docType, queryId: nil,
+                           claims: doc.requestedElements.flatMap { ns, els in els.map { LoggedClaim(path: [ns, $0]) } })
         }
-        let ids = Array(Set(selection.chosen.values.map { $0.value }))
-        try await txlog.record(TransactionLogEntry(
-            id: newLogId(), type: .presentation, timestamp: clock.now(), relyingParty: "proximity-reader",
-            credentialIds: ids, claimsDisclosed: disclosed, status: .success))
+        await txlog.recordPresentation(relyingParty: proximityReader(), documents: documents, status: .success)
     }
 
     private func recordDeclined() async throws {
-        try await txlog.record(TransactionLogEntry(
-            id: newLogId(), type: .presentation, timestamp: clock.now(), relyingParty: "proximity-reader",
-            credentialIds: [], claimsDisclosed: [], status: .declined))
+        await txlog.recordPresentation(relyingParty: proximityReader(), documents: [], status: .incomplete)
     }
 
-    private func newLogId() -> String { "txn-" + Base64Url.encode(rng.nextBytes(12)) }
+    /// The in-person reader. Reader-auth verification against a reader anchor is a follow-up, so `trusted` is false.
+    private func proximityReader() -> RelyingParty {
+        RelyingParty(id: "proximity-reader", name: nil, trusted: false)
+    }
 
     private func catchingProximity<T>(_ block: () async throws -> T) async throws -> T {
         do {

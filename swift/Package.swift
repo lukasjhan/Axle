@@ -75,7 +75,7 @@ let package = Package(
         ),
         .target(
             name: "Wallet",
-            dependencies: ["WalletAPI", "CredentialStore", "SdJwt", "MDoc", "Trust", "StatusList", "OpenID4VP", "OpenID4VCI", "CborCose", "Proximity"]
+            dependencies: ["WalletAPI", "CredentialStore", "SdJwt", "MDoc", "Trust", "StatusList", "OpenID4VP", "OpenID4VCI", "CborCose", "Proximity", "TransactionLog"]
         ),
         .testTarget(
             name: "CborCoseTests",
