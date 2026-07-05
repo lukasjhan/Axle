@@ -48,11 +48,7 @@ dependencies {
     // QR scanning (camera)
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 
-    // Digital Credentials API (Credential Manager provider) — OpenID4VP registry + bundled matcher
-    implementation("androidx.credentials:credentials:1.5.0")
-    implementation("androidx.credentials.registry:registry-provider:1.0.0-alpha04")
-    implementation("androidx.credentials.registry:registry-provider-play-services:1.0.0-alpha04")
-    implementation("androidx.credentials.registry:registry-digitalcredentials-openid:1.0.0-alpha04")
-    implementation("androidx.credentials.registry:registry-digitalcredentials-mdoc:1.0.0-alpha04")
-    implementation("androidx.credentials.registry:registry-digitalcredentials-sdjwtvc:1.0.0-alpha04")
+    // Digital Credentials API (Credential Manager provider) — custom OpenID4VP-1.0 matcher via GMS
+    implementation("androidx.credentials:credentials:1.6.0-rc01")
+    implementation("com.google.android.gms:play-services-identity-credentials:16.0.0-alpha08")
 }
