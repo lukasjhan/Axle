@@ -4,77 +4,99 @@ title: Digital Credentials API (Android)
 
 # Digital Credentials API (Android)
 
-The [W3C Digital Credentials API](https://w3c-fedid.github.io/digital-credentials/) lets a website (or
-app) request a credential and the OS mediate a wallet selector — no QR, no HTTP. The SDK's
-`wallet.presentation.startDcApi(requestJson, origin)` already does the OpenID4VP-over-DC-API work
-(match → consent → holder-bound response). This guide wires it into the **Android Credential Manager**
-so a browser can invoke your wallet.
+The [W3C Digital Credentials API](https://w3c-fedid.github.io/digital-credentials/) lets a website
+call `navigator.credentials.get({ digital })` and have the OS mediate a wallet selector — no QR, no
+HTTP round-trip. The SDK does the credential logic; this guide wires it into the **Android Credential
+Manager** so a browser can invoke your wallet.
 
-Two halves:
+The wallet answers three DC API protocols, all verified on-device against `verifier.eudiw.dev` and
+`digital-credentials.dev`:
 
-- **SDK (cross-platform)** — `startDcApi(requestJson, origin)` takes the verifier's request object and
-  caller origin and returns the response object. Nothing platform-specific.
-- **Android provider plumbing** — register your credentials with the Credential Manager and answer the
-  `GET_CREDENTIAL` intent. That's what this page covers.
+| Protocol | What it is | SDK entry point |
+| --- | --- | --- |
+| `openid4vp-v1-unsigned` | OpenID4VP 1.0 request object (plain JSON) | `wallet.presentation.startDcApi(json, origin)` |
+| `openid4vp-v1-signed` | OpenID4VP 1.0 JAR — `{"request":"<JWS>"}` | `wallet.presentation.startDcApi(json, origin)` |
+| `org-iso-mdoc` | ISO 18013-7 Annex C raw mdoc, HPKE-encrypted | `wallet.proximity.respondDcApiMdoc(deviceRequest, encryptionInfo, origin)` |
 
-:::note
-The provider uses `androidx.credentials.registry` (alpha) and pulls in Google Play Services, so DC API
-works on GMS devices. Every other capability (issuance, remote/proximity presentation) is unaffected
+Both entry points are cross-platform (identical in Kotlin and Swift). Everything else on this page is
+Android provider plumbing.
+
+:::note Why a custom matcher
+The Credential Manager runs a **matcher** — a small WASM program — to filter your credentials against
+an incoming request before showing the selector. The androidx `OpenId4VpRegistry` bundles a matcher
+that (as of `registry:1.0.0-alpha04`) does **not** recognize the `openid4vp-v1-*` protocol IDs current
+EUDI verifiers send, and never the raw `org-iso-mdoc` protocol. So we ship a matcher WASM ourselves and
+register it through the lower-level Google Play Services **IdentityCredentials** API. DC API therefore
+needs a GMS device; every other capability (issuance, remote/proximity presentation) is unaffected
 without it.
 :::
 
 ## 1. Dependencies
 
 ```kotlin
-implementation("androidx.credentials:credentials:1.5.0")
-implementation("androidx.credentials.registry:registry-provider:1.0.0-alpha04")
-implementation("androidx.credentials.registry:registry-provider-play-services:1.0.0-alpha04")
-implementation("androidx.credentials.registry:registry-digitalcredentials-openid:1.0.0-alpha04")
-implementation("androidx.credentials.registry:registry-digitalcredentials-mdoc:1.0.0-alpha04")
-implementation("androidx.credentials.registry:registry-digitalcredentials-sdjwtvc:1.0.0-alpha04")
+implementation("androidx.credentials:credentials:1.6.0-rc01")
+implementation("com.google.android.gms:play-services-identity-credentials:16.0.0-alpha08")
 ```
+
+Plus two bundled assets:
+
+- `assets/identitycredentialmatcher.wasm` — the matcher program (e.g. the one from
+  [Multipaz](https://github.com/openwallet-foundation-labs/identity-credential)).
+- `assets/privileged_allowlist.json` — Google's privileged-browser list, from
+  `https://www.gstatic.com/gpm-passkeys-privileged-apps/apps.json` (used to resolve web origins).
 
 ## 2. Register credentials
 
-Map your stored credentials to `SdJwtEntry` / `MdocEntry` and register them as an **OpenID4VP** holder.
-`OpenId4VpRegistry` bundles the default matcher — the OS runs it to filter your credentials against an
-incoming request, so you don't ship a WASM matcher. Re-register whenever credentials change.
+Registration hands the Credential Manager two things: the **matcher** and a **credential database** it
+can read. Build the database as CBOR in the matcher's schema, declare the protocols you support, and
+register it under both credential types. Re-register whenever credentials change (issue / delete).
 
 ```kotlin
-suspend fun register(context: Context, wallet: Wallet) {
-    val entries = wallet.credentials.list().mapNotNull { c ->
-        val issued = c.lifecycle as? Lifecycle.Issued ?: return@mapNotNull null
-        val display = setOf(VerificationEntryDisplayProperties(title(c), c.issuer?.displayName ?: "", icon(), "", ""))
-        when (val f = c.format) {
-            is CredentialFormat.SdJwtVc -> SdJwtEntry(
-                verifiableCredentialType = f.vct,
-                claims = issued.claims.map { SdJwtClaim(it.path, null, emptySet(), true) },
-                entryDisplayPropertySet = display,
-                id = c.id.value,
-            )
-            is CredentialFormat.MsoMdoc -> MdocEntry(
-                docType = f.docType,
-                fields = issued.claims.mapNotNull { cl ->
-                    val ns = cl.path.getOrNull(0) ?: return@mapNotNull null
-                    MdocField(ns, cl.path.getOrNull(1) ?: cl.path.last(), null, emptySet())
-                },
-                entryDisplayPropertySet = display,
-                id = c.id.value,
+object DcApiRegistrar {
+    private val PROTOCOLS = listOf(
+        "openid4vp-v1-signed", "openid4vp-v1-unsigned", "openid4vp-v1-multisigned", "org-iso-mdoc", "openid4vp",
+    )
+
+    suspend fun register(context: Context, wallet: Wallet) {
+        val creds = wallet.credentials.list()
+        val db = buildDatabase(creds)                                  // CBOR: { protocols, credentials }
+        val matcher = context.assets.open("identitycredentialmatcher.wasm").use { it.readBytes() }
+        val client = IdentityCredentialManager.getClient(context)
+        // Register under the androidx digital-credential type AND the legacy Credman type.
+        listOf("androidx.credentials.TYPE_DIGITAL_CREDENTIAL", "com.credman.IdentityCredential").forEach { type ->
+            client.registerCredentials(
+                RegistrationRequest(credentials = db, matcher = matcher, type = type, requestType = "", protocolTypes = emptyList()),
             )
         }
     }
-    RegistryManager.create(context).registerCredentials(OpenId4VpRegistry(entries, "my-wallet-openid-v1"))
 }
 ```
 
-:::caution
-The display-set parameter is named `entryDisplayPropertySet` (not `displayProperties`), and the DC API
-types require `@OptIn(androidx.credentials.ExperimentalDigitalCredentialApi::class)`.
-:::
+The credential database is a CBOR map `{ "protocols": [...], "credentials": [...] }`. Each credential
+entry carries display fields plus a format-specific block the matcher searches:
+
+```kotlin
+// mSO mdoc entry — the matcher matches its docType + namespaced elements against the DeviceRequest.
+map(common + ("mdoc" to map(listOf(
+    "documentId" to txt(c.id.value),
+    "docType"    to txt(f.docType),
+    "namespaces" to map(namespaces),   // ns -> { element -> [displayName, value, rawMatchString] }
+))))
+
+// SD-JWT VC entry — matched by vct + claim names.
+map(common + ("sdjwt" to map(listOf(
+    "documentId" to txt(c.id.value),
+    "vct"        to txt(f.vct),
+    "claims"     to map(claims),
+))))
+```
+
+Run `register` on app start and again whenever `wallet.credentials.changes` emits.
 
 ## 3. Provider activity
 
-Declare an activity for the `GET_CREDENTIAL` intent — no UI is needed (the OS selector is the consent):
+Declare one activity for the `GET_CREDENTIAL` intent — no UI (the OS selector is the consent). It needs
+**both** the androidx and the identity-credentials actions:
 
 ```xml
 <activity
@@ -83,51 +105,87 @@ Declare an activity for the `GET_CREDENTIAL` intent — no UI is needed (the OS 
     android:theme="@android:style/Theme.Translucent.NoTitleBar">
     <intent-filter>
         <action android:name="androidx.credentials.registry.provider.action.GET_CREDENTIAL" />
+        <action android:name="androidx.identitycredentials.action.GET_CREDENTIALS" />
+        <category android:name="android.intent.category.DEFAULT" />
     </intent-filter>
 </activity>
 ```
 
-Extract the request + origin, run the SDK, return the response:
+Pull the request envelope, then route on protocol. The DC API request is
+`{"requests":[{"protocol":"…","data":{…}}]}` — dispatch `org-iso-mdoc` to the mdoc path and everything
+else to the OpenID4VP path:
 
 ```kotlin
-val request = PendingIntentHandler.retrieveProviderGetCredentialRequest(intent)
-val option = request?.credentialOptions?.filterIsInstance<GetDigitalCredentialOption>()?.firstOrNull() ?: return
-val origin = request.callingAppInfo.getOrigin(privilegedAllowlistJson) ?: appOrigin(request)
+@OptIn(androidx.credentials.ExperimentalDigitalCredentialApi::class)
+override fun onCreate(savedInstanceState: Bundle?) {
+    val request = PendingIntentHandler.retrieveProviderGetCredentialRequest(intent) ?: return finishNoResult()
+    val option = request.credentialOptions.filterIsInstance<GetDigitalCredentialOption>().firstOrNull() ?: return finishNoResult()
+    val origin = request.callingAppInfo.getOrigin(privilegedAllowlistJson) ?: appOrigin(request)
 
-lifecycleScope.launch {
-    val session = wallet.presentation.startDcApi(option.requestJson, origin)
-    val resolved = session.state.first { it is RequestResolved || it is Failed } as RequestResolved
-    session.respond(PresentationSelection.auto(resolved.request))
-    val done = session.state.first { it.isTerminal } as PresentationState.Completed
-    PendingIntentHandler.setGetCredentialResponse(
-        resultData, GetCredentialResponse(DigitalCredential(done.dcApiResponse!!)),
-    )
-    setResult(RESULT_OK, resultData); finish()
+    // org-iso-mdoc (ISO 18013-7): raw mdoc DeviceRequest -> HPKE-encrypted DeviceResponse.
+    val mdoc = matchProtocol(option.requestJson, listOf("org-iso-mdoc", "org.iso.mdoc"))
+    if (mdoc != null) {
+        val (proto, data) = mdoc
+        lifecycleScope.launch {
+            val response = wallet.proximity.respondDcApiMdoc(
+                data.getString("deviceRequest"), data.getString("encryptionInfo"), origin,
+            )
+            val content = JSONObject().put("protocol", proto)
+                .put("data", JSONObject().put("response", response))
+            respond(DigitalCredential(content.toString())); finish()
+        }
+        return
+    }
+
+    // openid4vp-v1-unsigned / -signed.
+    val openid4vp = extractOpenId4Vp(option.requestJson) ?: return failAndFinish("no openid4vp request")
+    lifecycleScope.launch {
+        val session = wallet.presentation.startDcApi(openid4vp, origin)
+        val resolved = session.state.first { it is RequestResolved || it is Failed } as RequestResolved
+        session.respond(PresentationSelection.auto(resolved.request))
+        val done = session.state.first { it.isTerminal } as PresentationState.Completed
+        respond(DigitalCredential(done.dcApiResponse!!)); finish()
+    }
 }
 ```
 
-## 4. Verifier origin
+## 4. org-iso-mdoc and HPKE
+
+The `org-iso-mdoc` request `data` is `{ "deviceRequest": base64url(CBOR), "encryptionInfo": base64url(CBOR) }`
+— a bare ISO 18013-5 `DeviceRequest` plus the verifier's ephemeral encryption key. `respondDcApiMdoc`:
+
+1. builds the `DeviceResponse` for the requested docType, signed over the ISO 18013-7 **dcapi**
+   `SessionTranscript` `[null, null, ["dcapi", SHA-256(CBOR([encryptionInfoB64, origin]))]]`;
+2. **HPKE-seals** it (RFC 9180 base mode, `DHKEM(P-256, HKDF-SHA256) / HKDF-SHA256 / AES-128-GCM`) to the
+   verifier's `recipientPublicKey`, with `info = CBOR(SessionTranscript)` and empty `aad`;
+3. returns `base64url(CBOR(["dcapi", { "enc": …, "cipherText": … }]))`.
+
+HPKE lives in the SDK (`Hpke.sealBaseP256`, Kotlin `mdoc` module / Swift `MDoc`), verified against the
+RFC 9180 Appendix A.3 test vector — so the crypto is portable and needs no platform HPKE. The demo just
+wraps the returned string in `{"protocol","data":{"response":…}}`.
+
+## 5. Verifier origin
 
 `callingAppInfo.getOrigin(allowlistJson)` returns the **web origin** (e.g. `https://verifier.example`)
-when the caller is a privileged browser in your allowlist. Bundle Google's published list (Chrome et al.)
-from `https://www.gstatic.com/gpm-passkeys-privileged-apps/apps.json` as an asset. For a **native app**
-verifier the origin is empty — derive it from the caller's signing certificate:
+when the caller is a privileged browser in your allowlist. For a **native app** verifier the origin is
+empty — derive it from the caller's signing certificate:
 
 ```
 android:apk-key-hash:<base64url SHA-256 of signingCertificateHistory[0]>
 ```
 
-The SDK binds this origin into the mdoc `SessionTranscript` (ISO 18013-7 Annex C) / SD-JWT KB-JWT, so
-the response is bound to the caller.
+The SDK binds this origin into the mdoc `SessionTranscript` (ISO 18013-7 Annex C) / SD-JWT KB-JWT, so the
+response is cryptographically bound to the caller that requested it.
 
-## 5. Test
+## 6. Test
 
-1. Register runs on app start (log `registered N credential(s)`), so the wallet is now a provider.
-2. Open a DC-API verifier site in Chrome (e.g. `verifier.eudiw.dev`, "same device" / browser flow).
-3. The site calls `navigator.credentials.get({ digital })` → the OS shows a wallet selector including
-   yours → pick it → your `GetCredentialActivity` runs `startDcApi` and returns the response.
+1. Registration runs on app start (log `registered N credential(s)`), so the wallet is now a provider.
+2. Open a DC-API verifier in Chrome (`verifier.eudiw.dev` or `digital-credentials.dev`) and pick a
+   protocol — try **openid4vp** (unsigned and signed) and **org-iso-mdoc** (mDL).
+3. `navigator.credentials.get({ digital })` → the OS shows a selector including your wallet → pick it →
+   `GetCredentialActivity` routes to the right SDK path and returns the response.
 
 :::note
-Some Chrome builds gate this behind `chrome://flags` → "Digital Credentials API". The response may still
-be rejected by the verifier's own issuer-trust policy — that's verifier-side, not the wallet.
+Some Chrome builds gate this behind `chrome://flags` → "Digital Credentials API". A response can still be
+rejected by the verifier's own issuer-trust policy — that's verifier-side, not the wallet.
 :::
