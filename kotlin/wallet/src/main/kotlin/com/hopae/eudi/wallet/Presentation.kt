@@ -56,7 +56,12 @@ sealed interface PresentationState {
     data object ResolvingRequest : PresentationState
     data class RequestResolved(val request: PresentationRequest) : PresentationState
     data object Submitting : PresentationState
-    data class Completed(val redirectUri: String?) : PresentationState
+
+    /**
+     * Success. [redirectUri] is the verifier redirect for the remote (URL/QR) flow; [dcApiResponse] is
+     * the JSON object to hand back to the platform for the Digital Credentials API flow. Exactly one is set.
+     */
+    data class Completed(val redirectUri: String?, val dcApiResponse: String? = null) : PresentationState
     data object Declined : PresentationState
     data class Failed(val error: WalletError.Presentation) : PresentationState
 

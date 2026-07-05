@@ -39,11 +39,36 @@ class PresentationService internal constructor(
     private val clock: WalletClock,
     private val rng: Rng,
 ) {
-    /** Starts a presentation session: resolve → match stored credentials → consent → submit. */
-    fun start(requestUri: String): PresentationSession {
+    /** Remote (URL/QR) presentation: resolve → match stored credentials → consent → direct_post submit. */
+    fun start(requestUri: String): PresentationSession = runSession(
+        resolve = { catchingVp { vp.resolveRequest(requestUri) } },
+        submit = { resolved, matches, selection, held ->
+            PresentationState.Completed(catchingVp { vp.respond(resolved, matches, toVpSelection(selection), held) }.redirectUri)
+        },
+    )
+
+    /**
+     * Digital Credentials API presentation (browser-mediated). The platform hands over the [requestObject]
+     * and the caller [origin]; no HTTP is performed — the response object is returned in
+     * [PresentationState.Completed.dcApiResponse] for the app to pass back to the platform.
+     */
+    fun startDcApi(requestObject: String, origin: String): PresentationSession = runSession(
+        resolve = { catchingVp { vp.resolveDcApiRequest(requestObject, origin) } },
+        submit = { resolved, matches, selection, held ->
+            PresentationState.Completed(
+                redirectUri = null,
+                dcApiResponse = catchingVp { vp.respondDcApi(resolved, matches, toVpSelection(selection), held) }.serialize(),
+            )
+        },
+    )
+
+    private fun runSession(
+        resolve: suspend () -> ResolvedRequest,
+        submit: suspend (ResolvedRequest, DcqlMatchResult, PresentationSelection, List<PresentableCredential>) -> PresentationState,
+    ): PresentationSession {
         val session = PresentationSession(scope) {
             emit(PresentationState.ResolvingRequest)
-            val resolved = catchingVp { vp.resolveRequest(requestUri) }
+            val resolved = resolve()
 
             val envelopes = store.list().filter { it.lifecycle is EnvelopeLifecycle.Issued }
             val held = envelopes.mapNotNull { presentableFor(it, it.firstInstance()) }
@@ -59,9 +84,9 @@ class PresentationService internal constructor(
                     if (selection.chosen.isEmpty()) throw WalletError.Presentation.SelectionIncomplete("no credential selected")
                     emit(PresentationState.Submitting)
                     val chosenHeld = buildChosenHeld(envelopes, selection)
-                    val result = catchingVp { vp.respond(resolved, matches, toVpSelection(selection), chosenHeld) }
+                    val terminal = submit(resolved, matches, selection, chosenHeld)
                     recordSuccess(resolved, selection, matches)
-                    emit(PresentationState.Completed(result.redirectUri))
+                    emit(terminal)
                 }
             }
         }

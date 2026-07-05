@@ -8,6 +8,9 @@ import com.hopae.eudi.wallet.sdjwt.SecureAreaJwsSigner
 import com.hopae.eudi.wallet.spi.CredentialFormat
 import com.hopae.eudi.wallet.spi.CredentialId
 import com.hopae.eudi.wallet.spi.CredentialPolicy
+import com.hopae.eudi.wallet.spi.HttpRequest
+import com.hopae.eudi.wallet.spi.HttpResponse
+import com.hopae.eudi.wallet.spi.HttpTransport
 import com.hopae.eudi.wallet.spi.KeySpec
 import com.hopae.eudi.wallet.spi.SecureArea
 import com.hopae.eudi.wallet.spi.SigningAlgorithm
@@ -22,6 +25,7 @@ import com.hopae.eudi.wallet.store.CredentialStore
 import com.hopae.eudi.wallet.store.EnvelopeLifecycle
 import com.hopae.eudi.wallet.testkit.InMemoryStorageDriver
 import com.hopae.eudi.wallet.testkit.SoftwareSecureArea
+import com.hopae.eudi.wallet.vp.MockDcApiVerifier
 import com.hopae.eudi.wallet.vp.MockMdocVerifier
 import com.hopae.eudi.wallet.vp.MockVerifier
 import kotlinx.coroutines.flow.first
@@ -164,6 +168,50 @@ class WalletPresentationTest {
         val entry = log.entries.single()
         assertEquals(TransactionStatus.Success, entry.status)
         assertTrue(entry.credentialIds.contains("mdl-1"))
+        wallet.close()
+    }
+
+    @Test
+    fun digitalCredentialsApiPresentationBindsOrigin() = runBlocking {
+        val area = SoftwareSecureArea()
+        val storage = InMemoryStorageDriver()
+        val issuerKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val deviceKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val bytes = MdocTestIssuer.issue(
+            area = area, issuerKey = issuerKey, deviceKey = deviceKey.publicKey,
+            docType = "org.iso.18013.5.1.mDL", namespace = "org.iso.18013.5.1",
+            elements = listOf("family_name" to Cbor.Text("Kim"), "given_name" to Cbor.Text("Minsu"), "age_over_18" to Cbor.Bool(true)),
+            x5chain = listOf(byteArrayOf(0x30, 0x01)),
+            signed = now, validFrom = now, validUntil = now.plusSeconds(31_536_000),
+        )
+        CredentialStore(storage).save(
+            CredentialEnvelope(
+                CredentialId("mdl-1"), CredentialFormat.MsoMdoc("org.iso.18013.5.1.mDL"), now,
+                EnvelopeLifecycle.Issued(CredentialPolicy(), listOf(CredentialInstance(deviceKey.handle, bytes))),
+            ),
+        )
+
+        val verifier = MockDcApiVerifier()
+        val log = RecordingLog()
+        // DC API must not perform any HTTP — the request/response are handed over by the platform.
+        val noHttp = object : HttpTransport {
+            override suspend fun execute(request: HttpRequest): HttpResponse = throw AssertionError("DC API must not do HTTP")
+        }
+        val wallet = Wallet.create(WalletConfig(), WalletPorts(listOf(area), storage, noHttp, transactionLog = log))
+
+        val session = wallet.presentation.startDcApi(verifier.requestObject(), verifier.origin)
+        val resolved = withTimeout(15_000) { session.state.first { it is PresentationState.RequestResolved || it is PresentationState.Failed } }
+        assertTrue(resolved is PresentationState.RequestResolved, "resolved: $resolved")
+
+        session.respond(PresentationSelection.auto(resolved.request))
+        val terminal = withTimeout(15_000) { session.state.first { it.isTerminal } }
+        assertTrue(terminal is PresentationState.Completed, "terminal: $terminal")
+        assertNull(terminal.redirectUri, "DC API has no redirect")
+        val dcResponse = terminal.dcApiResponse ?: error("missing DC API response")
+
+        // response is origin-bound and selectively disclosed
+        assertEquals(setOf("family_name", "given_name"), verifier.verify(dcResponse))
+        assertEquals(TransactionStatus.Success, log.entries.single().status)
         wallet.close()
     }
 }
