@@ -6,13 +6,20 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.lifecycle.lifecycleScope
 import com.hopae.eudi.demo.ui.WalletApp
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val wallet = DemoWallet.get(this)
         handleIntentLink(intent)
+        // Register credentials with the Credential Manager (Digital Credentials API) + keep in sync.
+        lifecycleScope.launch {
+            DcApiRegistrar.register(this@MainActivity, wallet)
+            wallet.credentials.changes.collect { DcApiRegistrar.register(this@MainActivity, wallet) }
+        }
         setContent {
             MaterialTheme {
                 Surface { WalletApp(wallet) }

@@ -44,6 +44,15 @@
             android:stateNotNeeded="true"
             android:theme="@style/zxing_CaptureTheme"
             android:exported="false" />
+        <!-- Digital Credentials API (Credential Manager) request handler. -->
+        <activity
+            android:name=".GetCredentialActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="androidx.credentials.registry.provider.action.GET_CREDENTIAL" />
+            </intent-filter>
+        </activity>
     </application>
 
 </manifest>
