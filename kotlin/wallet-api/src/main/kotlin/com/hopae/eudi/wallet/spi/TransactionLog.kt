@@ -15,12 +15,24 @@ class TransactionLogEntry(
     val id: String,
     val type: TransactionType,
     val timestamp: Instant,
-    /** Relying party / verifier client_id (presentation) or issuer (issuance). */
-    val relyingParty: String?,
+    /** The verifier (presentation) or issuer (issuance) — identity, display name, and whether trust was established. */
+    val relyingParty: RelyingPartyInfo?,
     val credentialIds: List<String>,
     /** Disclosed claim paths, dot-joined (presentation only). */
     val claimsDisclosed: List<String>,
     val status: TransactionStatus,
+)
+
+/** Who the credential was presented to (or issued by), captured for the audit history. */
+class RelyingPartyInfo(
+    /** Machine identifier: OpenID4VP client_id, mdoc reader id, or issuer URL. */
+    val identifier: String,
+    /** Human-readable name (e.g. certificate CN), if known. */
+    val name: String?,
+    /** True only when identity was cryptographically verified to a configured trust anchor. */
+    val trusted: Boolean,
+    /** Identity scheme (e.g. `x509_san_dns`, `x509_hash`), if applicable. */
+    val scheme: String?,
 )
 
 enum class TransactionType { Presentation, Issuance }

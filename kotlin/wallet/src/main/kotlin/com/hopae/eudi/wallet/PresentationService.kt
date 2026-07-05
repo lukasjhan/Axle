@@ -6,6 +6,7 @@ import com.hopae.eudi.wallet.sdjwt.SdJwt
 import com.hopae.eudi.wallet.sdjwt.SecureAreaJwsSigner
 import com.hopae.eudi.wallet.spi.CredentialFormat
 import com.hopae.eudi.wallet.spi.CredentialId
+import com.hopae.eudi.wallet.spi.RelyingPartyInfo
 import com.hopae.eudi.wallet.spi.Rng
 import com.hopae.eudi.wallet.spi.SecureArea
 import com.hopae.eudi.wallet.spi.SecureAreaCoseSigner
@@ -159,7 +160,7 @@ class PresentationService internal constructor(
         txlog.record(
             TransactionLogEntry(
                 id = newLogId(), type = TransactionType.Presentation, timestamp = clock.now(),
-                relyingParty = resolved.verifier.clientId,
+                relyingParty = relyingPartyOf(resolved),
                 credentialIds = selection.chosen.values.map { it.value }.distinct(),
                 claimsDisclosed = disclosed, status = TransactionStatus.Success,
             ),
@@ -170,11 +171,18 @@ class PresentationService internal constructor(
         txlog.record(
             TransactionLogEntry(
                 id = newLogId(), type = TransactionType.Presentation, timestamp = clock.now(),
-                relyingParty = resolved.verifier.clientId, credentialIds = emptyList(),
+                relyingParty = relyingPartyOf(resolved), credentialIds = emptyList(),
                 claimsDisclosed = emptyList(), status = TransactionStatus.Declined,
             ),
         )
     }
+
+    private fun relyingPartyOf(resolved: ResolvedRequest): RelyingPartyInfo = RelyingPartyInfo(
+        identifier = resolved.verifier.clientId,
+        name = resolved.verifier.commonName,
+        trusted = resolved.verifier.trusted,
+        scheme = resolved.verifier.clientIdScheme,
+    )
 
     private fun newLogId(): String = "txn-" + Base64Url.encode(rng.nextBytes(12))
 

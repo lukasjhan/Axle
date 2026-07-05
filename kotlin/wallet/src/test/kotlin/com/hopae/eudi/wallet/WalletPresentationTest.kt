@@ -104,7 +104,8 @@ class WalletPresentationTest {
         val entry = log.entries.single()
         assertEquals(TransactionType.Presentation, entry.type)
         assertEquals(TransactionStatus.Success, entry.status)
-        assertEquals("verifier.example", entry.relyingParty)
+        assertEquals("verifier.example", entry.relyingParty?.identifier)
+        assertEquals(false, entry.relyingParty?.trusted) // unsigned request → not cryptographically trusted
         assertTrue(entry.credentialIds.contains("pid-1"))
         assertTrue(entry.claimsDisclosed.containsAll(listOf("family_name", "given_name")))
         wallet.close()
