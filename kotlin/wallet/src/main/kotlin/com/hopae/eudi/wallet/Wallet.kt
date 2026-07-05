@@ -48,7 +48,7 @@ class Wallet private constructor(
             val statusClient = StatusListClient(ports.http, X5cIssuerKeyResolver(issuerValidator), clockSeconds)
 
             val vci = Openid4VciClient(ports.http, ports.rng, clockSeconds, config.issuance.clientId)
-            val issuance = IssuanceService(vci, store, ports.defaultSecureArea, scope, ports.rng, ports.clock, config.issuance.redirectUri)
+            val issuance = IssuanceService(vci, store, ports.storage, ports.defaultSecureArea, scope, ports.rng, ports.clock, config.issuance.redirectUri)
 
             return Wallet(
                 credentials = CredentialsService(store, statusClient),

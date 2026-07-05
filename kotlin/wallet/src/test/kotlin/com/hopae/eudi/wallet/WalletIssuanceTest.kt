@@ -93,4 +93,59 @@ class WalletIssuanceTest {
         assertEquals(1, wallet.credentials.list().size)
         wallet.close()
     }
+
+    private suspend fun IssuanceSession.awaitTerminal(): IssuanceState = withTimeout(15_000) { state.first { it.isTerminal } }
+
+    @Test
+    fun deferredIssuancePollsUntilReady() = runBlocking {
+        val area = SoftwareSecureArea()
+        val issuerKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val mock = MockIssuer(area, issuerKey, now = 1_700_000_000L).apply { deferMode = true }
+        val wallet = Wallet.create(WalletConfig(), WalletPorts(listOf(area), InMemoryStorageDriver(), mock))
+
+        val offer = wallet.issuance.resolveOffer(mock.credentialOfferJson)
+        val id = (wallet.issuance.start(IssuanceRequest.fromOffer(offer, "eu.europa.ec.eudi.pid.1", txCode = "1234")).awaitTerminal() as IssuanceState.Completed).result.issued.single()
+        assertTrue(wallet.credentials.get(id)!!.lifecycle is Lifecycle.Deferred, "credential is deferred")
+
+        // first poll: not ready
+        val t1 = wallet.issuance.resumeDeferred(id).awaitTerminal()
+        assertTrue(t1 is IssuanceState.Failed && t1.error is WalletError.Issuance.DeferredNotReady, "expected DeferredNotReady, got $t1")
+
+        // second poll: ready
+        val t2 = wallet.issuance.resumeDeferred(id).awaitTerminal()
+        assertTrue(t2 is IssuanceState.Completed, "expected Completed, got $t2")
+        assertTrue(wallet.credentials.get(id)!!.lifecycle is Lifecycle.Issued, "credential now issued")
+        wallet.close()
+    }
+
+    @Test
+    fun reissueRenewsCredential() = runBlocking {
+        val area = SoftwareSecureArea()
+        val issuerKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val mock = MockIssuer(area, issuerKey, now = 1_700_000_000L)
+        val wallet = Wallet.create(WalletConfig(), WalletPorts(listOf(area), InMemoryStorageDriver(), mock))
+
+        val offer = wallet.issuance.resolveOffer(mock.credentialOfferJson)
+        val id = (wallet.issuance.start(IssuanceRequest.fromOffer(offer, "eu.europa.ec.eudi.pid.1", txCode = "1234")).awaitTerminal() as IssuanceState.Completed).result.issued.single()
+
+        val renewed = wallet.issuance.reissue(id).awaitTerminal()
+        assertTrue(renewed is IssuanceState.Completed, "reissue: $renewed")
+        assertEquals(id, renewed.result.issued.single(), "renewed in place")
+        assertEquals(1, wallet.credentials.list().size, "not duplicated")
+        wallet.close()
+    }
+
+    @Test
+    fun issuanceNotifiesIssuer() = runBlocking {
+        val area = SoftwareSecureArea()
+        val issuerKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val mock = MockIssuer(area, issuerKey, now = 1_700_000_000L)
+        val wallet = Wallet.create(WalletConfig(), WalletPorts(listOf(area), InMemoryStorageDriver(), mock))
+
+        val offer = wallet.issuance.resolveOffer(mock.credentialOfferJson)
+        wallet.issuance.start(IssuanceRequest.fromOffer(offer, "eu.europa.ec.eudi.pid.1", txCode = "1234")).awaitTerminal()
+
+        assertEquals("n-1" to "credential_accepted", mock.seenNotification)
+        wallet.close()
+    }
 }

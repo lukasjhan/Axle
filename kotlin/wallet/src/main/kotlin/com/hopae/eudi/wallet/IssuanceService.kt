@@ -9,10 +9,13 @@ import com.hopae.eudi.wallet.sdjwt.SecureAreaJwsSigner
 import com.hopae.eudi.wallet.spi.CredentialFormat
 import com.hopae.eudi.wallet.spi.CredentialId
 import com.hopae.eudi.wallet.spi.CredentialPolicy
+import com.hopae.eudi.wallet.spi.KeyHandle
 import com.hopae.eudi.wallet.spi.KeyInfo
 import com.hopae.eudi.wallet.spi.KeySpec
 import com.hopae.eudi.wallet.spi.Rng
 import com.hopae.eudi.wallet.spi.SecureArea
+import com.hopae.eudi.wallet.spi.SigningAlgorithm
+import com.hopae.eudi.wallet.spi.StorageDriver
 import com.hopae.eudi.wallet.spi.WalletClock
 import com.hopae.eudi.wallet.store.CredentialEnvelope
 import com.hopae.eudi.wallet.store.CredentialInstance
@@ -21,39 +24,69 @@ import com.hopae.eudi.wallet.store.EnvelopeLifecycle
 import com.hopae.eudi.wallet.vci.CredentialResponse
 import com.hopae.eudi.wallet.vci.IssuanceKeys
 import com.hopae.eudi.wallet.vci.IssuedCredential
+import com.hopae.eudi.wallet.vci.NotificationEvent
 import com.hopae.eudi.wallet.vci.Openid4VciClient
 import com.hopae.eudi.wallet.vci.ProofKey
 import com.hopae.eudi.wallet.vci.VciException
 import kotlinx.coroutines.CoroutineScope
 
-/** OpenID4VCI issuance (API-CONTRACT.md §6.1). Owns key creation, issuance, and persistence. */
+/** OpenID4VCI issuance (API-CONTRACT.md §6.1). Owns key creation, issuance, persistence, and follow-ups. */
 class IssuanceService internal constructor(
     private val vci: Openid4VciClient,
     private val store: CredentialStore,
+    private val storage: StorageDriver,
     private val secureArea: SecureArea,
     private val scope: CoroutineScope,
     private val rng: Rng,
     private val clock: WalletClock,
     private val redirectUri: String,
 ) {
+    private class BuiltKeys(val keys: IssuanceKeys, val proofKeys: List<KeyInfo>, val dpopKey: KeyInfo)
+
     /** Step 1 of the 2-phase flow: resolve an offer deep link / QR / raw JSON. */
     suspend fun resolveOffer(offerUri: String): CredentialOffer =
         CredentialOffer(catchingVci { vci.resolveCredentialOffer(offerUri) })
 
     /** Starts an issuance session — pre-authorized or authorization-code grant, driven as a state machine. */
-    fun start(request: IssuanceRequest): IssuanceSession {
-        val session = IssuanceSession(scope) {
-            emit(IssuanceState.Processing)
-            val (keys, proofKeys) = buildKeys(request)
-            val response = when (val source = request.source) {
-                is IssuanceRequest.Source.FromOffer -> issueFromOffer(this, source.offer, request, keys)
-                is IssuanceRequest.Source.FromIssuer -> authorizationCodeFlow(this, source.credentialIssuer, request.configurationId, null, keys)
-            }
-            emit(IssuanceState.Completed(IssuanceResult(listOf(persist(response, proofKeys, request.policy)))))
+    fun start(request: IssuanceRequest): IssuanceSession = session {
+        emit(IssuanceState.Processing)
+        val built = buildKeys(request.keySpec, request.policy.batchSize)
+        val response = when (val source = request.source) {
+            is IssuanceRequest.Source.FromOffer -> issueFromOffer(this, source.offer, request, built.keys)
+            is IssuanceRequest.Source.FromIssuer -> authorizationCodeFlow(this, source.credentialIssuer, request.configurationId, null, built.keys)
         }
-        session.launch()
-        return session
+        val id = if (response.isDeferred) {
+            persistDeferred(response, built, request)
+        } else {
+            persistIssued(response, built.proofKeys.map { it.handle }, built.dpopKey.handle, request.policy, existingId = null)
+        }
+        emit(IssuanceState.Completed(IssuanceResult(listOf(id))))
     }
+
+    /** Retries a deferred credential (OpenID4VCI §9). Fails with [WalletError.Issuance.DeferredNotReady] if not ready. */
+    fun resumeDeferred(credentialId: CredentialId): IssuanceSession = session {
+        emit(IssuanceState.Processing)
+        val envelope = store.get(credentialId) ?: throw WalletError.Issuance.CredentialRequestFailed("credential not found")
+        val deferred = envelope.lifecycle as? EnvelopeLifecycle.Deferred
+            ?: throw WalletError.Issuance.CredentialRequestFailed("credential is not deferred")
+        val ctx = FollowUpContext.decode(deferred.transactionContext)
+        val response = catchingVci { vci.fetchDeferredCredential(ctx.toCredentialResponse(), rebuildKeys(ctx)) }
+        val id = persistIssued(response, ctx.proofKeys, ctx.dpopKey, ctx.policy, existingId = credentialId)
+        emit(IssuanceState.Completed(IssuanceResult(listOf(id))))
+    }
+
+    /** Renews a credential via the stored refresh token (RFC 6749 §6) — rotates to fresh proof keys. */
+    fun reissue(credentialId: CredentialId): IssuanceSession = session {
+        emit(IssuanceState.Processing)
+        val ctx = loadFollowUp(credentialId) ?: throw WalletError.Issuance.CredentialRequestFailed("credential cannot be reissued")
+        val fresh = buildKeys(KeySpec(secureArea = secureArea.id), ctx.policy.batchSize, dpopKey = ctx.dpopKey)
+        val response = catchingVci { vci.reissue(ctx.toCredentialResponse(), fresh.keys) }
+        val id = persistIssued(response, fresh.proofKeys.map { it.handle }, ctx.dpopKey, ctx.policy, existingId = credentialId)
+        emit(IssuanceState.Completed(IssuanceResult(listOf(id))))
+    }
+
+    private fun session(flow: suspend IssuanceSession.() -> Unit): IssuanceSession =
+        IssuanceSession(scope, flow).also { it.launch() }
 
     private suspend fun issueFromOffer(session: IssuanceSession, offer: CredentialOffer, request: IssuanceRequest, keys: IssuanceKeys): CredentialResponse =
         if (offer.raw.preAuthorizedCode != null) {
@@ -63,7 +96,6 @@ class IssuanceService internal constructor(
             authorizationCodeFlow(session, offer.raw.credentialIssuer, request.configurationId, offer.raw.authorizationCodeIssuerState, keys)
         }
 
-    /** Prepares the authorization request, pauses for the browser step, then exchanges the code. */
     private suspend fun authorizationCodeFlow(session: IssuanceSession, credentialIssuer: String, configurationId: String, issuerState: String?, keys: IssuanceKeys): CredentialResponse {
         val prepared = catchingVci { vci.prepareAuthorizationCodeIssuance(credentialIssuer, configurationId, redirectUri, issuerState) }
         val redirect = session.awaitAuthorization(prepared.authorizationUrl)
@@ -71,38 +103,80 @@ class IssuanceService internal constructor(
         return catchingVci { vci.finishAuthorizationCodeIssuance(prepared, code, keys) }
     }
 
-    private fun extractCode(redirectUri: String): String? =
-        redirectUri.substringAfter("code=", "").substringBefore("&").ifEmpty { null }
-
-    /** One key per credential in the batch (HAIP one-time-use), plus a DPoP key. */
-    private suspend fun buildKeys(request: IssuanceRequest): Pair<IssuanceKeys, List<KeyInfo>> {
+    /** One key per credential in the batch (HAIP one-time-use), plus a DPoP key (reused on [dpopKey]). */
+    private suspend fun buildKeys(keySpec: KeySpec, batchSize: Int, dpopKey: KeyHandle? = null): BuiltKeys {
         val spec = KeySpec(
-            secureArea = secureArea.id, algorithm = request.keySpec.algorithm,
-            userAuthentication = request.keySpec.userAuthentication, hardware = request.keySpec.hardware,
-            attestationChallenge = request.keySpec.attestationChallenge,
+            secureArea = secureArea.id, algorithm = keySpec.algorithm,
+            userAuthentication = keySpec.userAuthentication, hardware = keySpec.hardware,
+            attestationChallenge = keySpec.attestationChallenge,
         )
-        val proofKeys = (1..request.policy.batchSize.coerceAtLeast(1)).map { secureArea.createKey(spec) }
-        val dpopKey = secureArea.createKey(spec)
+        val proofKeys = (1..batchSize.coerceAtLeast(1)).map { secureArea.createKey(spec) }
+        val dpop = dpopKey?.let { KeyInfo(it, spec.algorithm, secureArea.publicKey(it)) } ?: secureArea.createKey(spec)
         fun signer(k: KeyInfo) = SecureAreaJwsSigner(secureArea, k.handle, k.algorithm)
         val keys = IssuanceKeys(
             signer(proofKeys[0]), proofKeys[0].publicKey,
-            signer(dpopKey), dpopKey.publicKey,
+            signer(dpop), dpop.publicKey,
             additionalProofKeys = proofKeys.drop(1).map { ProofKey(signer(it), it.publicKey) },
         )
-        return keys to proofKeys
+        return BuiltKeys(keys, proofKeys, dpop)
     }
 
-    /** Maps the issued credential(s) to one envelope with N instances (one per proof key), and saves it. */
-    private suspend fun persist(response: CredentialResponse, proofKeys: List<KeyInfo>, policy: CredentialPolicy): CredentialId {
-        if (response.credentials.isEmpty()) throw WalletError.Issuance.CredentialRequestFailed("issuer returned no credentials")
-        val format = decode(response.credentials.first()).first
-        val instances = response.credentials.mapIndexed { i, credential ->
-            CredentialInstance(proofKeys[i].handle, decode(credential).second)
-        }
-        val id = CredentialId("cred-" + Base64Url.encode(rng.nextBytes(12)))
-        store.save(CredentialEnvelope(id, format, clock.now(), EnvelopeLifecycle.Issued(policy, instances)))
+    private suspend fun rebuildKeys(ctx: FollowUpContext): IssuanceKeys {
+        fun signer(h: KeyHandle) = SecureAreaJwsSigner(secureArea, h, SigningAlgorithm.ES256)
+        val proofPubs = ctx.proofKeys.map { secureArea.publicKey(it) }
+        return IssuanceKeys(
+            signer(ctx.proofKeys[0]), proofPubs[0],
+            signer(ctx.dpopKey), secureArea.publicKey(ctx.dpopKey),
+            additionalProofKeys = ctx.proofKeys.drop(1).mapIndexed { i, h -> ProofKey(signer(h), proofPubs[i + 1]) },
+        )
+    }
+
+    private suspend fun persistDeferred(response: CredentialResponse, built: BuiltKeys, request: IssuanceRequest): CredentialId {
+        val ctx = contextOf(response, built.proofKeys.map { it.handle }, built.dpopKey.handle, request.policy, request.configurationId)
+        val id = newId()
+        val format = if (ctx.requestedFormat == "mso_mdoc") CredentialFormat.MsoMdoc(ctx.configurationId) else CredentialFormat.SdJwtVc(ctx.configurationId)
+        store.save(CredentialEnvelope(id, format, clock.now(), EnvelopeLifecycle.Deferred(ctx.encode(), null)))
         return id
     }
+
+    private suspend fun persistIssued(response: CredentialResponse, proofKeys: List<KeyHandle>, dpopKey: KeyHandle, policy: CredentialPolicy, existingId: CredentialId?): CredentialId {
+        if (response.credentials.isEmpty()) throw WalletError.Issuance.CredentialRequestFailed("issuer returned no credentials")
+        val format = decode(response.credentials.first()).first
+        val instances = response.credentials.mapIndexed { i, credential -> CredentialInstance(proofKeys[i], decode(credential).second) }
+        val id = existingId ?: newId()
+        store.save(CredentialEnvelope(id, format, clock.now(), EnvelopeLifecycle.Issued(policy, instances)))
+        // Persist reissue context and best-effort notify the issuer of acceptance.
+        storage.put("followup", id.value, contextOf(response, proofKeys, dpopKey, policy, response.configurationId ?: "").encode())
+        autoNotify(response, dpopKey)
+        return id
+    }
+
+    private fun contextOf(response: CredentialResponse, proofKeys: List<KeyHandle>, dpopKey: KeyHandle, policy: CredentialPolicy, configurationId: String) = FollowUpContext(
+        credentialIssuer = response.credentialIssuer ?: "",
+        configurationId = response.configurationId ?: configurationId,
+        requestedFormat = response.requestedFormat,
+        accessToken = response.accessToken,
+        refreshToken = response.refreshToken,
+        transactionId = response.transactionId,
+        notificationId = response.notificationId,
+        proofKeys = proofKeys,
+        dpopKey = dpopKey,
+        policy = policy,
+    )
+
+    private suspend fun loadFollowUp(id: CredentialId): FollowUpContext? =
+        storage.get("followup", id.value)?.let { FollowUpContext.decode(it) }
+
+    private suspend fun autoNotify(response: CredentialResponse, dpopKey: KeyHandle) {
+        if (response.notificationId == null) return
+        runCatching {
+            val signer = SecureAreaJwsSigner(secureArea, dpopKey, SigningAlgorithm.ES256)
+            val pub = secureArea.publicKey(dpopKey)
+            vci.sendNotification(response, NotificationEvent.CREDENTIAL_ACCEPTED, IssuanceKeys(signer, pub, signer, pub))
+        }
+    }
+
+    private fun newId(): CredentialId = CredentialId("cred-" + Base64Url.encode(rng.nextBytes(12)))
 
     /** Determines the format + raw payload bytes for storage (SD-JWT compact string / mdoc IssuerSigned CBOR). */
     private fun decode(credential: IssuedCredential): Pair<CredentialFormat, ByteArray> = when (credential.format) {
@@ -115,6 +189,9 @@ class IssuanceService internal constructor(
             CredentialFormat.SdJwtVc(vct) to credential.credential.encodeToByteArray()
         }
     }
+
+    private fun extractCode(redirectUri: String): String? =
+        redirectUri.substringAfter("code=", "").substringBefore("&").ifEmpty { null }
 
     private suspend fun <T> catchingVci(block: suspend () -> T): T = try {
         block()
