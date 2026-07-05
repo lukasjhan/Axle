@@ -1,5 +1,6 @@
 package com.hopae.eudi.demo.adapters
 
+import com.hopae.eudi.demo.LogStore
 import com.hopae.eudi.wallet.spi.HttpMethod
 import com.hopae.eudi.wallet.spi.HttpRequest
 import com.hopae.eudi.wallet.spi.HttpResponse
@@ -10,7 +11,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
-/** [HttpTransport] backed by OkHttp — honours the per-request redirect policy the OpenID flows rely on. */
+/** [HttpTransport] backed by OkHttp — logs every call to [LogStore] and honours the per-request redirect policy. */
 class OkHttpTransport(private val base: OkHttpClient = OkHttpClient()) : HttpTransport {
 
     override suspend fun execute(request: HttpRequest): HttpResponse = withContext(Dispatchers.IO) {
@@ -27,8 +28,18 @@ class OkHttpTransport(private val base: OkHttpClient = OkHttpClient()) : HttpTra
             HttpMethod.PATCH -> builder.patch(body ?: ByteArray(0).toRequestBody())
             HttpMethod.DELETE -> if (body != null) builder.delete(body) else builder.delete()
         }
-        client.newCall(builder.build()).execute().use { response ->
-            HttpResponse(response.code, response.headers.map { it.first to it.second }, response.body?.bytes() ?: ByteArray(0))
+
+        LogStore.log("HTTP → ${request.method} ${request.url}")
+        val t0 = System.currentTimeMillis()
+        try {
+            client.newCall(builder.build()).execute().use { response ->
+                val bytes = response.body?.bytes() ?: ByteArray(0)
+                LogStore.log("HTTP ← ${response.code} ${request.url}  (${System.currentTimeMillis() - t0}ms, ${bytes.size}B)")
+                HttpResponse(response.code, response.headers.map { it.first to it.second }, bytes)
+            }
+        } catch (e: Exception) {
+            LogStore.log("HTTP ✗ ${request.url}  ${e.javaClass.simpleName}: ${e.message}")
+            throw e
         }
     }
 }

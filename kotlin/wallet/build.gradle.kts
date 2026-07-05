@@ -10,8 +10,9 @@ repositories {
 }
 
 dependencies {
-    // Public API exposes only wallet-api (ports + value types) + own types.
+    // Public API exposes wallet-api (ports + value types) + txlog (wallet.transactions returns its types) + own types.
     api(project(":wallet-api"))
+    api(project(":txlog"))
     // Protocol engines are internal wiring — hidden from the public API.
     implementation(project(":credential-store"))
     implementation(project(":sdjwt"))
@@ -21,7 +22,6 @@ dependencies {
     implementation(project(":openid4vci"))
     implementation(project(":openid4vp"))
     implementation(project(":proximity"))
-    implementation(project(":txlog"))
 
     testImplementation(kotlin("test"))
     testImplementation(project(":testkit"))

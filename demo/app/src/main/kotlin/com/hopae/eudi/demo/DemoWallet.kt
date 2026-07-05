@@ -2,6 +2,7 @@ package com.hopae.eudi.demo
 
 import android.content.Context
 import com.hopae.eudi.demo.adapters.FileStorageDriver
+import com.hopae.eudi.demo.adapters.LogWalletLogger
 import com.hopae.eudi.demo.adapters.OkHttpTransport
 import com.hopae.eudi.wallet.Wallet
 import com.hopae.eudi.wallet.WalletConfig
@@ -16,6 +17,7 @@ import java.io.File
  *  - [SoftwareSecureArea] holds holder keys in memory (not persisted across process restarts). A
  *    production wallet injects an Android Keystore-backed SecureArea (hardware-bound keys).
  *  - [FileStorageDriver] persists credentials as plain files; production should encrypt at rest.
+ *  - The transaction log uses the default in-memory store, so history resets on restart.
  */
 object DemoWallet {
     @Volatile private var instance: Wallet? = null
@@ -27,7 +29,11 @@ object DemoWallet {
                 secureAreas = listOf(SoftwareSecureArea()),
                 storage = FileStorageDriver(File(context.applicationContext.filesDir, "wallet")),
                 http = OkHttpTransport(),
+                logger = LogWalletLogger(),
             ),
-        ).also { instance = it }
+        ).also {
+            instance = it
+            LogStore.log("Wallet assembled (SoftwareSecureArea · FileStorageDriver · OkHttp)")
+        }
     }
 }
