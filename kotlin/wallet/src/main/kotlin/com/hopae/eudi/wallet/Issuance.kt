@@ -11,22 +11,36 @@ class CredentialOffer internal constructor(internal val raw: com.hopae.eudi.wall
     val requiresTxCode: Boolean get() = raw.txCode != null
 }
 
-/** What to issue: which offered config, key material policy, and (if pre-known) the tx_code. */
+/** What to issue: from an offer or wallet-initiated, plus key policy and (if pre-known) the tx_code. */
 class IssuanceRequest private constructor(
-    internal val offer: CredentialOffer,
+    internal val source: Source,
     internal val configurationId: String,
     internal val txCode: String?,
     internal val keySpec: KeySpec,
     internal val policy: CredentialPolicy,
 ) {
+    internal sealed interface Source {
+        data class FromOffer(val offer: CredentialOffer) : Source
+        data class FromIssuer(val credentialIssuer: String) : Source
+    }
+
     companion object {
+        /** 2-phase flow: issue an offered credential (pre-authorized or authorization-code grant). */
         fun fromOffer(
             offer: CredentialOffer,
             configurationId: String,
             txCode: String? = null,
             keySpec: KeySpec = KeySpec(),
             policy: CredentialPolicy = CredentialPolicy(),
-        ): IssuanceRequest = IssuanceRequest(offer, configurationId, txCode, keySpec, policy)
+        ): IssuanceRequest = IssuanceRequest(Source.FromOffer(offer), configurationId, txCode, keySpec, policy)
+
+        /** Wallet-initiated issuance from an issuer (authorization-code grant, browser step required). */
+        fun fromIssuer(
+            credentialIssuer: String,
+            configurationId: String,
+            keySpec: KeySpec = KeySpec(),
+            policy: CredentialPolicy = CredentialPolicy(),
+        ): IssuanceRequest = IssuanceRequest(Source.FromIssuer(credentialIssuer), configurationId, null, keySpec, policy)
     }
 }
 

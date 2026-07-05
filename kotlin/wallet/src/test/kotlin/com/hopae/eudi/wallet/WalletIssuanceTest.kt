@@ -1,6 +1,8 @@
 package com.hopae.eudi.wallet
 
 import com.hopae.eudi.wallet.spi.CredentialPolicy
+import com.hopae.eudi.wallet.spi.HttpMethod
+import com.hopae.eudi.wallet.spi.HttpRequest
 import com.hopae.eudi.wallet.spi.KeySpec
 import com.hopae.eudi.wallet.spi.KeyUse
 import com.hopae.eudi.wallet.spi.SigningAlgorithm
@@ -44,6 +46,51 @@ class WalletIssuanceTest {
         assertEquals(KeyUse.OneTime, issued.instances.use)
         assertTrue(issued.claims.any { it.path == listOf("given_name") && it.value.display() == "John" }, "PID given_name")
 
+        wallet.close()
+    }
+
+    @Test
+    fun authorizationCodeIssuanceWithBrowserStep() = runBlocking {
+        val area = SoftwareSecureArea()
+        val issuerKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val mock = MockIssuer(area, issuerKey, now = 1_700_000_000L)
+        val wallet = Wallet.create(WalletConfig(), WalletPorts(listOf(area), InMemoryStorageDriver(), mock))
+
+        val session = wallet.issuance.start(IssuanceRequest.fromIssuer("https://issuer.example", "eu.europa.ec.eudi.pid.1"))
+
+        // session pauses for the browser step
+        val authState = withTimeout(15_000) { session.state.first { it is IssuanceState.AuthorizationRequired || it is IssuanceState.Failed } }
+        assertTrue(authState is IssuanceState.AuthorizationRequired, "expected AuthorizationRequired, got $authState")
+
+        // emulate the browser hitting the authorization URL on the mock issuer → redirect carrying the code
+        val redirect = mock.execute(HttpRequest(HttpMethod.GET, (authState as IssuanceState.AuthorizationRequired).authorizationUrl))
+        val location = redirect.headers.first { it.first == "Location" }.second
+        session.completeAuthorization(location)
+
+        val terminal = withTimeout(15_000) { session.state.first { it.isTerminal } }
+        assertTrue(terminal is IssuanceState.Completed, "expected Completed, got $terminal")
+        assertEquals(1, wallet.credentials.list().size)
+        wallet.close()
+    }
+
+    @Test
+    fun txCodeSuppliedInteractively() = runBlocking {
+        val area = SoftwareSecureArea()
+        val issuerKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val mock = MockIssuer(area, issuerKey, now = 1_700_000_000L)
+        val wallet = Wallet.create(WalletConfig(), WalletPorts(listOf(area), InMemoryStorageDriver(), mock))
+
+        val offer = wallet.issuance.resolveOffer(mock.credentialOfferJson)
+        // no txCode in the request → session must ask for it
+        val session = wallet.issuance.start(IssuanceRequest.fromOffer(offer, "eu.europa.ec.eudi.pid.1"))
+
+        val txState = withTimeout(15_000) { session.state.first { it is IssuanceState.TxCodeRequired || it.isTerminal } }
+        assertTrue(txState is IssuanceState.TxCodeRequired, "expected TxCodeRequired, got $txState")
+        session.submitTxCode("1234")
+
+        val terminal = withTimeout(15_000) { session.state.first { it.isTerminal } }
+        assertTrue(terminal is IssuanceState.Completed, "expected Completed, got $terminal")
+        assertEquals(1, wallet.credentials.list().size)
         wallet.close()
     }
 }

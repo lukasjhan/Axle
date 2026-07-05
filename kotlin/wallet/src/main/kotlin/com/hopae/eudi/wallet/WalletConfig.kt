@@ -12,7 +12,9 @@ class WalletConfig(
 
 class IssuanceConfig(
     val clientId: String = "wallet-dev",
-    // Phase B: clientAuth (None | AttestationBased), redirectUri, par/dpop policy.
+    /** OAuth redirect URI for the authorization-code grant (the app registers this scheme). */
+    val redirectUri: String = "eudi-wallet://authorize",
+    // Later: clientAuth (None | AttestationBased), par/dpop policy.
 )
 
 class PresentationConfig(

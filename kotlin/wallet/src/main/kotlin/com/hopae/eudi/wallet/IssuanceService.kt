@@ -34,24 +34,45 @@ class IssuanceService internal constructor(
     private val scope: CoroutineScope,
     private val rng: Rng,
     private val clock: WalletClock,
+    private val redirectUri: String,
 ) {
     /** Step 1 of the 2-phase flow: resolve an offer deep link / QR / raw JSON. */
     suspend fun resolveOffer(offerUri: String): CredentialOffer =
         CredentialOffer(catchingVci { vci.resolveCredentialOffer(offerUri) })
 
-    /** Starts an issuance session. Pre-authorized code flow (auth-code arrives in a later slice). */
+    /** Starts an issuance session — pre-authorized or authorization-code grant, driven as a state machine. */
     fun start(request: IssuanceRequest): IssuanceSession {
         val session = IssuanceSession(scope) {
             emit(IssuanceState.Processing)
             val (keys, proofKeys) = buildKeys(request)
-            val response = catchingVci {
-                vci.issueWithPreAuthorizedCode(request.offer.raw, request.configurationId, keys, request.txCode)
+            val response = when (val source = request.source) {
+                is IssuanceRequest.Source.FromOffer -> issueFromOffer(this, source.offer, request, keys)
+                is IssuanceRequest.Source.FromIssuer -> authorizationCodeFlow(this, source.credentialIssuer, request.configurationId, null, keys)
             }
             emit(IssuanceState.Completed(IssuanceResult(listOf(persist(response, proofKeys, request.policy)))))
         }
         session.launch()
         return session
     }
+
+    private suspend fun issueFromOffer(session: IssuanceSession, offer: CredentialOffer, request: IssuanceRequest, keys: IssuanceKeys): CredentialResponse =
+        if (offer.raw.preAuthorizedCode != null) {
+            val txCode = request.txCode ?: if (offer.requiresTxCode) session.awaitTxCode() else null
+            catchingVci { vci.issueWithPreAuthorizedCode(offer.raw, request.configurationId, keys, txCode) }
+        } else {
+            authorizationCodeFlow(session, offer.raw.credentialIssuer, request.configurationId, offer.raw.authorizationCodeIssuerState, keys)
+        }
+
+    /** Prepares the authorization request, pauses for the browser step, then exchanges the code. */
+    private suspend fun authorizationCodeFlow(session: IssuanceSession, credentialIssuer: String, configurationId: String, issuerState: String?, keys: IssuanceKeys): CredentialResponse {
+        val prepared = catchingVci { vci.prepareAuthorizationCodeIssuance(credentialIssuer, configurationId, redirectUri, issuerState) }
+        val redirect = session.awaitAuthorization(prepared.authorizationUrl)
+        val code = extractCode(redirect) ?: throw WalletError.Issuance.AuthorizationFailed(null, "no authorization code in redirect")
+        return catchingVci { vci.finishAuthorizationCodeIssuance(prepared, code, keys) }
+    }
+
+    private fun extractCode(redirectUri: String): String? =
+        redirectUri.substringAfter("code=", "").substringBefore("&").ifEmpty { null }
 
     /** One key per credential in the batch (HAIP one-time-use), plus a DPoP key. */
     private suspend fun buildKeys(request: IssuanceRequest): Pair<IssuanceKeys, List<KeyInfo>> {
