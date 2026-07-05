@@ -209,8 +209,11 @@ class IssuanceService internal constructor(
         }
     }
 
-    private fun extractCode(redirectUri: String): String? =
-        redirectUri.substringAfter("code=", "").substringBefore("&").ifEmpty { null }
+    /** Extracts and URL-decodes the `code` from an authorization redirect (it is re-encoded for the token request). */
+    private fun extractCode(redirectUri: String): String? {
+        val raw = redirectUri.substringAfter("code=", "").substringBefore("&").ifEmpty { return null }
+        return runCatching { java.net.URLDecoder.decode(raw, "UTF-8") }.getOrDefault(raw)
+    }
 
     private suspend fun <T> catchingVci(block: suspend () -> T): T = try {
         block()

@@ -193,10 +193,12 @@ public struct IssuanceService {
         return (.sdJwtVc(vct: vct), Array(credential.credential.utf8))
     }
 
+    /// Extracts and URL-decodes the `code` from an authorization redirect (it is re-encoded for the token request).
     private func extractCode(_ redirectUri: String) -> String? {
         guard let range = redirectUri.range(of: "code=") else { return nil }
-        let code = redirectUri[range.upperBound...].prefix(while: { $0 != "&" })
-        return code.isEmpty ? nil : String(code)
+        let raw = String(redirectUri[range.upperBound...].prefix(while: { $0 != "&" }))
+        if raw.isEmpty { return nil }
+        return raw.removingPercentEncoding ?? raw
     }
 
     private func catchingVci<T>(_ block: () async throws -> T) async throws -> T {
