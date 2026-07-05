@@ -17,6 +17,7 @@ let package = Package(
         .library(name: "TransactionLog", targets: ["TransactionLog"]),
         .library(name: "Proximity", targets: ["Proximity"]),
         .library(name: "WalletTestKit", targets: ["WalletTestKit"]),
+        .library(name: "Wallet", targets: ["Wallet"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
@@ -70,6 +71,10 @@ let package = Package(
             name: "WalletTestKit",
             dependencies: ["WalletAPI", "CborCose", .product(name: "Crypto", package: "swift-crypto")]
         ),
+        .target(
+            name: "Wallet",
+            dependencies: ["WalletAPI", "CredentialStore", "SdJwt", "MDoc", "Trust", "StatusList", "OpenID4VP"]
+        ),
         .testTarget(
             name: "CborCoseTests",
             dependencies: ["CborCose", .product(name: "Crypto", package: "swift-crypto")]
@@ -84,6 +89,7 @@ let package = Package(
         .testTarget(name: "StatusListTests", dependencies: ["StatusList", "WalletTestKit"]),
         .testTarget(name: "TransactionLogTests", dependencies: ["TransactionLog"]),
         .testTarget(name: "ProximityTests", dependencies: ["Proximity", "MDoc", "WalletTestKit"]),
+        .testTarget(name: "WalletTests", dependencies: ["Wallet", "WalletTestKit"]),
         .testTarget(name: "GoldenTests", dependencies: ["SdJwt", "CborCose", .product(name: "Crypto", package: "swift-crypto")]),
         .testTarget(
             name: "TrustTests",
