@@ -18,7 +18,12 @@ public struct WalletConfig {
 
 public struct IssuanceConfig {
     public let clientId: String
-    public init(clientId: String = "wallet-dev") { self.clientId = clientId }
+    /// OAuth redirect URI for the authorization-code grant (the app registers this scheme).
+    public let redirectUri: String
+    public init(clientId: String = "wallet-dev", redirectUri: String = "eudi-wallet://authorize") {
+        self.clientId = clientId
+        self.redirectUri = redirectUri
+    }
 }
 
 public struct PresentationConfig {

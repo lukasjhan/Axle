@@ -44,7 +44,11 @@ extension CredentialEnvelope {
         case let .pending(authorizationUrl, _):
             lc = .pending(authorizationUrl: authorizationUrl)
         }
-        return Credential(id: id, format: format, lifecycle: lc, issuer: nil, display: nil, configurationId: nil, createdAt: createdAt)
+        return Credential(
+            id: id, format: format, lifecycle: lc,
+            issuer: metadata.map { IssuerInfo(url: $0.issuerUrl, displayName: $0.issuerDisplayName) },
+            display: metadata.map { CredentialDisplay(name: $0.displayName, logoUri: $0.logoUri, backgroundColor: $0.backgroundColor) },
+            configurationId: metadata?.configurationId, createdAt: createdAt)
     }
 }
 

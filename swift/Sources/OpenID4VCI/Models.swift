@@ -90,6 +90,8 @@ public struct CredentialIssuerMetadata {
     public let notificationEndpoint: String?
     public let authorizationServers: [String]
     public let credentialConfigurationsSupported: [String: CredentialConfiguration]
+    /// Issuer display name (first `display` entry), if advertised.
+    public let issuerDisplayName: String?
 
     public static func fromObj(_ o: JsonValue) throws -> CredentialIssuerMetadata {
         let issuer = try o.requireString("credential_issuer", "issuer metadata")
@@ -100,6 +102,10 @@ public struct CredentialIssuerMetadata {
                 configs[id] = CredentialConfiguration.fromObj(v)
             }
         }
+        var issuerDisplayName: String?
+        if case let .arr(displays)? = o["display"], let first = displays.first, case let .str(n)? = first["name"] {
+            issuerDisplayName = n
+        }
         return CredentialIssuerMetadata(
             credentialIssuer: issuer,
             credentialEndpoint: try o.requireString("credential_endpoint", "issuer metadata"),
@@ -107,7 +113,8 @@ public struct CredentialIssuerMetadata {
             deferredCredentialEndpoint: o.string("deferred_credential_endpoint"),
             notificationEndpoint: o.string("notification_endpoint"),
             authorizationServers: o.stringArray("authorization_servers") ?? [issuer],
-            credentialConfigurationsSupported: configs
+            credentialConfigurationsSupported: configs,
+            issuerDisplayName: issuerDisplayName
         )
     }
 }
@@ -118,6 +125,17 @@ public struct CredentialConfiguration {
     public let docType: String?
     public let proofSigningAlgs: [String]
     public let scope: String?
+    /// From the first `display` entry — for wallet UI.
+    public let displayName: String?
+    public let logoUri: String?
+    public let backgroundColor: String?
+
+    public init(format: String, vct: String?, docType: String?, proofSigningAlgs: [String], scope: String?,
+                displayName: String? = nil, logoUri: String? = nil, backgroundColor: String? = nil) {
+        self.format = format; self.vct = vct; self.docType = docType
+        self.proofSigningAlgs = proofSigningAlgs; self.scope = scope
+        self.displayName = displayName; self.logoUri = logoUri; self.backgroundColor = backgroundColor
+    }
 
     public static func fromObj(_ o: JsonValue) -> CredentialConfiguration {
         var proofAlgs: [String] = []
@@ -132,7 +150,14 @@ public struct CredentialConfiguration {
         if case let .str(d)? = o["doctype"] { docType = d }
         var scope: String?
         if case let .str(s)? = o["scope"] { scope = s }
-        return CredentialConfiguration(format: format, vct: vct, docType: docType, proofSigningAlgs: proofAlgs, scope: scope)
+        var displayName: String?, logoUri: String?, backgroundColor: String?
+        if case let .arr(displays)? = o["display"], let first = displays.first {
+            if case let .str(n)? = first["name"] { displayName = n }
+            if case let .str(u)? = first["logo"]?["uri"] { logoUri = u }
+            if case let .str(c)? = first["background_color"] { backgroundColor = c }
+        }
+        return CredentialConfiguration(format: format, vct: vct, docType: docType, proofSigningAlgs: proofAlgs,
+                                       scope: scope, displayName: displayName, logoUri: logoUri, backgroundColor: backgroundColor)
     }
 }
 

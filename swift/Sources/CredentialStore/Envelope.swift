@@ -28,16 +28,38 @@ public enum EnvelopeLifecycle: Sendable {
     case issued(policy: CredentialPolicy, instances: [CredentialInstance])
 }
 
+public struct CredentialMetadata: Sendable {
+    public let issuerUrl: String
+    public let issuerDisplayName: String?
+    public let configurationId: String
+    public let displayName: String?
+    public let logoUri: String?
+    public let backgroundColor: String?
+
+    public init(issuerUrl: String, issuerDisplayName: String?, configurationId: String,
+                displayName: String?, logoUri: String?, backgroundColor: String?) {
+        self.issuerUrl = issuerUrl
+        self.issuerDisplayName = issuerDisplayName
+        self.configurationId = configurationId
+        self.displayName = displayName
+        self.logoUri = logoUri
+        self.backgroundColor = backgroundColor
+    }
+}
+
 public struct CredentialEnvelope: Sendable {
     public let id: CredentialId
     public let format: CredentialFormat
     public let createdAt: Date
     public let lifecycle: EnvelopeLifecycle
+    /// Issuer/display metadata captured at issuance (from issuer metadata).
+    public let metadata: CredentialMetadata?
 
-    public init(id: CredentialId, format: CredentialFormat, createdAt: Date, lifecycle: EnvelopeLifecycle) {
+    public init(id: CredentialId, format: CredentialFormat, createdAt: Date, lifecycle: EnvelopeLifecycle, metadata: CredentialMetadata? = nil) {
         self.id = id
         self.format = format
         self.createdAt = createdAt
         self.lifecycle = lifecycle
+        self.metadata = metadata
     }
 }

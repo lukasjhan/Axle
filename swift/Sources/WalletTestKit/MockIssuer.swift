@@ -3,13 +3,12 @@ import Crypto
 import Foundation
 import SdJwt
 import WalletAPI
-import WalletTestKit
 @testable import OpenID4VCI
 
 /// A mock OpenID4VCI issuer that actually verifies DPoP + key proofs and issues a real
 /// SD-JWT VC. Not a stub: signatures, htu/htm/ath, aud and c_nonce are checked, and the
 /// first token request is answered with a DPoP-Nonce challenge to exercise the retry path.
-actor MockIssuer: HttpTransport {
+public actor MockIssuer: HttpTransport {
     private let area: SoftwareSecureArea
     private let issuerKey: KeyInfo
     private let now: Int64
@@ -18,33 +17,33 @@ actor MockIssuer: HttpTransport {
     private let preAuthCode = "PRE-AUTH-123"
     private var cNonce: String?
     private var accessToken: String?
-    private(set) var seenDpopNonceRetry = false
+    public private(set) var seenDpopNonceRetry = false
 
     // authorization code flow state
     private var parRequestUri: String?
     private let authCode = "AUTH-CODE-XYZ"
     private var authCodeChallenge: String?
-    private(set) var seenPar = false
+    public private(set) var seenPar = false
     /// Test-observable: the key_attestation header from the first proof, and the proof count.
-    private(set) var seenKeyAttestation: String?
-    private(set) var seenProofCount = 0
+    public private(set) var seenKeyAttestation: String?
+    public private(set) var seenProofCount = 0
 
     /// When true, /credential defers (returns a transaction_id); the credential comes from /deferred_credential.
     private var deferMode = false
     private var deferredHolderKey: EcPublicKey?
     private var deferredPollCount = 0
     /// Test-observable: (notification_id, event) of the last notification received.
-    private(set) var seenNotification: (String, String)?
+    public private(set) var seenNotification: (String, String)?
 
-    func setDeferMode(_ enabled: Bool) { deferMode = enabled }
+    public func setDeferMode(_ enabled: Bool) { deferMode = enabled }
 
-    init(area: SoftwareSecureArea, issuerKey: KeyInfo, now: Int64) {
+    public init(area: SoftwareSecureArea, issuerKey: KeyInfo, now: Int64) {
         self.area = area
         self.issuerKey = issuerKey
         self.now = now
     }
 
-    nonisolated var credentialOfferJson: String {
+    public nonisolated var credentialOfferJson: String {
         """
         {"credential_issuer":"https://issuer.example",
          "credential_configuration_ids":["eu.europa.ec.eudi.pid.1"],
@@ -53,7 +52,7 @@ actor MockIssuer: HttpTransport {
         """
     }
 
-    func execute(_ request: HttpRequest) async throws -> HttpResponse {
+    public func execute(_ request: HttpRequest) async throws -> HttpResponse {
         let path = String(request.url.dropFirst(issuer.count))
         switch path {
         case "/.well-known/openid-credential-issuer": return ok(issuerMetadata())
@@ -132,7 +131,7 @@ actor MockIssuer: HttpTransport {
     private var issuedRefreshToken: String?
 
     /// When set, the issuer metadata carries this `signed_metadata` JWT.
-    func setSignedMetadata(_ jws: String) { signedMetadata = jws }
+    public func setSignedMetadata(_ jws: String) { signedMetadata = jws }
     private var signedMetadata: String?
 
     private func handleNonce() -> HttpResponse {
@@ -265,8 +264,10 @@ actor MockIssuer: HttpTransport {
          "deferred_credential_endpoint":"\(issuer)/deferred_credential",
          "notification_endpoint":"\(issuer)/notification",
          "authorization_servers":["\(issuer)"],
+         "display":[{"name":"Hopae Test Issuer"}],
          "credential_configurations_supported":{
            "eu.europa.ec.eudi.pid.1":{"format":"dc+sd-jwt","vct":"eu.europa.ec.eudi.pid.1",
+             "display":[{"name":"Personal ID","logo":{"uri":"https://logo.example/pid.png"},"background_color":"#123456"}],
              "proof_types_supported":{"jwt":{"proof_signing_alg_values_supported":["ES256"]}}}}}
         """
     }

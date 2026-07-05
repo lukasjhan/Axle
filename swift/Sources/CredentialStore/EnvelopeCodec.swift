@@ -23,6 +23,7 @@ public enum EnvelopeCodec {
     private static let kCreatedAt: Int64 = 4       // epoch millis
     private static let kLifecycleType: Int64 = 5   // 0 pending, 1 deferred, 2 issued
     private static let kLifecycle: Int64 = 6
+    private static let kMetadata: Int64 = 7        // optional issuer/display metadata
 
     public static func encode(_ envelope: CredentialEnvelope) throws -> [UInt8] {
         try CborEncoder.encode(toCbor(envelope))
@@ -75,7 +76,7 @@ public enum EnvelopeCodec {
             lifecycle = .map([(.int(0), policyMap), (.int(1), instanceArray)])
         }
 
-        return .map([
+        var entries: [(Cbor, Cbor)] = [
             (.int(kVersion), .int(version)),
             (.int(kId), .text(e.id.value)),
             (.int(kFormatType), .int(formatType)),
@@ -83,7 +84,17 @@ public enum EnvelopeCodec {
             (.int(kCreatedAt), .int(epochMillis(e.createdAt))),
             (.int(kLifecycleType), .int(lifecycleType)),
             (.int(kLifecycle), lifecycle),
-        ])
+        ]
+        if let m = e.metadata {
+            var mm: [(Cbor, Cbor)] = [(.int(0), .text(m.issuerUrl))]
+            if let x = m.issuerDisplayName { mm.append((.int(1), .text(x))) }
+            mm.append((.int(2), .text(m.configurationId)))
+            if let x = m.displayName { mm.append((.int(3), .text(x))) }
+            if let x = m.logoUri { mm.append((.int(4), .text(x))) }
+            if let x = m.backgroundColor { mm.append((.int(5), .text(x))) }
+            entries.append((.int(kMetadata), .map(mm)))
+        }
+        return .map(entries)
     }
 
     private static func fromCbor(_ c: Cbor) throws -> CredentialEnvelope {
@@ -143,11 +154,26 @@ public enum EnvelopeCodec {
             throw EnvelopeCodecError.unknownLifecycle(t)
         }
 
+        var metadata: CredentialMetadata?
+        if let mCbor = get(root, kMetadata) {
+            let m = try asMap(mCbor, "metadata")
+            func txt(_ key: Int64) -> String? { if case let .text(s)? = get(m, key) { return s }; return nil }
+            metadata = CredentialMetadata(
+                issuerUrl: try text(m, 0),
+                issuerDisplayName: txt(1),
+                configurationId: try text(m, 2),
+                displayName: txt(3),
+                logoUri: txt(4),
+                backgroundColor: txt(5)
+            )
+        }
+
         return CredentialEnvelope(
             id: CredentialId(try text(root, kId)),
             format: format,
             createdAt: date(try long(root, kCreatedAt)),
-            lifecycle: lifecycle
+            lifecycle: lifecycle,
+            metadata: metadata
         )
     }
 
