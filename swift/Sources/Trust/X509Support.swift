@@ -67,6 +67,12 @@ public enum X509Support {
         return nil
     }
 
+    /// The subject CommonName of a leaf certificate given its DER bytes (nil if unparseable).
+    public static func commonName(fromDer der: [UInt8]) -> String? {
+        guard let cert = try? Certificate(derEncoded: der) else { return nil }
+        return commonName(cert)
+    }
+
     /// base64url(SHA-256(DER)) — the x509_hash client_id value.
     static func sha256Thumbprint(_ cert: Certificate) throws -> String {
         Base64Url.encode([UInt8](SHA256.hash(data: Data(try der(cert)))))

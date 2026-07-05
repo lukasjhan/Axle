@@ -1,5 +1,6 @@
 import CborCose
 import CredentialStore
+import Crypto
 import Foundation
 import MDoc
 import Proximity
@@ -107,6 +108,71 @@ final class WalletProximityTests: XCTestCase {
 
         let entries = await logStore.all()
         XCTAssertEqual(.success, entries.first?.status)
+    }
+
+    private struct ReaderCoseSigner: CoseSigner {
+        let algorithm: CoseAlgorithm = .es256
+        let key: P256.Signing.PrivateKey
+        func sign(_ toBeSigned: [UInt8]) async throws -> [UInt8] {
+            [UInt8](try key.signature(for: Data(toBeSigned)).rawRepresentation)
+        }
+    }
+
+    func testProximityAuthenticatesTrustedReader() async throws {
+        let docType = "org.iso.18013.5.1.mDL"
+        let namespace = "org.iso.18013.5.1"
+        let area = SoftwareSecureArea()
+        let storage = InMemoryStorageDriver()
+        let issuerKey = try await area.createKey(spec: KeySpec(secureArea: area.id, algorithm: .es256))
+        let deviceKey = try await area.createKey(spec: KeySpec(secureArea: area.id, algorithm: .es256))
+        let mdocBytes = try await MdocTestIssuer.issue(
+            area: area, issuerKey: issuerKey, deviceKey: deviceKey.publicKey, docType: docType, namespace: namespace,
+            elements: [("family_name", .text("Han")), ("given_name", .text("Jongho"))],
+            x5chain: [[0x30, 0x01]], signed: now, validFrom: now, validUntil: now.addingTimeInterval(31_536_000))
+        try await DefaultCredentialStore(driver: storage).save(CredentialEnvelope(
+            id: CredentialId("mdl-1"), format: .msoMdoc(docType: docType), createdAt: now,
+            lifecycle: .issued(policy: CredentialPolicy(), instances: [CredentialInstance(key: deviceKey.handle, payload: mdocBytes)])))
+
+        // reader authentication material: a leaf chaining to the wallet's configured reader anchor
+        let readerCa = try TestCerts.makeCa("Reader Root CA")
+        let readerLeaf = try TestCerts.makeLeaf(readerCa, cn: "EUDI Reader")
+        let logStore = InMemoryTransactionLogStore()
+        let wallet = Wallet.create(
+            config: WalletConfig(trust: TrustConfig(readerAnchorsDer: [try readerCa.der])),
+            ports: WalletPorts(secureAreas: [area], storage: storage, http: NoHttp(), transactionLogStore: logStore))
+        let toDevice = Mailbox(), toReader = Mailbox()
+        let session = wallet.proximity.present(DeviceTransport(inbound: toDevice, outbound: toReader))
+
+        var readerSession: SessionEncryption?
+        var terminal: ProximityState?
+        for await state in session.states {
+            switch state {
+            case let .engagementReady(engagement):
+                let eReader = EphemeralKeyPair()
+                let t = try ProximitySessionTranscript.build(deviceEngagement: engagement, eReaderKey: eReader.publicKey)
+                let rs = try SessionEncryption.forReader(ephemeral: eReader, devicePublicKey: try DeviceEngagement.parseEDeviceKey(engagement),
+                                                         sessionTranscriptBytes: try ProximitySessionTranscript.encode(t))
+                readerSession = rs
+                let mdocReader = MdocReader(readerAuth: ReaderAuthSigner(signer: ReaderCoseSigner(key: readerLeaf.key), x5chain: [try readerLeaf.der]))
+                let deviceRequest = try await mdocReader.buildDeviceRequest([RequestedDocument(docType: docType, elements: [(namespace, ["family_name"])])], sessionTranscript: t)
+                await toDevice.send(try SessionMessages.encodeEstablishment(eReaderKey: eReader.publicKey, encryptedDeviceRequest: try rs.encrypt(deviceRequest)))
+            case let .requestReceived(request):
+                XCTAssertTrue(request.reader.trusted, "reader chaining to the anchor must be trusted")
+                XCTAssertEqual("EUDI Reader", request.reader.commonName)
+                session.respond(ProximitySelection.auto(request))
+            default:
+                break
+            }
+            if state.isTerminal { terminal = state; break }
+        }
+        guard case .completed = terminal else { return XCTFail("terminal: \(String(describing: terminal))") }
+        _ = try readerSession!.decrypt(SessionMessages.decodeData(await toReader.receive()))
+
+        // audit records the trusted reader identity + certificate chain
+        let entries = await logStore.all()
+        XCTAssertEqual(true, entries.first?.relyingParty?.trusted)
+        XCTAssertEqual("EUDI Reader", entries.first?.relyingParty?.name)
+        XCTAssertGreaterThanOrEqual(entries.first?.relyingParty?.certificateChainDer.count ?? 0, 1)
     }
 
     private struct NoHttp: HttpTransport {

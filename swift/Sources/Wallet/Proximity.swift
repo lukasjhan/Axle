@@ -8,9 +8,19 @@ import WalletAPI
 public struct ProximityRequest {
     public let documents: [RequestedDocumentView]
     public let satisfiable: Bool
+    /// Who is asking — from verified reader authentication (ISO 18013-5 §9.1.4), if present and trusted.
+    public let reader: ProximityReaderInfo
     let deviceRequest: DeviceRequest
     let transcript: Cbor
     let session: SessionEncryption
+}
+
+/// The in-person reader's identity. `trusted` is true only when the request was reader-authenticated and
+/// the reader certificate chained to a configured reader anchor (config.trust.readerAnchorsDer).
+public struct ProximityReaderInfo {
+    public let trusted: Bool
+    public let commonName: String?
+    public let certificateChainDer: [[UInt8]]
 }
 
 /// One requested document: the doctype, the elements the reader wants, and the matching stored credential.

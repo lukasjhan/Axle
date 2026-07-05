@@ -37,17 +37,19 @@ public struct Wallet {
         let issuance = IssuanceService(vci: vci, store: store, storage: ports.storage, secureArea: ports.defaultSecureArea,
                                        rng: ports.rng, clock: ports.clock, redirectUri: config.issuance.redirectUri)
 
-        // Reader trust: verify signed OpenID4VP request objects against the configured reader anchors.
-        // Unsigned requests (or no anchors) resolve with verifier.trusted == false.
-        let vpTrust: (any RequestTrustVerifier)? = config.trust.readerAnchorsDer.isEmpty ? nil :
-            X509RequestVerifier(validator: X509ChainValidator(anchorSource: LazyIssuerAnchorSource(ders: config.trust.readerAnchorsDer), validationTime: ports.clock.now()))
+        // Reader trust: one validator over the configured reader anchors, shared by remote (signed OpenID4VP
+        // request objects) and proximity (mdoc reader authentication). No anchors → readers stay untrusted.
+        let readerValidator: X509ChainValidator? = config.trust.readerAnchorsDer.isEmpty ? nil :
+            X509ChainValidator(anchorSource: LazyIssuerAnchorSource(ders: config.trust.readerAnchorsDer), validationTime: ports.clock.now())
+        let vpTrust: (any RequestTrustVerifier)? = readerValidator.map { X509RequestVerifier(validator: $0) }
         let vp = Openid4VpClient(http: ports.http, clock: clockSeconds, trust: vpTrust)
         let txlog = TransactionLog(
             store: ports.transactionLogStore,
             idGenerator: { "txn-" + Base64Url.encode(ports.rng.nextBytes(12)) },
             clock: clockSeconds)
         let presentation = PresentationService(vp: vp, store: store, txlog: txlog, secureAreas: ports.secureAreas)
-        let proximity = ProximityService(store: store, txlog: txlog, secureAreas: ports.secureAreas)
+        let proximity = ProximityService(store: store, txlog: txlog, secureAreas: ports.secureAreas,
+                                         readerTrust: readerValidator.map { X5cMdocReaderTrust(validator: $0) })
 
         return Wallet(credentials: CredentialsService(store: store, statusClient: statusClient),
                       issuance: issuance, presentation: presentation, proximity: proximity, transactions: txlog, ports: ports)

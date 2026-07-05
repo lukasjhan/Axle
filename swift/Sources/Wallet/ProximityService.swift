@@ -5,6 +5,7 @@ import MDoc
 import Proximity
 import SdJwt
 import TransactionLog
+import Trust
 import WalletAPI
 
 /// ISO 18013-5 proximity presentation (API-CONTRACT.md §6.3). Generates device engagement, establishes the
@@ -13,6 +14,8 @@ public struct ProximityService {
     let store: DefaultCredentialStore
     let txlog: TransactionLog
     let secureAreas: [any SecureArea]
+    /// Verifies reader authentication against configured reader anchors; nil = no anchors, readers stay untrusted.
+    let readerTrust: (any MdocReaderTrust)?
 
     /// Starts a proximity session over `transport`: engage → session → reader request → consent → reply.
     public func present(_ transport: any ProximityTransport) -> ProximitySession {
@@ -33,7 +36,7 @@ public struct ProximityService {
             let request = try await buildRequest(deviceRequest, transcript, enc)
             switch await s.awaitDecision(request) {
             case .none:
-                try await recordDeclined()
+                try await recordDeclined(request)
                 await transport.close()
                 s.emit(.declined)
             case let .some(selection):
@@ -56,8 +59,23 @@ public struct ProximityService {
             for (ns, elems) in dr.requested { requestedElements[ns] = elems.map { $0.identifier } }
             documents.append(RequestedDocumentView(docType: dr.docType, requestedElements: requestedElements, candidate: try await findMdoc(dr.docType)))
         }
+        let reader = await verifyReader(deviceRequest, transcript)
         return ProximityRequest(documents: documents, satisfiable: documents.allSatisfy { $0.candidate != nil },
-                                deviceRequest: deviceRequest, transcript: transcript, session: session)
+                                reader: reader, deviceRequest: deviceRequest, transcript: transcript, session: session)
+    }
+
+    /// Verifies reader authentication (ISO 18013-5 §9.1.4) against the configured reader anchors.
+    private func verifyReader(_ deviceRequest: DeviceRequest, _ transcript: Cbor) async -> ProximityReaderInfo {
+        let untrusted = ProximityReaderInfo(trusted: false, commonName: nil, certificateChainDer: [])
+        guard let trust = readerTrust,
+              let docRequest = deviceRequest.docRequests.first(where: { $0.readerAuth != nil }) else { return untrusted }
+        do {
+            let info = try await ReaderAuth.verify(docRequest, sessionTranscript: transcript, trust: trust)
+            let cn = info.certificateChain?.first.flatMap { X509Support.commonName(fromDer: $0) }
+            return ProximityReaderInfo(trusted: info.trusted, commonName: cn, certificateChainDer: info.certificateChain ?? [])
+        } catch {
+            return untrusted
+        }
     }
 
     private func findMdoc(_ docType: String) async throws -> CredentialId? {
@@ -88,16 +106,17 @@ public struct ProximityService {
             LoggedDocument(format: "mso_mdoc", type: doc.docType, queryId: nil,
                            claims: doc.requestedElements.flatMap { ns, els in els.map { LoggedClaim(path: [ns, $0]) } })
         }
-        await txlog.recordPresentation(relyingParty: proximityReader(), documents: documents, status: .success)
+        await txlog.recordPresentation(relyingParty: proximityReader(request), documents: documents, status: .success)
     }
 
-    private func recordDeclined() async throws {
-        await txlog.recordPresentation(relyingParty: proximityReader(), documents: [], status: .incomplete)
+    private func recordDeclined(_ request: ProximityRequest) async throws {
+        await txlog.recordPresentation(relyingParty: proximityReader(request), documents: [], status: .incomplete)
     }
 
-    /// The in-person reader. Reader-auth verification against a reader anchor is a follow-up, so `trusted` is false.
-    private func proximityReader() -> RelyingParty {
-        RelyingParty(id: "proximity-reader", name: nil, trusted: false)
+    /// The in-person reader, from verified reader authentication (unauthenticated readers stay untrusted).
+    private func proximityReader(_ request: ProximityRequest) -> RelyingParty {
+        RelyingParty(id: request.reader.commonName ?? "proximity-reader", name: request.reader.commonName,
+                     trusted: request.reader.trusted, certificateChainDer: request.reader.certificateChainDer)
     }
 
     private func catchingProximity<T>(_ block: () async throws -> T) async throws -> T {
