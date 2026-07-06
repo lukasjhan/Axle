@@ -11,18 +11,20 @@ import TabItem from '@theme/TabItem';
 통해 가까이 있는 **리더**에게 제시하는 것입니다. 네트워크는 관여하지 않습니다. 월렛과 리더가 기기 대 기기로
 직접 크리덴셜을 주고받습니다.
 
-SDK가 **ISO/IEC 18013-5 device retrieval 교환 전체**를 담당합니다:
+SDK가 **ISO/IEC 18013-5 device retrieval 교환 전체**와 **양쪽 역할**을 담당합니다 — mdoc을 제시하는
+**홀더**(`wallet.proximity`)와 검증하는 **리더**(`wallet.reader`):
 
-- **디바이스 인게이지먼트(device engagement)** — 리더가 스캔해 세션을 시작하는 인게이지먼트 구조 생성.
-- **ECDH 세션 키** — 공유 비밀 도출 및 모든 메시지 암호화.
-- **메시지 암호화** — 양방향 `SessionData` 프레임 봉인.
-- **`DeviceRequest` 파싱** — 리더가 요청한 doctype과 엘리먼트 디코딩.
-- **리더 인증** — 리더의 `readerAuth` 서명과 인증서 체인 검증.
-- **디바이스 서명 `DeviceResponse`** — 요청된 엘리먼트를 선택적으로 공개하고 크리덴셜의
-  디바이스(홀더) 키로 서명.
+- **디바이스 인게이지먼트** — **QR 코드** 또는 **NFC static handover**(HCE로 Handover Select 서빙). 어느
+  쪽이든 **BLE** carrier를 **peripheral server** 또는 **central client** 모드로 담습니다.
+- **ECDH 세션 키** — `SKDevice`/`SKReader` 도출(SessionTranscript로 salt한 HKDF) 및 양방향 `SessionData`
+  프레임을 AES-256-GCM으로 암호화.
+- **`DeviceRequest` / `DeviceResponse`** — 리더 요청 디코딩 + 선택적 공개·홀더 인증된 응답 생성.
+- **리더 인증** — 리더의 `readerAuth` 서명 + 인증서 체인 검증.
+- **디바이스 인증** — 서명 키는 `deviceSignature`(COSE_Sign1), 키합의 키는 `deviceMac`(COSE_Mac0,
+  EReaderKey↔DeviceKey ECDH의 EMacKey).
 
-여러분은 **전송 수단(transport)** — 즉 라디오 바이트의 입출력 — 만 제공합니다. 암호화와 프로토콜 계층은
-모두 SDK 내부에 있습니다.
+여러분은 **전송 수단(transport)** — 라디오 바이트 입출력 — 만 제공합니다. 암호화·프로토콜 계층은 모두 SDK
+내부에 있고, 표준 준수 ISO 18013-5 기기와 상호운용됩니다.
 
 ## 흐름
 
@@ -34,12 +36,14 @@ SDK가 **ISO/IEC 18013-5 device retrieval 교환 전체**를 담당합니다:
 <TabItem value="kotlin" label="Kotlin">
 
 ```kotlin
-val session = wallet.proximity.present(transport)   // your ProximityTransport
+val session = wallet.proximity.present(transport)             // QR engagement
+// val session = wallet.proximity.present(transport, nfc = true)   // NFC static handover
 
 session.state.collect { s ->
     when (s) {
         is ProximityState.EngagementReady ->
-            showQr(s.deviceEngagement)                       // render for the reader to scan
+            if (s.handoverNdef != null) serveOverNfc(s.handoverNdef)   // NFC: serve the Handover Select via HCE
+            else showQr(s.deviceEngagement)                            // QR: render "mdoc:" + base64url
 
         is ProximityState.RequestReceived -> {
             val request = s.request
@@ -65,8 +69,9 @@ let session = wallet.proximity.present(transport)   // your ProximityTransport
 
 for await state in session.states {
     switch state {
-    case .engagementReady(let deviceEngagement):
-        showQr(deviceEngagement)                          // render for the reader to scan
+    case let .engagementReady(deviceEngagement, handoverNdef):
+        if let handoverNdef { serveOverNfc(handoverNdef) }   // NFC: serve the Handover Select via HCE
+        else { showQr(deviceEngagement) }                    // QR: render "mdoc:" + base64url
 
     case .requestReceived(let request):
         // request.documents        — requested doctype(s) + elements
@@ -89,9 +94,10 @@ for await state in session.states {
 </TabItem>
 </Tabs>
 
-`EngagementReady`는 `deviceEngagement` 바이트를 담고 있습니다. 이를 QR 코드로 렌더링하거나(또는 NFC
-태그로 전달) 리더가 인게이지먼트를 스캔하고 세션을 열 수 있게 하세요. 리더가 연결해 `DeviceRequest`를
-보내면, SDK가 이를 복호화·파싱하고 `RequestReceived`를 방출합니다.
+`EngagementReady`는 `deviceEngagement` 바이트(QR 문자열 `mdoc:` + base64url로 렌더링)를 담고, NFC
+모드에서는 HCE로 서빙할 `handoverNdef` Handover Select 메시지도 담습니다. BLE carrier(서비스 UUID +
+모드)는 둘 중 어느 쪽에든 들어 있습니다. 리더가 연결해 `DeviceRequest`를 보내면 SDK가 복호화·파싱하고
+`RequestReceived`를 방출합니다.
 
 종료 상태는 `Completed`, `Declined`, `Failed`이며, 모든 상태는 `.isTerminal`을 제공합니다.
 
@@ -163,9 +169,13 @@ SDK는 프레임 단위의 암호화된 메시지 교환을 구동하지만, 라
 
 ```kotlin
 interface ProximityTransport {
-    suspend fun send(message: ByteArray)   // framed SessionData → reader
-    suspend fun receive(): ByteArray       // framed SessionData ← reader
+    suspend fun send(message: ByteArray)   // framed SessionData → peer
+    suspend fun receive(): ByteArray       // framed SessionData ← peer
     suspend fun close()
+
+    // 리더에게 연결 방법을 알림 (기본값: 빈 리스트 / null):
+    fun retrievalMethods(): List<ByteArray> = emptyList()  // QR 인게이지먼트용 BLE DeviceRetrievalMethod
+    fun nfcCarrier(): NfcCarrier? = null                   // NFC static handover용 BLE carrier (UUID + 모드)
 }
 ```
 
@@ -174,9 +184,13 @@ interface ProximityTransport {
 
 ```swift
 protocol ProximityTransport: Sendable {
-    func send(_ message: [UInt8]) async throws   // framed SessionData → reader
-    func receive() async throws -> [UInt8]        // framed SessionData ← reader
+    func send(_ message: [UInt8]) async throws   // framed SessionData → peer
+    func receive() async throws -> [UInt8]        // framed SessionData ← peer
     func close() async
+
+    // 리더에게 연결 방법을 알림 (기본값: 빈 리스트 / nil):
+    func retrievalMethods() -> [[UInt8]]          // QR 인게이지먼트용 BLE DeviceRetrievalMethod
+    func nfcCarrier() -> NfcCarrier?              // NFC static handover용 BLE carrier (UUID + 모드)
 }
 ```
 
@@ -188,11 +202,17 @@ protocol ProximityTransport: Sendable {
 
 ### BLE 구현
 
-BLE 전송은 ISO 18013-5 GATT **페리페럴(peripheral)** 입니다. `deviceEngagement`에 담긴 서비스 UUID를
-광고(advertise)하고, ISO 18013-5의 **state**, **client2server**, **server2device** 특성(characteristic)을
-노출하며, 들어오는 알림(notification)을 `receive()`로 전달하고, 각 `send()`를 특성 쓰기(write)로 변환합니다.
-NFC도 동일한 방식입니다 — 라디오만 다를 뿐 `send` / `receive` 계약은 같습니다. SDK는 소켓을 열거나
-광고하거나 특성을 읽지 않습니다. 오직 여러분의 포트를 호출할 뿐입니다.
+BLE는 ISO 18013-5 §8.3.3.1.1의 두 모드 중 하나로 동작하며, SDK는 어느 쪽이든 무관합니다:
+
+- **Peripheral server mode** — 홀더가 GATT **서버**(서비스 UUID 광고), 리더가 GATT **클라이언트**. 특성
+  `00000001/2/3-a123-48ce-896b-4c76973373e6`.
+- **Central client mode** — 역할 반대(홀더=클라이언트, 리더=서버). 특성 `00000005/6/7-…`.
+
+여러분의 transport는 `retrievalMethods()`(QR)와 `nfcCarrier()`(NFC)로 UUID·모드를 SDK에 알리고, SDK가 그
+위에 인게이지먼트를 만듭니다. transport는 **state / client2server / server2client** 특성을 노출하고, 들어오는
+쓰기/알림을 `receive()`로 전달하며, 각 `send()`를 청크 쓰기/알림(`0x01`=more, `0x00`=last)으로 변환합니다.
+SDK는 소켓을 열거나 광고하거나 특성을 읽지 않고 오직 포트만 호출합니다. 데모 앱은 두 모드를 각각 한 클래스로
+처리하는 `BleGattServerTransport` + `BleGattClientTransport`를 제공합니다.
 
 <Tabs groupId="lang">
 <TabItem value="kotlin" label="Kotlin">
@@ -252,6 +272,60 @@ final class BleProximityTransport: ProximityTransport {
 
 </TabItem>
 </Tabs>
+
+### NFC static handover
+
+`present(transport, nfc = true)`이면 `EngagementReady.handoverNdef`는 ISO 18013-5 §8.3.3.1.2 **Handover
+Select** NDEF 메시지(`Hs` 레코드 + `DeviceEngagement` 레코드 + BLE carrier 레코드)이며, SDK가 transport의
+`nfcCarrier()`로 만듭니다. 이를 Android **Host Card Emulation** Type 4 태그 서비스로 서빙하면, 리더가 탭해서
+읽고 인게이지먼트 + BLE UUID를 추출하며, 세션은 QR과 똑같이 BLE로 이어집니다. 전체 Handover Select 메시지가
+SessionTranscript에 해시되어 양쪽이 같은 키를 도출합니다. SDK는 `MdocNfcEngagement`(빌드/파싱)와 `Ndef`를
+제공하고, 데모가 HCE 서비스 + NFC 리더를 제공합니다.
+
+## 다른 월렛 읽기 (리더 측)
+
+같은 SDK가 **리더**이기도 합니다. `wallet.reader.read(transport, engagement, documents)`가 여러분의
+transport로 검증자 측 절반을 구동합니다 — `DeviceRequest` 생성, 암호화 세션 수립, 반환된 `DeviceResponse`
+검증(issuer trust, digest, `deviceSignature`/`deviceMac` 홀더 바인딩). `engagement`은 월렛 QR(또는 NFC로
+읽은 것)이고, NFC의 경우 SessionTranscript가 맞도록 `handoverNdef`를 넘깁니다.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+val engagement = decodeQr(scanned)          // "mdoc:" + base64url → DeviceEngagement bytes
+val request = listOf(
+    RequestedDocument("org.iso.18013.5.1.mDL", mapOf("org.iso.18013.5.1" to listOf("family_name", "given_name"))),
+)
+val verified = wallet.reader.read(transport, engagement, request)   // BLE central transport
+for (doc in verified) {
+    doc.docType             // "org.iso.18013.5.1.mDL"
+    doc.elements            // Map<namespace, Map<elementId, value>>
+    doc.deviceAuthenticated // 홀더 바인딩이 검증되면 true
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+let engagement = decodeQr(scanned)          // "mdoc:" + base64url → DeviceEngagement bytes
+let request = [
+    RequestedDocument(docType: "org.iso.18013.5.1.mDL", elements: [("org.iso.18013.5.1", ["family_name", "given_name"])]),
+]
+let verified = try await wallet.reader.read(transport: transport, engagement: engagement, documents: request)
+for doc in verified {
+    doc.docType             // "org.iso.18013.5.1.mDL"
+    doc.elements            // [namespace: [elementId: value]]
+    doc.deviceAuthenticated // 홀더 바인딩이 검증되면 true
+}
+```
+
+</TabItem>
+</Tabs>
+
+issuer trust anchor가 설정되어 있으면 `deviceAuthenticated`는 issuer + 홀더 바인딩 검증 결과를 반영합니다.
+없으면 리더는 공개된 엘리먼트를 그대로 반환하되 미검증으로 표시합니다.
 
 ## 리더 인증
 

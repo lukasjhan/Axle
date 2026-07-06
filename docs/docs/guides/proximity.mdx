@@ -11,18 +11,21 @@ import TabItem from '@theme/TabItem';
 (mDL) — to a nearby **reader** over a short-range transport (BLE / NFC). No network is involved: the
 wallet and the reader exchange credentials directly, device to device.
 
-The SDK owns the **entire ISO/IEC 18013-5 device-retrieval exchange**:
+The SDK owns the **entire ISO/IEC 18013-5 device-retrieval exchange** — and both roles, the **holder**
+(`wallet.proximity`) presenting an mdoc and the **reader** (`wallet.reader`) verifying one:
 
-- **Device engagement** — generating the engagement structure the reader scans to start the session.
-- **ECDH session keys** — deriving the shared secret and encrypting every message.
-- **Message encryption** — sealing `SessionData` frames both ways.
-- **`DeviceRequest` parsing** — decoding what doctype(s) and elements the reader asked for.
-- **Reader authentication** — verifying the reader's `readerAuth` signature and certificate chain.
-- **Device-signed `DeviceResponse`** — selectively disclosing the requested elements and signing them
-  with the credential's device (holder) key.
+- **Device engagement** — a **QR code** or **NFC static handover** (Handover Select over HCE), either
+  carrying a **BLE** carrier in **peripheral server** or **central client** mode.
+- **ECDH session keys** — deriving `SKDevice`/`SKReader` (HKDF salted by the SessionTranscript) and
+  encrypting every `SessionData` frame both ways with AES-256-GCM.
+- **`DeviceRequest` / `DeviceResponse`** — decoding what the reader asked for and building the
+  selectively-disclosed, holder-authenticated response.
+- **Reader authentication** — verifying the reader's `readerAuth` signature + certificate chain.
+- **Device authentication** — `deviceSignature` (COSE_Sign1) for signing device keys **or** `deviceMac`
+  (COSE_Mac0, EMacKey from the EReaderKey↔DeviceKey ECDH) for key-agreement keys.
 
 You provide only the **transport** — the radio bytes in and out. Everything cryptographic and
-protocol-level lives inside the SDK.
+protocol-level lives inside the SDK, and it interoperates with conformant ISO 18013-5 devices.
 
 ## The flow
 
@@ -34,12 +37,14 @@ machine walks through `GeneratingEngagement` → `EngagementReady` (show a QR fo
 <TabItem value="kotlin" label="Kotlin">
 
 ```kotlin
-val session = wallet.proximity.present(transport)   // your ProximityTransport
+val session = wallet.proximity.present(transport)             // QR engagement
+// val session = wallet.proximity.present(transport, nfc = true)   // NFC static handover
 
 session.state.collect { s ->
     when (s) {
         is ProximityState.EngagementReady ->
-            showQr(s.deviceEngagement)                       // render for the reader to scan
+            if (s.handoverNdef != null) serveOverNfc(s.handoverNdef)   // NFC: serve the Handover Select via HCE
+            else showQr(s.deviceEngagement)                            // QR: render "mdoc:" + base64url
 
         is ProximityState.RequestReceived -> {
             val request = s.request
@@ -65,8 +70,9 @@ let session = wallet.proximity.present(transport)   // your ProximityTransport
 
 for await state in session.states {
     switch state {
-    case .engagementReady(let deviceEngagement):
-        showQr(deviceEngagement)                          // render for the reader to scan
+    case let .engagementReady(deviceEngagement, handoverNdef):
+        if let handoverNdef { serveOverNfc(handoverNdef) }   // NFC: serve the Handover Select via HCE
+        else { showQr(deviceEngagement) }                    // QR: render "mdoc:" + base64url
 
     case .requestReceived(let request):
         // request.documents        — requested doctype(s) + elements
@@ -89,9 +95,10 @@ for await state in session.states {
 </TabItem>
 </Tabs>
 
-`EngagementReady` carries the `deviceEngagement` bytes. Render them as a QR code (or hand them to an
-NFC tap) so the reader can scan the engagement and open the session. Once the reader connects and
-sends its `DeviceRequest`, the SDK decrypts and parses it and emits `RequestReceived`.
+`EngagementReady` carries the `deviceEngagement` bytes (render as the QR string `mdoc:` + base64url)
+and, in NFC mode, a `handoverNdef` Handover Select message to serve over Host Card Emulation. The BLE
+carrier (service UUID + mode) travels inside either one. Once the reader connects and sends its
+`DeviceRequest`, the SDK decrypts and parses it and emits `RequestReceived`.
 
 The terminal states are `Completed`, `Declined`, and `Failed`; every state exposes `.isTerminal`.
 
@@ -164,9 +171,13 @@ The SDK drives a framed, encrypted message exchange but never touches the radio.
 
 ```kotlin
 interface ProximityTransport {
-    suspend fun send(message: ByteArray)   // framed SessionData → reader
-    suspend fun receive(): ByteArray       // framed SessionData ← reader
+    suspend fun send(message: ByteArray)   // framed SessionData → peer
+    suspend fun receive(): ByteArray       // framed SessionData ← peer
     suspend fun close()
+
+    // How the reader is told to connect (defaults: empty / null):
+    fun retrievalMethods(): List<ByteArray> = emptyList()  // BLE DeviceRetrievalMethod(s) for the QR engagement
+    fun nfcCarrier(): NfcCarrier? = null                   // BLE carrier (UUID + mode) for NFC static handover
 }
 ```
 
@@ -175,9 +186,13 @@ interface ProximityTransport {
 
 ```swift
 protocol ProximityTransport: Sendable {
-    func send(_ message: [UInt8]) async throws   // framed SessionData → reader
-    func receive() async throws -> [UInt8]        // framed SessionData ← reader
+    func send(_ message: [UInt8]) async throws   // framed SessionData → peer
+    func receive() async throws -> [UInt8]        // framed SessionData ← peer
     func close() async
+
+    // How the reader is told to connect (defaults: empty / nil):
+    func retrievalMethods() -> [[UInt8]]          // BLE DeviceRetrievalMethod(s) for the QR engagement
+    func nfcCarrier() -> NfcCarrier?              // BLE carrier (UUID + mode) for NFC static handover
 }
 ```
 
@@ -189,11 +204,19 @@ to move them over the wire.
 
 ### A BLE implementation
 
-A BLE transport is an ISO 18013-5 GATT **peripheral**. It advertises the service UUID carried in the
-`deviceEngagement`, exposes the ISO 18013-5 **state**, **client2server**, and **server2device**
-characteristics, forwards inbound notifications into `receive()`, and turns each `send()` into a
-characteristic write. NFC is analogous — a different radio, the same `send` / `receive` contract. The
-SDK never opens a socket, advertises, or reads a characteristic; it only calls your port.
+BLE runs in one of two ISO 18013-5 §8.3.3.1.1 modes, and the SDK is agnostic about which:
+
+- **Peripheral server mode** — the holder is the GATT **server** (advertises the service UUID); the
+  reader is the GATT **client**. Characteristics `00000001/2/3-a123-48ce-896b-4c76973373e6`.
+- **Central client mode** — roles reversed (holder = client, reader = server). Characteristics
+  `00000005/6/7-…`.
+
+Your transport advertises its UUID + mode to the SDK through `retrievalMethods()` (QR) and
+`nfcCarrier()` (NFC); the SDK builds the engagement around it. It exposes the **state / client2server /
+server2client** characteristics, feeds inbound writes/notifications into `receive()`, and turns each
+`send()` into a chunked write/notify (`0x01` = more, `0x00` = last). The SDK never opens a socket,
+advertises, or reads a characteristic — it only calls your port. The demo app ships working
+`BleGattServerTransport` + `BleGattClientTransport` that cover both modes with one class each.
 
 <Tabs groupId="lang">
 <TabItem value="kotlin" label="Kotlin">
@@ -253,6 +276,62 @@ final class BleProximityTransport: ProximityTransport {
 
 </TabItem>
 </Tabs>
+
+### NFC static handover
+
+With `present(transport, nfc = true)`, `EngagementReady.handoverNdef` is an ISO 18013-5 §8.3.3.1.2
+**Handover Select** NDEF message (an `Hs` record + a `DeviceEngagement` record + a BLE carrier record),
+built by the SDK from the transport's `nfcCarrier()`. Serve it from an Android **Host Card Emulation**
+Type 4 Tag service; the reader taps, reads it, extracts the engagement + BLE UUID, and the session
+continues over BLE exactly as for QR. The full Handover Select message is hashed into the
+SessionTranscript so both sides derive the same keys. The SDK exposes `MdocNfcEngagement` (build/parse)
+and `Ndef` for the app's HCE + reader-mode plumbing; the demo ships the HCE service and NFC reader.
+
+## Reading another wallet (reader side)
+
+The same SDK is also the **reader**. `wallet.reader.read(transport, engagement, documents)` drives the
+verifier half over your transport: it builds the `DeviceRequest`, establishes the encrypted session,
+and verifies the returned `DeviceResponse` — issuer trust, digests, and the `deviceSignature` /
+`deviceMac` holder binding. `engagement` is what you scanned from the wallet's QR (or read over NFC);
+pass `handoverNdef` for the NFC case so the SessionTranscript matches.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+val engagement = decodeQr(scanned)          // "mdoc:" + base64url → DeviceEngagement bytes
+val request = listOf(
+    RequestedDocument("org.iso.18013.5.1.mDL", mapOf("org.iso.18013.5.1" to listOf("family_name", "given_name"))),
+)
+val verified = wallet.reader.read(transport, engagement, request)   // your BLE central transport
+for (doc in verified) {
+    doc.docType             // "org.iso.18013.5.1.mDL"
+    doc.elements            // Map<namespace, Map<elementId, value>>
+    doc.deviceAuthenticated // true when the holder binding verified
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+let engagement = decodeQr(scanned)          // "mdoc:" + base64url → DeviceEngagement bytes
+let request = [
+    RequestedDocument(docType: "org.iso.18013.5.1.mDL", elements: [("org.iso.18013.5.1", ["family_name", "given_name"])]),
+]
+let verified = try await wallet.reader.read(transport: transport, engagement: engagement, documents: request)
+for doc in verified {
+    doc.docType             // "org.iso.18013.5.1.mDL"
+    doc.elements            // [namespace: [elementId: value]]
+    doc.deviceAuthenticated // true when the holder binding verified
+}
+```
+
+</TabItem>
+</Tabs>
+
+With issuer trust anchors configured, `deviceAuthenticated` reflects a verified issuer + holder
+binding; without them the reader still returns the disclosed elements, marked unverified.
 
 ## Reader authentication
 

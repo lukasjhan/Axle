@@ -105,7 +105,9 @@ public protocol HttpTransport: Sendable {
 ## ProximityTransport
 
 A duplex framed-message channel for ISO 18013-5 (see [Proximity](../guides/proximity)). The SDK
-drives the message exchange; you supply the BLE/NFC radio.
+drives the message exchange; you supply the BLE/NFC radio. `retrievalMethods()` / `nfcCarrier()` let
+the transport tell the SDK its BLE carrier (UUID + mode) for the QR / NFC engagement — both default to
+none, so a minimal transport implements only the three duplex methods.
 
 <Tabs groupId="lang">
 <TabItem value="kotlin" label="Kotlin">
@@ -115,6 +117,8 @@ interface ProximityTransport {
     suspend fun send(message: ByteArray)
     suspend fun receive(): ByteArray
     suspend fun close()
+    fun retrievalMethods(): List<ByteArray> = emptyList()  // BLE DeviceRetrievalMethod(s) for QR engagement
+    fun nfcCarrier(): NfcCarrier? = null                   // BLE carrier for NFC static handover
 }
 ```
 
@@ -126,6 +130,8 @@ public protocol ProximityTransport: Sendable {
     func send(_ message: [UInt8]) async throws
     func receive() async throws -> [UInt8]
     func close() async
+    func retrievalMethods() -> [[UInt8]]   // BLE DeviceRetrievalMethod(s) for QR engagement
+    func nfcCarrier() -> NfcCarrier?        // BLE carrier for NFC static handover
 }
 ```
 
