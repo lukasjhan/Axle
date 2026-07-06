@@ -1,5 +1,7 @@
 package com.hopae.eudi.wallet.proximity
 
+import com.hopae.eudi.wallet.cbor.Cbor
+import com.hopae.eudi.wallet.cbor.CborEncoder
 import com.hopae.eudi.wallet.cbor.cose.EcCurve
 import com.hopae.eudi.wallet.cbor.cose.EcPublicKey
 import java.math.BigInteger
@@ -102,7 +104,10 @@ class SessionEncryption private constructor(
         }
 
         private fun deriveKeys(sharedSecret: ByteArray, sessionTranscriptBytes: ByteArray): Pair<ByteArray, ByteArray> {
-            val salt = MessageDigest.getInstance("SHA-256").digest(sessionTranscriptBytes)
+            // ISO 18013-5 §9.1.1.4: the HKDF salt is SHA-256(SessionTranscriptBytes), where
+            // SessionTranscriptBytes = #6.24(bstr .cbor SessionTranscript) — i.e. the transcript wrapped in tag 24.
+            val transcriptBytes = CborEncoder.encode(Cbor.Tagged(24uL, Cbor.Bytes(sessionTranscriptBytes)))
+            val salt = MessageDigest.getInstance("SHA-256").digest(transcriptBytes)
             val skDevice = Hkdf.deriveSha256(sharedSecret, salt, "SKDevice".encodeToByteArray(), 32)
             val skReader = Hkdf.deriveSha256(sharedSecret, salt, "SKReader".encodeToByteArray(), 32)
             return skDevice to skReader

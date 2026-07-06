@@ -77,7 +77,10 @@ public final class SessionEncryption {
     }
 
     private static func deriveKeys(_ sharedSecret: [UInt8], _ sessionTranscriptBytes: [UInt8]) throws -> (SymmetricKey, SymmetricKey) {
-        let salt = Data(SHA256.hash(data: Data(sessionTranscriptBytes)))
+        // ISO 18013-5 §9.1.1.4: the HKDF salt is SHA-256(SessionTranscriptBytes), where
+        // SessionTranscriptBytes = #6.24(bstr .cbor SessionTranscript) — i.e. the transcript wrapped in tag 24.
+        let transcriptBytes = try CborEncoder.encode(.tagged(24, .bytes(sessionTranscriptBytes)))
+        let salt = Data(SHA256.hash(data: Data(transcriptBytes)))
         let ikm = SymmetricKey(data: sharedSecret)
         let skDevice = HKDF<SHA256>.deriveKey(inputKeyMaterial: ikm, salt: salt, info: Data("SKDevice".utf8), outputByteCount: 32)
         let skReader = HKDF<SHA256>.deriveKey(inputKeyMaterial: ikm, salt: salt, info: Data("SKReader".utf8), outputByteCount: 32)
