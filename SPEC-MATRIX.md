@@ -14,6 +14,7 @@ Legend: ✅ implemented · 🟡 partial · ⬜ not yet.
 | COSE | RFC 9052 §4.2 `COSE_Sign1` · RFC 9053 ES256/384/512 · RFC 9360 x5chain | ✅ verify (JCA / swift-crypto) + sign (`CoseSigner` → `SecureArea` port); COSE-WG Sign1 vectors pass |
 | JOSE / JWS | RFC 7515 / 7518 subset (compact, ES256/384/512) | ✅ `sdjwt` / `SdJwt` — in-house, fixed-`alg` verification (no negotiation) |
 | JWE | RFC 7518 ECDH-ES direct + A128/192/256GCM | ✅ Concat KDF (RFC 7518 Appendix C vectors) — encrypts `direct_post.jwt` / `dc_api.jwt` responses |
+| HPKE | RFC 9180 base mode — DHKEM(P-256, HKDF-SHA256) / HKDF-SHA256 / AES-128-GCM | ✅ `mdoc` `Hpke` / `MDoc` — seals the `org-iso-mdoc` DC API response (ISO 18013-7 Annex C); RFC 9180 A.3 test vector passes both languages |
 | SD-JWT | RFC 9901 | ✅ issue / present / verify, KB-JWT, recursive & array disclosures; RFC example vectors pass both languages |
 | SD-JWT VC | draft-ietf-oauth-sd-jwt-vc | ✅ `SdJwtVcVerifier` — typ/iss/vct enforcement, time validation, issuer-key resolution (`.well-known/jwt-vc-issuer` + x5c), holder binding, status extraction |
 | ISO/IEC 18013-5 mdoc | :2021 | ✅ `mdoc` / `MDoc` — `IssuerSigned`/MSO, `DeviceResponse`, selective disclosure, device signature, reader auth (§9.1.4) |
@@ -34,8 +35,8 @@ Legend: ✅ implemented · 🟡 partial · ⬜ not yet.
 | Spec | Anchor version | Status |
 |---|---|---|
 | OpenID4VP | 1.0 Final (2025-07-09), DCQL | ✅ `openid4vp` — DCQL engine (null wildcard, values, claim_sets, credential_sets), JAR request resolution, `vp_token` (SD-JWT+KB-JWT and mdoc `DeviceResponse`), `direct_post` + `direct_post.jwt` (JWE), reader trust for signed requests |
-| ISO/IEC 18013-5 device retrieval | :2021 §9 | ✅ `proximity` / `Proximity` — QR engagement, ECDH session keys (HKDF), `SessionEstablishment`/`SessionData` framing, encrypted exchange, reader authentication; BLE/NFC transport is a host port |
-| ISO/IEC 18013-7 / DC API handover | :2025 Annex C | ✅ origin-bound mdoc `SessionTranscript` for the Digital Credentials API |
+| ISO/IEC 18013-5 device retrieval | :2021 §9 | ✅ `proximity` / `Proximity` — QR **and NFC static handover** engagement, ECDH session keys (HKDF, salt = SHA-256 of the tag-24 SessionTranscript), `SessionEstablishment`/`SessionData` framing, encrypted exchange, reader authentication, device auth by `deviceSignature` **or** `deviceMac` (COSE_Mac0, §9.1.3.5); **holder and reader** sides (`wallet.reader`); BLE in **both peripheral-server and central-client** modes as a host port. **Live device-to-device interop with Multipaz** (BLE both modes + NFC, see `INTEROP.md`) |
+| ISO/IEC 18013-7 / DC API handover | :2025 Annex C | ✅ origin-bound mdoc `SessionTranscript` + **HPKE-sealed `org-iso-mdoc` response** for the Digital Credentials API |
 | W3C Digital Credentials API | browser-mediated (dc_api / dc_api.jwt) | ✅ `wallet.presentation.startDcApi` — no HTTP, response object returned to the platform |
 
 ## Status & audit
@@ -51,4 +52,4 @@ Legend: ✅ implemented · 🟡 partial · ⬜ not yet.
 |---|---|
 | LOTL Level 2 · CRL / OCSP real-time revocation | ⬜ trust hardening |
 | Wallet Provider backend end-to-end (WUA issue → verify loop) | 🟡 backend exists (`wallet-provider/`); e2e loop closure pending |
-| BLE / NFC on-device `ProximityTransport` adapters | ⬜ device-only integration (engine complete) |
+| BLE / NFC transport production hardening | 🟡 demo adapters + live Multipaz interop done; reconnect / timeout / MTU / cancellation hardening pending |

@@ -171,6 +171,34 @@ encrypted DeviceResponse (HTTP 200)**, i.e. our DeviceSigned verifies over the h
 reconstructs. Note the two PID forms use different field names (mdoc `birth_date` +
 `nationality[…]`, SD-JWT `birthdate` + `nationalities[…]`); `DEFAULT_DATA` fills a superset.
 
+## Proximity (ISO 18013-5) — device-to-device interop with Multipaz
+
+Separate from the headless remote flows above, the proximity stack was verified **phone-to-phone**
+against the **Multipaz** reference wallet/reader (`org.multipaz.testapp`) on two real devices
+(Samsung `R3CW70VFWMR` + `R3KL1044XHZ`), both directions, all transports:
+
+| Direction | Transport | Result |
+| --- | --- | --- |
+| our **reader** ← Multipaz **holder** | BLE peripheral-server mode | ✅ read + verified (issuer chain + `deviceMac`) |
+| our **holder** → Multipaz **reader** | BLE peripheral-server & central-client | ✅ accepted |
+| our ↔ our | BLE both modes + NFC static handover | ✅ end-to-end |
+
+Three interop bugs this surfaced, each fixed against the ISO text confirmed by reading Multipaz
+source (not just logs):
+
+- **HKDF salt.** ISO §9.1.1.4 derives the session keys with `salt = SHA-256(SessionTranscriptBytes)`
+  where `SessionTranscriptBytes = #6.24(bstr(SessionTranscript))`. We were hashing the *raw*
+  transcript — self-consistent (our-to-our worked) but incompatible with any conformant peer, so the
+  AES-GCM open failed. Fixed to wrap in tag 24 before hashing (`SessionEncryption.transcriptSalt`).
+- **BLE mode flags.** A BLE `DeviceRetrievalMethod` must carry **both** option keys `0`
+  (peripheral-server-supported) **and** `1` (central-client-supported); Multipaz reads both with a
+  throwing map lookup and crashed (`key 1 doesn't exist`) when we emitted only key 0. Fixed so
+  `bleRetrievalMethod` always emits both flags.
+- **deviceMac.** Multipaz (and any key-agreement `DeviceKey` wallet) authenticates the device with
+  `deviceMac` (COSE_Mac0, §9.1.3.5), not `deviceSignature`. Added `CoseMac0` + the `EMacKey`
+  derivation (`HKDF(ECDH(EReaderKey, DeviceKey), salt = transcript, info = "EMacKey")`) so the reader
+  verifies either form.
+
 ## Known gaps this exercise surfaced
 
 - **x5c issuer-key resolution is production-needed, not just metadata.** The real issuer uses
