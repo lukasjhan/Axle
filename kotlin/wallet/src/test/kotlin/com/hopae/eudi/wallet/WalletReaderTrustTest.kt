@@ -37,7 +37,7 @@ class WalletReaderTrustTest {
 
     /** A JAR (signed request object) delivered inline via `request=`, with the reader cert in the x5c header. */
     private suspend fun signedRequestUrl(leaf: TestCerts.Cert, clientId: String): String {
-        val claims = """{"nonce":"vp-nonce-123","response_mode":"direct_post","response_uri":"https://verifier.example/response",""" +
+        val claims = """{"client_id":"$clientId","nonce":"vp-nonce-123","response_mode":"direct_post","response_uri":"https://verifier.example/response",""" +
             """"state":"xyz","dcql_query":{"credentials":[{"id":"pid","format":"dc+sd-jwt","meta":{"vct_values":["urn:eudi:pid:1"]},""" +
             """"claims":[{"path":["family_name"]}]}]}}"""
         val header = JsonValue.Obj(

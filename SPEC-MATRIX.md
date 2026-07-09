@@ -37,7 +37,7 @@ Legend: ✅ implemented · 🟡 partial · ⬜ not yet.
 
 | Spec | Anchor version | Status |
 |---|---|---|
-| OpenID4VP | 1.0 Final (2025-07-09), DCQL | ✅ `openid4vp` — DCQL engine (null wildcard, values, claim_sets, credential_sets), JAR request resolution, `vp_token` (SD-JWT+KB-JWT and mdoc `DeviceResponse`), `direct_post` + `direct_post.jwt` (JWE), reader trust for signed requests, DC API `expected_origins` replay check (Appendix A.2). Gaps: DCQL `multiple`/`trusted_authorities`/`require_cryptographic_holder_binding`, §8.5 error responses, `transaction_data` partial — see audit below |
+| OpenID4VP | 1.0 Final (2025-07-09), DCQL | ✅ `openid4vp` — DCQL engine (null wildcard, values, claim_sets, credential_sets), JAR request resolution, `vp_token` (SD-JWT+KB-JWT and mdoc `DeviceResponse`), `direct_post` + `direct_post.jwt` (JWE), reader trust for signed requests, DC API `expected_origins` replay check (Appendix A.2), JAR hardening (`typ`, request-object `client_id` equality, `wallet_nonce`, case-sensitive `request_uri_method`). Gaps: DCQL `multiple`/`trusted_authorities`/`require_cryptographic_holder_binding`, §8.5 error responses, `transaction_data` partial — see audit below |
 | ISO/IEC 18013-5 device retrieval | :2021 §9 | 🟡 `proximity` / `Proximity` — QR **and NFC static handover** engagement, ECDH session keys (HKDF, salt = SHA-256 of the tag-24 SessionTranscript), `SessionEstablishment`/`SessionData` framing, encrypted exchange, reader authentication; **holder and reader** sides (`wallet.reader`). Device auth: `deviceSignature` end-to-end; `deviceMac` **verify-only** (holder cannot produce it; no automated test — live Multipaz interop only). BLE (both modes) + NFC APDU transports are **Android demo host adapters only — no iOS transport**. **Live device-to-device interop with Multipaz** (BLE both modes + NFC, see `INTEROP.md`) |
 | ISO/IEC 18013-7 / DC API handover | :2025 Annex C | ✅ origin-bound mdoc `SessionTranscript` + **HPKE-sealed `org-iso-mdoc` response** for the Digital Credentials API. Annex B implemented per OpenID4VP 1.0 Final handover (not the TS-literal `OID4VPHandover`); Annex A (website REST retrieval) not implemented — see audit below |
 | W3C Digital Credentials API | browser-mediated (dc_api / dc_api.jwt) | ✅ `wallet.presentation.startDcApi` — no HTTP, response object returned to the platform |
@@ -98,7 +98,6 @@ Only what is 🟡/⬜ is listed; everything else in the tables above verified cl
 | Error responses to verifier | §8.5 | ⬜ local typed errors only; no OAuth `error=` POST to `response_uri`, no spec error-code taxonomy |
 | `fragment` response mode | §8 | ⬜ rejected as unsupported |
 | `transaction_data` | §8.4/B.3.3 | 🟡 SD-JWT VC KB-JWT hashes wired; no unsupported-type rejection, no `credential_ids` binding, no mdoc path, no test coverage |
-| JAR hardening | §5.10/RFC9101 | 🟡 `typ=oauth-authz-req+jwt` not enforced; `wallet_nonce` not sent/validated |
 | Response-encryption details | §8.3 | 🟡 ECDH-ES only; no `alg`==jwk.alg check, no `kid` echo in the JWE header |
 
 ### ISO/IEC 18013-5:2021 — coverage: data model & session crypto solid, transports thin
@@ -134,7 +133,7 @@ Only what is 🟡/⬜ is listed; everything else in the tables above verified cl
 | Item | Status |
 |---|---|
 | SD-JWT VC Type Metadata (§4: vct resolution, `extends`, display, claim metadata, schema) + `vct#integrity` | ⬜ largest single gap; §4.7 is a step of the verification algorithm |
-| OpenID4VP hardening: §8.5 error responses, JAR `typ`/`wallet_nonce`, DCQL `multiple`/`trusted_authorities` | ⬜ |
+| OpenID4VP hardening: §8.5 error responses, DCQL `multiple`/`trusted_authorities` | ⬜ |
 | `deviceMac` generation (holder side) + automated deviceMac test | ⬜ verify-only today |
 | iOS proximity transport (CoreBluetooth / CoreNFC) + BLE Ident characteristic + session termination (status 20) | ⬜ Android demo adapters only |
 | OpenID4VCI: credential response encryption, `attestation` proof type, `credential_identifiers`, deferred `interval` | ⬜ |

@@ -67,7 +67,7 @@ class Wallet private constructor(
             val readerValidator = config.trust.readerAnchorsDer.takeIf { it.isNotEmpty() }?.let { anchors ->
                 X509ChainValidator(TrustAnchorSource { TrustAnchors.ofDer(anchors) }, at = { java.util.Date.from(ports.clock.now()) })
             }
-            val vp = Openid4VpClient(ports.http, clockSeconds, readerValidator?.let { X509RequestVerifier(it) })
+            val vp = Openid4VpClient(ports.http, clockSeconds, readerValidator?.let { X509RequestVerifier(it) }, ports.rng)
             val txlog = TransactionLog(
                 store = ports.transactionLogStore,
                 idGenerator = { "txn-" + Base64Url.encode(ports.rng.nextBytes(12)) },

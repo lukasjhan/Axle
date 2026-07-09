@@ -51,6 +51,9 @@ public struct ResolvedRequest {
     }
 }
 
+/// The JOSE `typ` every OpenID4VP Request Object must carry (§5, RFC 9101).
+public let requestObjectTyp = "oauth-authz-req+jwt"
+
 /// Resolves an OpenID4VP authorization request (OpenID4VP §5): parses the request URI and
 /// follows JAR (`request_uri`/`request`).
 ///
@@ -61,10 +64,15 @@ public struct ResolvedRequest {
 public struct AuthorizationRequestResolver {
     private let http: any HttpTransport
     private let trust: (any RequestTrustVerifier)?
+    private let rng: (any Rng)?
 
-    public init(http: any HttpTransport, trust: (any RequestTrustVerifier)? = nil) {
+    /// `rng` enables the `wallet_nonce` replay mitigation (§5.10) on `request_uri_method=post`: sending it
+    /// is OPTIONAL, but once sent the verifier's request object MUST echo it. Without an `rng` no nonce is
+    /// sent and nothing is validated.
+    public init(http: any HttpTransport, trust: (any RequestTrustVerifier)? = nil, rng: (any Rng)? = nil) {
         self.http = http
         self.trust = trust
+        self.rng = rng
     }
 
     public func resolve(_ requestUri: String) async throws -> ResolvedRequest {
@@ -74,12 +82,17 @@ public struct AuthorizationRequestResolver {
 
         let claims: JsonValue
         let verifier: VerifierInfo
-        let uriMethod = (params["request_uri_method"] ?? "get").lowercased()
+        // §8.5 `invalid_request_uri_method`: the value is case-sensitive and must be exactly get or post.
+        let uriMethod = params["request_uri_method"] ?? "get"
+        guard uriMethod == "get" || uriMethod == "post" else {
+            throw VpError.invalidRequest("invalid_request_uri_method: '\(uriMethod)' is neither get nor post")
+        }
         if let requestUriParam = params["request_uri"] {
-            let jwt = try await fetchRequestObject(requestUriParam, method: uriMethod)
-            (claims, verifier) = try await parseSignedRequest(jwt, clientId, scheme)
+            let walletNonce = uriMethod == "post" ? rng.map { Base64Url.encode($0.nextBytes(16)) } : nil
+            let jwt = try await fetchRequestObject(requestUriParam, method: uriMethod, walletNonce: walletNonce)
+            (claims, verifier) = try await parseSignedRequest(jwt, clientId, scheme, walletNonce: walletNonce)
         } else if let requestParam = params["request"] {
-            (claims, verifier) = try await parseSignedRequest(requestParam, clientId, scheme)
+            (claims, verifier) = try await parseSignedRequest(requestParam, clientId, scheme, walletNonce: nil)
         } else {
             claims = try unsignedRequest(params)
             verifier = VerifierInfo(clientId: clientId, clientIdScheme: scheme, certificateChainDer: nil, commonName: nil, trusted: false)
@@ -150,6 +163,7 @@ public struct AuthorizationRequestResolver {
     /// Signed DC API request: the client_id (and thus its prefix/scheme) come from the JWS claims, not query params.
     private func verifySignedDcApi(_ jwt: String, _ origin: String) async throws -> (JsonValue, VerifierInfo) {
         let jws = try Jws.parse(jwt)
+        try requireRequestObjectTyp(jws)
         guard let text = String(bytes: jws.payloadBytes, encoding: .utf8),
               let claims = try? JsonValue.parse(text), case .obj = claims
         else { throw VpError.invalidRequest("signed DC API request payload must be JSON") }
@@ -188,11 +202,28 @@ public struct AuthorizationRequestResolver {
         }
     }
 
-    private func parseSignedRequest(_ jwt: String, _ clientId: String, _ scheme: String) async throws -> (JsonValue, VerifierInfo) {
+    private func parseSignedRequest(
+        _ jwt: String, _ clientId: String, _ scheme: String, walletNonce: String?
+    ) async throws -> (JsonValue, VerifierInfo) {
         let jws = try Jws.parse(jwt)
+        try requireRequestObjectTyp(jws)
         guard let text = String(bytes: jws.payloadBytes, encoding: .utf8),
               let claims = try? JsonValue.parse(text), case .obj = claims
         else { throw VpError.invalidRequest("request object payload must be JSON") }
+        // §5.10.1: the Request Object's client_id MUST equal the Authorization Request's, prefix included.
+        // (An `iss` claim, if present, is ignored — §5.)
+        guard case let .str(objectClientId)? = claims["client_id"] else {
+            throw VpError.invalidRequest("request object has no client_id")
+        }
+        guard objectClientId == clientId else {
+            throw VpError.invalidRequest("request object client_id '\(objectClientId)' != request client_id '\(clientId)'")
+        }
+        // §5.10: having sent a wallet_nonce, the wallet MUST terminate unless the request object echoes it.
+        if let walletNonce {
+            guard case let .str(echoed)? = claims["wallet_nonce"], echoed == walletNonce else {
+                throw VpError.invalidRequest("request object does not echo the wallet_nonce")
+            }
+        }
         let verifier: VerifierInfo
         if let trust {
             verifier = try await trust.verifyRequestObject(jws, clientId: clientId, scheme: scheme)
@@ -202,17 +233,27 @@ public struct AuthorizationRequestResolver {
         return (claims, verifier)
     }
 
+    /// §5: "Wallets MUST NOT process Request Objects where the `typ` Header Parameter is not present or
+    /// does not have the value `oauth-authz-req+jwt`." Typing the JWS stops a token minted for another
+    /// purpose (an ID token, a key-proof JWT) from being replayed as an authorization request.
+    private func requireRequestObjectTyp(_ jws: Jws) throws {
+        guard case let .str(typ)? = jws.header["typ"], typ == requestObjectTyp else {
+            throw VpError.invalidRequest("request object typ must be '\(requestObjectTyp)'")
+        }
+    }
+
     /// Fetches the request object from `request_uri`. With `request_uri_method=post` (OpenID4VP §5.10)
-    /// the wallet POSTs its capabilities as `wallet_metadata` so the verifier can tailor the request;
-    /// otherwise it GETs the URL.
-    private func fetchRequestObject(_ url: String, method: String) async throws -> String {
+    /// the wallet POSTs its capabilities as `wallet_metadata` — and, when available, a fresh
+    /// `walletNonce` the verifier must echo in the signed request object; otherwise it GETs the URL.
+    private func fetchRequestObject(_ url: String, method: String, walletNonce: String?) async throws -> String {
         let request: HttpRequest
         if method == "post" {
-            let body = Array("wallet_metadata=\(formEncode(walletMetadataJson))".utf8)
+            var form = "wallet_metadata=\(formEncode(walletMetadataJson))"
+            if let walletNonce { form += "&wallet_nonce=\(formEncode(walletNonce))" }
             request = HttpRequest(method: .post, url: url, headers: [
                 ("Accept", "application/oauth-authz-req+jwt"),
                 ("Content-Type", "application/x-www-form-urlencoded"),
-            ], body: body)
+            ], body: Array(form.utf8))
         } else {
             request = HttpRequest(method: .get, url: url, headers: [("Accept", "application/oauth-authz-req+jwt")])
         }

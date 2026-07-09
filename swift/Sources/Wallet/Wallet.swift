@@ -45,7 +45,7 @@ public struct Wallet {
         let readerValidator: X509ChainValidator? = config.trust.readerAnchorsDer.isEmpty ? nil :
             X509ChainValidator(anchorSource: LazyIssuerAnchorSource(ders: config.trust.readerAnchorsDer), validationTime: ports.clock.now())
         let vpTrust: (any RequestTrustVerifier)? = readerValidator.map { X509RequestVerifier(validator: $0) }
-        let vp = Openid4VpClient(http: ports.http, clock: clockSeconds, trust: vpTrust)
+        let vp = Openid4VpClient(http: ports.http, clock: clockSeconds, trust: vpTrust, rng: ports.rng)
         let txlog = TransactionLog(
             store: ports.transactionLogStore,
             idGenerator: { "txn-" + Base64Url.encode(ports.rng.nextBytes(12)) },

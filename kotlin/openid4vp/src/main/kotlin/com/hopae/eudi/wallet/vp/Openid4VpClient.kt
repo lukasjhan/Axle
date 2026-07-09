@@ -7,6 +7,7 @@ import com.hopae.eudi.wallet.sdjwt.JweEnc
 import com.hopae.eudi.wallet.spi.HttpMethod
 import com.hopae.eudi.wallet.spi.HttpRequest
 import com.hopae.eudi.wallet.spi.HttpTransport
+import com.hopae.eudi.wallet.spi.Rng
 import java.net.URLEncoder
 
 /** Per-query choice: which held credential to present for a DCQL credential-query id. */
@@ -36,8 +37,10 @@ class Openid4VpClient(
     private val clock: () -> Long,
     /** Trust verifier for signed request objects (from the `trust` module); null = parse untrusted. */
     trust: RequestTrustVerifier? = null,
+    /** Enables the `wallet_nonce` replay mitigation on `request_uri_method=post` (§5.10); null = don't send one. */
+    rng: Rng? = null,
 ) {
-    private val resolver = AuthorizationRequestResolver(http, trust)
+    private val resolver = AuthorizationRequestResolver(http, trust, rng)
 
     suspend fun resolveRequest(requestUri: String): ResolvedRequest = resolver.resolve(requestUri)
 

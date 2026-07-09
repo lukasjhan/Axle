@@ -179,15 +179,19 @@ class GetCredentialActivity : ComponentActivity() {
             LogStore.log("DC API request: unsigned")
             return
         }
-        val claims = runCatching {
-            JSONObject(String(Base64.decode(jws.split(".")[1], Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)))
+        fun part(i: Int) = runCatching {
+            JSONObject(String(Base64.decode(jws.split(".")[i], Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)))
         }.getOrNull()
+        val header = part(0)
+        val claims = part(1)
         if (claims == null) {
             LogStore.log("DC API request: signed (payload unreadable)")
             return
         }
+        // The SDK requires typ=oauth-authz-req+jwt (§5) and expected_origins (A.2) on signed requests.
+        val typ = header?.optString("typ")?.ifEmpty { null } ?: "<ABSENT>"
         val expected = claims.optJSONArray("expected_origins")?.toString() ?: "<ABSENT>"
-        LogStore.log("DC API request: signed · client_id=${claims.optString("client_id").ifEmpty { "<absent>" }} · expected_origins=$expected")
+        LogStore.log("DC API request: signed · typ=$typ · client_id=${claims.optString("client_id").ifEmpty { "<absent>" }} · expected_origins=$expected")
     }
 
     private fun failException(resultData: Intent, message: String?) {

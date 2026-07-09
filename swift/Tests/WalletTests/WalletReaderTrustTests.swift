@@ -11,8 +11,9 @@ final class WalletReaderTrustTests: XCTestCase {
         func execute(_ request: HttpRequest) async throws -> HttpResponse { HttpResponse(status: 404, headers: [], body: []) }
     }
 
+    /// §5: the Request Object carries its own `client_id`, identical to the Authorization Request's.
     private let requestClaims =
-        #"{"nonce":"vp-nonce-123","response_mode":"direct_post","response_uri":"https://verifier.example/response","state":"xyz","dcql_query":{"credentials":[{"id":"pid","format":"dc+sd-jwt","meta":{"vct_values":["urn:eudi:pid:1"]},"claims":[{"path":["family_name"]}]}]}}"#
+        #"{"client_id":"x509_san_dns:verifier.example.com","nonce":"vp-nonce-123","response_mode":"direct_post","response_uri":"https://verifier.example/response","state":"xyz","dcql_query":{"credentials":[{"id":"pid","format":"dc+sd-jwt","meta":{"vct_values":["urn:eudi:pid:1"]},"claims":[{"path":["family_name"]}]}]}}"#
 
     func testSignedRequestFromTrustedReaderIsTrusted() async throws {
         let ca = try TestCerts.makeCa("Reader Root CA")

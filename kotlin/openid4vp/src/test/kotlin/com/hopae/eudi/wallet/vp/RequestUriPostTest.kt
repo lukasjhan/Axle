@@ -26,9 +26,9 @@ class RequestUriPostTest {
         """"response_uri":"https://verifier.example/response",""" +
         """"dcql_query":{"credentials":[{"id":"pid","format":"dc+sd-jwt","meta":{"vct_values":["urn:eudi:pid:1"]},"claims":[{"path":["family_name"]}]}]}}"""
 
-    private fun compactJws(): String {
+    private fun compactJws(payload: String = this.payload): String {
         fun b64(s: String) = Base64.getUrlEncoder().withoutPadding().encodeToString(s.encodeToByteArray())
-        return "${b64("""{"alg":"ES256"}""")}.${b64(payload)}.${b64("sig")}"
+        return "${b64("""{"alg":"ES256","typ":"oauth-authz-req+jwt"}""")}.${b64(payload)}.${b64("sig")}"
     }
 
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")

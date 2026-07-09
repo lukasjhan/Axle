@@ -33,10 +33,12 @@ public struct Openid4VpClient {
     private let clock: () -> Int64
     private let resolver: AuthorizationRequestResolver
 
-    public init(http: any HttpTransport, clock: @escaping () -> Int64, trust: (any RequestTrustVerifier)? = nil) {
+    /// `rng` enables the `wallet_nonce` replay mitigation on `request_uri_method=post` (§5.10); nil = don't send one.
+    public init(http: any HttpTransport, clock: @escaping () -> Int64, trust: (any RequestTrustVerifier)? = nil,
+                rng: (any Rng)? = nil) {
         self.http = http
         self.clock = clock
-        self.resolver = AuthorizationRequestResolver(http: http, trust: trust)
+        self.resolver = AuthorizationRequestResolver(http: http, trust: trust, rng: rng)
     }
 
     public func resolveRequest(_ requestUri: String) async throws -> ResolvedRequest {

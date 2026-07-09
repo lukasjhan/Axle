@@ -24,7 +24,9 @@ final class RequestUriPostTests: XCTestCase {
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
     }
-    private func compactJws() -> String { "\(b64(#"{"alg":"ES256"}"#)).\(b64(payload)).\(b64("sig"))" }
+    private func compactJws() -> String {
+        "\(b64(#"{"alg":"ES256","typ":"oauth-authz-req+jwt"}"#)).\(b64(payload)).\(b64("sig"))"
+    }
     private func enc(_ s: String) -> String { s.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? s }
 
     func testFetchesRequestUriViaPostWithWalletMetadata() async throws {
