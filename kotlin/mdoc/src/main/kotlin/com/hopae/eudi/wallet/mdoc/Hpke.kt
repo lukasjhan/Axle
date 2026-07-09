@@ -1,5 +1,6 @@
 package com.hopae.eudi.wallet.mdoc
 
+import com.hopae.eudi.wallet.cbor.cose.EcCurve
 import com.hopae.eudi.wallet.cbor.cose.EcPublicKey
 import com.hopae.eudi.wallet.cbor.cose.Ecdsa
 import java.io.ByteArrayOutputStream
@@ -22,7 +23,8 @@ import javax.crypto.spec.SecretKeySpec
 /**
  * HPKE (RFC 9180) — base mode, cipher suite DHKEM(P-256, HKDF-SHA256) / HKDF-SHA256 / AES-128-GCM.
  * This is the suite the ISO/IEC 18013-7:2025 Annex C Digital Credentials API uses to encrypt the mdoc
- * `DeviceResponse` to the verifier's ephemeral `recipientPublicKey`. Only single-shot sealing is needed.
+ * `DeviceResponse` to the verifier's ephemeral `recipientPublicKey`. Single-shot seal (wallet) and
+ * open (verifier/reader).
  */
 object Hpke {
     private const val KEM_ID = 0x0010 // DHKEM(P-256, HKDF-SHA256)
@@ -45,28 +47,61 @@ object Hpke {
         ephemeral: Ephemeral = Ephemeral.random(),
     ): Sealed {
         val recipientPub = Ecdsa.publicKeyOf(recipient) as ECPublicKey
-        val dh = KeyAgreement.getInstance("ECDH").run {
-            init(ephemeral.privateKey)
-            doPhase(recipientPub, true)
-            generateSecret() // P-256 ECDH → 32-byte X coordinate
-        }
+        // Encap: DH(skE, pkR); shared_secret = ExtractAndExpand(dh, enc || pkRm).
+        val dh = ecdh(ephemeral.privateKey, recipientPub)
         val enc = serialize(ephemeral.publicPoint)
-        val kemContext = enc + serialize(recipientPub.w)
+        val sharedSecret = extractAndExpand(kemSuiteId(), dh, enc + serialize(recipientPub.w), NSECRET)
 
-        val sharedSecret = extractAndExpand(kemSuiteId(), dh, kemContext, NSECRET)
-
-        val pskIdHash = labeledExtract(hpkeSuiteId(), null, "psk_id_hash", ByteArray(0))
-        val infoHash = labeledExtract(hpkeSuiteId(), null, "info_hash", info)
-        val ksContext = byteArrayOf(0) + pskIdHash + infoHash // base mode
-        val secret = labeledExtract(hpkeSuiteId(), sharedSecret, "secret", ByteArray(0))
-        val key = labeledExpand(hpkeSuiteId(), secret, "key", ksContext, NK)
-        val baseNonce = labeledExpand(hpkeSuiteId(), secret, "base_nonce", ksContext, NN)
+        val (key, baseNonce) = keyScheduleBaseP256(sharedSecret, info)
 
         // Single-shot: sequence number 0, so the per-message nonce equals base_nonce.
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, baseNonce))
         cipher.updateAAD(aad)
         return Sealed(enc, cipher.doFinal(plaintext))
+    }
+
+    /**
+     * Opens (RFC 9180 §5.1.1 `OpenBase`) an HPKE base-mode single-shot ciphertext — the verifier/reader side
+     * of [sealBaseP256]. Decapsulates the KEM shared secret from [enc] with the [recipient] private key,
+     * runs the same key schedule over [info], and AEAD-opens [ciphertext] under [aad], returning the
+     * plaintext. Throws (`AEADBadTagException`) when the tag, `info`, `aad`, or `enc` do not match.
+     */
+    fun openBaseP256(
+        recipient: RecipientKey,
+        enc: ByteArray,
+        info: ByteArray,
+        aad: ByteArray,
+        ciphertext: ByteArray,
+    ): ByteArray {
+        // Decap: DH(skR, pkE); shared_secret = ExtractAndExpand(dh, enc || pkRm).
+        val pkE = deserialize(enc)
+        val dh = ecdh(recipient.privateKey, pkE)
+        val sharedSecret = extractAndExpand(kemSuiteId(), dh, enc + serialize(recipient.publicKey), NSECRET)
+
+        val (key, baseNonce) = keyScheduleBaseP256(sharedSecret, info)
+
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, baseNonce))
+        cipher.updateAAD(aad)
+        return cipher.doFinal(ciphertext)
+    }
+
+    private fun ecdh(privateKey: ECPrivateKey, peer: ECPublicKey): ByteArray = KeyAgreement.getInstance("ECDH").run {
+        init(privateKey)
+        doPhase(peer, true)
+        generateSecret() // P-256 ECDH → 32-byte X coordinate
+    }
+
+    /** RFC 9180 §5.1 base-mode KeySchedule: derives the AEAD `key` and `base_nonce` from the KEM secret + [info]. */
+    private fun keyScheduleBaseP256(sharedSecret: ByteArray, info: ByteArray): Pair<ByteArray, ByteArray> {
+        val pskIdHash = labeledExtract(hpkeSuiteId(), null, "psk_id_hash", ByteArray(0))
+        val infoHash = labeledExtract(hpkeSuiteId(), null, "info_hash", info)
+        val ksContext = byteArrayOf(0) + pskIdHash + infoHash // base mode
+        val secret = labeledExtract(hpkeSuiteId(), sharedSecret, "secret", ByteArray(0))
+        val key = labeledExpand(hpkeSuiteId(), secret, "key", ksContext, NK)
+        val baseNonce = labeledExpand(hpkeSuiteId(), secret, "base_nonce", ksContext, NN)
+        return key to baseNonce
     }
 
     // ---- RFC 9180 §4 labeled KDF ----
@@ -116,6 +151,15 @@ object Hpke {
     private fun serialize(point: ECPoint): ByteArray =
         byteArrayOf(0x04) + fixed(point.affineX, 32) + fixed(point.affineY, 32)
 
+    private fun serialize(key: EcPublicKey): ByteArray =
+        byteArrayOf(0x04) + fixed(BigInteger(1, key.x), 32) + fixed(BigInteger(1, key.y), 32)
+
+    /** Parses an `enc` / SEC1 uncompressed P-256 point (`0x04 || x || y`) into a JCA public key. */
+    private fun deserialize(enc: ByteArray): ECPublicKey {
+        require(enc.size == 65 && enc[0] == 0x04.toByte()) { "enc must be an uncompressed P-256 point (0x04 || x || y)" }
+        return Ecdsa.publicKeyOf(EcPublicKey(EcCurve.P256, enc.copyOfRange(1, 33), enc.copyOfRange(33, 65))) as ECPublicKey
+    }
+
     private fun fixed(v: BigInteger, size: Int): ByteArray {
         val s = v.toByteArray().let { if (it.size > size) it.copyOfRange(it.size - size, it.size) else it }
         return ByteArray(size - s.size) + s
@@ -135,6 +179,29 @@ object Hpke {
                     .getParameterSpec(ECParameterSpec::class.java)
                 val priv = KeyFactory.getInstance("EC").generatePrivate(ECPrivateKeySpec(BigInteger(1, scalar), params)) as ECPrivateKey
                 return Ephemeral(priv, publicPoint)
+            }
+        }
+    }
+
+    /**
+     * An HPKE recipient's P-256 key pair — the verifier/reader side of [openBaseP256]. Holds the private
+     * key for KEM decapsulation; [publicKey] is the one the verifier advertises (e.g. the `recipientPublicKey`
+     * of the 18013-7 `EncryptionInfo`). Random in production, or built from a raw scalar for test vectors.
+     */
+    class RecipientKey private constructor(internal val privateKey: ECPrivateKey, val publicKey: EcPublicKey) {
+        companion object {
+            fun generate(): RecipientKey {
+                val kp = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
+                val w = (kp.public as ECPublicKey).w
+                return RecipientKey(kp.private as ECPrivateKey, EcPublicKey(EcCurve.P256, fixed(w.affineX, 32), fixed(w.affineY, 32)))
+            }
+
+            /** For test vectors: a recipient built from a raw private scalar and its (already known) public key. */
+            internal fun of(scalar: ByteArray, publicKey: EcPublicKey): RecipientKey {
+                val params = AlgorithmParameters.getInstance("EC").apply { init(ECGenParameterSpec("secp256r1")) }
+                    .getParameterSpec(ECParameterSpec::class.java)
+                val priv = KeyFactory.getInstance("EC").generatePrivate(ECPrivateKeySpec(BigInteger(1, scalar), params)) as ECPrivateKey
+                return RecipientKey(priv, publicKey)
             }
         }
     }

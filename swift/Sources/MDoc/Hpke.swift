@@ -2,9 +2,13 @@ import CborCose
 import Crypto
 import Foundation
 
+/// HPKE decryption failures that are not CryptoKit authentication errors.
+public enum HpkeError: Error, Equatable { case malformedCiphertext }
+
 /// HPKE (RFC 9180) — base mode, cipher suite DHKEM(P-256, HKDF-SHA256) / HKDF-SHA256 / AES-128-GCM.
 /// The suite the ISO/IEC 18013-7:2025 Annex C Digital Credentials API uses to encrypt the mdoc
-/// `DeviceResponse` to the verifier's ephemeral `recipientPublicKey`. Single-shot sealing only.
+/// `DeviceResponse` to the verifier's ephemeral `recipientPublicKey`. Single-shot seal (wallet) and
+/// open (verifier/reader).
 public enum Hpke {
     private static let kemId = 0x0010, kdfId = 0x0001, aeadId = 0x0001
     private static let nSecret = 32, nk = 16, nn = 12, nh = 32
@@ -29,22 +33,62 @@ public enum Hpke {
     public static func sealBaseP256(recipient: EcPublicKey, info: [UInt8], aad: [UInt8], plaintext: [UInt8],
                                     ephemeral: Ephemeral = .random()) throws -> Sealed {
         let recipientKa = try P256.KeyAgreement.PublicKey(x963Representation: Data([0x04] + pad(recipient.x) + pad(recipient.y)))
+        // Encap: DH(skE, pkR); shared_secret = ExtractAndExpand(dh, enc || pkRm).
         let dh = try ephemeral.privateKey.sharedSecretFromKeyAgreement(with: recipientKa).withUnsafeBytes { [UInt8]($0) }
         let enc = ephemeral.publicUncompressed
-        let kemContext = enc + [UInt8](recipientKa.x963Representation) // enc || pkRm (uncompressed)
+        let sharedSecret = extractAndExpand(kemSuiteId(), dh, enc + [UInt8](recipientKa.x963Representation), nSecret)
 
-        let sharedSecret = extractAndExpand(kemSuiteId(), dh, kemContext, nSecret)
-        let pskIdHash = labeledExtract(hpkeSuiteId(), nil, "psk_id_hash", [])
-        let infoHash = labeledExtract(hpkeSuiteId(), nil, "info_hash", info)
-        let ksContext = [0] + pskIdHash + infoHash // base mode
-        let secret = labeledExtract(hpkeSuiteId(), sharedSecret, "secret", [])
-        let key = labeledExpand(hpkeSuiteId(), secret, "key", ksContext, nk)
-        let baseNonce = labeledExpand(hpkeSuiteId(), secret, "base_nonce", ksContext, nn)
+        let (key, baseNonce) = keyScheduleBaseP256(sharedSecret, info)
 
         // Single-shot: sequence number 0, so the per-message nonce equals base_nonce.
         let box = try AES.GCM.seal(Data(plaintext), using: SymmetricKey(data: Data(key)),
                                    nonce: try AES.GCM.Nonce(data: Data(baseNonce)), authenticating: Data(aad))
         return Sealed(enc: enc, ciphertext: [UInt8](box.ciphertext) + [UInt8](box.tag))
+    }
+
+    /// An HPKE recipient's P-256 key pair — the verifier/reader side of `openBaseP256`. Holds the private
+    /// key for KEM decapsulation; `publicKey` is the one the verifier advertises (e.g. the `recipientPublicKey`
+    /// of the 18013-7 `EncryptionInfo`). Random in production, or built from a raw scalar for test vectors.
+    public struct RecipientKey {
+        let privateKey: P256.KeyAgreement.PrivateKey
+        public let publicKey: EcPublicKey
+        public static func generate() -> RecipientKey {
+            let k = P256.KeyAgreement.PrivateKey()
+            let xy = [UInt8](k.publicKey.x963Representation).dropFirst() // strip 0x04
+            return RecipientKey(privateKey: k, publicKey: EcPublicKey(curve: .p256, x: Array(xy.prefix(32)), y: Array(xy.suffix(32))))
+        }
+        public static func of(scalar: [UInt8], publicKey: EcPublicKey) throws -> RecipientKey {
+            RecipientKey(privateKey: try P256.KeyAgreement.PrivateKey(rawRepresentation: Data(scalar)), publicKey: publicKey)
+        }
+    }
+
+    /// Opens (RFC 9180 §5.1.1 `OpenBase`) an HPKE base-mode single-shot ciphertext — the verifier/reader side
+    /// of `sealBaseP256`. Decapsulates the KEM shared secret from `enc` with the `recipient` private key, runs
+    /// the same key schedule over `info`, and AEAD-opens `ciphertext` under `aad`. Throws when the tag, `info`,
+    /// `aad`, or `enc` do not match.
+    public static func openBaseP256(recipient: RecipientKey, enc: [UInt8], info: [UInt8], aad: [UInt8], ciphertext: [UInt8]) throws -> [UInt8] {
+        // Decap: DH(skR, pkE); shared_secret = ExtractAndExpand(dh, enc || pkRm).
+        let pkE = try P256.KeyAgreement.PublicKey(x963Representation: Data(enc))
+        let dh = try recipient.privateKey.sharedSecretFromKeyAgreement(with: pkE).withUnsafeBytes { [UInt8]($0) }
+        let pkRm = [0x04] + pad(recipient.publicKey.x) + pad(recipient.publicKey.y)
+        let sharedSecret = extractAndExpand(kemSuiteId(), dh, enc + pkRm, nSecret)
+
+        let (key, baseNonce) = keyScheduleBaseP256(sharedSecret, info)
+
+        guard ciphertext.count >= 16 else { throw HpkeError.malformedCiphertext }
+        let box = try AES.GCM.SealedBox(nonce: try AES.GCM.Nonce(data: Data(baseNonce)),
+                                        ciphertext: Data(ciphertext.dropLast(16)), tag: Data(ciphertext.suffix(16)))
+        return [UInt8](try AES.GCM.open(box, using: SymmetricKey(data: Data(key)), authenticating: Data(aad)))
+    }
+
+    /// RFC 9180 §5.1 base-mode KeySchedule: derives the AEAD `key` and `base_nonce` from the KEM secret + `info`.
+    private static func keyScheduleBaseP256(_ sharedSecret: [UInt8], _ info: [UInt8]) -> (key: [UInt8], baseNonce: [UInt8]) {
+        let pskIdHash = labeledExtract(hpkeSuiteId(), nil, "psk_id_hash", [])
+        let infoHash = labeledExtract(hpkeSuiteId(), nil, "info_hash", info)
+        let ksContext = [0] + pskIdHash + infoHash // base mode
+        let secret = labeledExtract(hpkeSuiteId(), sharedSecret, "secret", [])
+        return (labeledExpand(hpkeSuiteId(), secret, "key", ksContext, nk),
+                labeledExpand(hpkeSuiteId(), secret, "base_nonce", ksContext, nn))
     }
 
     // MARK: - RFC 9180 §4 labeled KDF

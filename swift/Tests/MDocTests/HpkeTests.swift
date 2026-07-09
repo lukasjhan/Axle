@@ -31,4 +31,32 @@ final class HpkeTests: XCTestCase {
         XCTAssertEqual(hexStr(pkEm), hexStr(sealed.enc), "enc must equal pkEm")
         XCTAssertEqual(expectedCt, hexStr(sealed.ciphertext), "ciphertext must match RFC 9180 A.3 seq0")
     }
+
+    /// `openBaseP256` is the verifier side: it must recover what `sealBaseP256` (RFC 9180 A.3-pinned above) produced.
+    func testOpenBaseRoundTripsSeal() throws {
+        let recipient = Hpke.RecipientKey.generate()
+        let info = [UInt8]("org-iso-mdoc session transcript".utf8)
+        let aad = [UInt8]("count-0".utf8)
+        let pt = [UInt8]("the mdoc DeviceResponse bytes".utf8)
+
+        let sealed = try Hpke.sealBaseP256(recipient: recipient.publicKey, info: info, aad: aad, plaintext: pt)
+        let opened = try Hpke.openBaseP256(recipient: recipient, enc: sealed.enc, info: info, aad: aad, ciphertext: sealed.ciphertext)
+
+        XCTAssertEqual(hexStr(pt), hexStr(opened), "open must recover the sealed plaintext")
+    }
+
+    /// The AEAD tag binds ciphertext, `aad`, and — through the key schedule — `info` and `enc`; any drift must fail.
+    func testOpenBaseRejectsTampering() throws {
+        let recipient = Hpke.RecipientKey.generate()
+        let info = [UInt8]("transcript-A".utf8)
+        let sealed = try Hpke.sealBaseP256(recipient: recipient.publicKey, info: info, aad: [], plaintext: [UInt8]("secret".utf8))
+
+        var flipped = sealed.ciphertext
+        flipped[0] = flipped[0] &+ 1
+        XCTAssertThrowsError(try Hpke.openBaseP256(recipient: recipient, enc: sealed.enc, info: info, aad: [], ciphertext: flipped))
+        // A different transcript (info) derives a different key/nonce → the tag fails: the response is session-bound.
+        XCTAssertThrowsError(try Hpke.openBaseP256(recipient: recipient, enc: sealed.enc, info: [UInt8]("transcript-B".utf8), aad: [], ciphertext: sealed.ciphertext))
+        // The wrong recipient (different private key) cannot decapsulate the shared secret.
+        XCTAssertThrowsError(try Hpke.openBaseP256(recipient: .generate(), enc: sealed.enc, info: info, aad: [], ciphertext: sealed.ciphertext))
+    }
 }

@@ -6,6 +6,7 @@ import java.math.BigInteger
 import java.security.spec.ECPoint
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 /** Verifies the HPKE seal against RFC 9180 Appendix A.3 (DHKEM-P256-HKDF-SHA256 / HKDF-SHA256 / AES-128-GCM, base mode). */
 class HpkeTest {
@@ -30,5 +31,34 @@ class HpkeTest {
 
         assertEquals(pkEm.hex(), sealed.enc.hex(), "enc must equal pkEm")
         assertEquals(expectedCt, sealed.ciphertext.hex(), "ciphertext must match RFC 9180 A.3 seq0")
+    }
+
+    /** `openBaseP256` is the verifier side: it must recover what `sealBaseP256` (RFC 9180 A.3-pinned above) produced. */
+    @Test
+    fun openBaseRoundTripsSeal() {
+        val recipient = Hpke.RecipientKey.generate()
+        val info = "org-iso-mdoc session transcript".toByteArray()
+        val aad = "count-0".toByteArray()
+        val pt = "the mdoc DeviceResponse bytes".toByteArray()
+
+        val sealed = Hpke.sealBaseP256(recipient.publicKey, info, aad, pt)
+        val opened = Hpke.openBaseP256(recipient, sealed.enc, info, aad, sealed.ciphertext)
+
+        assertEquals(pt.hex(), opened.hex(), "open must recover the sealed plaintext")
+    }
+
+    /** The AEAD tag binds ciphertext, `aad`, and — through the key schedule — `info` and `enc`; any drift must fail. */
+    @Test
+    fun openBaseRejectsTampering() {
+        val recipient = Hpke.RecipientKey.generate()
+        val info = "transcript-A".toByteArray()
+        val sealed = Hpke.sealBaseP256(recipient.publicKey, info, aad = ByteArray(0), plaintext = "secret".toByteArray())
+
+        val flipped = sealed.ciphertext.copyOf().also { it[0] = (it[0] + 1).toByte() }
+        assertFailsWith<Exception> { Hpke.openBaseP256(recipient, sealed.enc, info, ByteArray(0), flipped) }
+        // A different transcript (info) derives a different key/nonce → the tag fails: the response is session-bound.
+        assertFailsWith<Exception> { Hpke.openBaseP256(recipient, sealed.enc, "transcript-B".toByteArray(), ByteArray(0), sealed.ciphertext) }
+        // The wrong recipient (different private key) cannot decapsulate the shared secret.
+        assertFailsWith<Exception> { Hpke.openBaseP256(Hpke.RecipientKey.generate(), sealed.enc, info, ByteArray(0), sealed.ciphertext) }
     }
 }
