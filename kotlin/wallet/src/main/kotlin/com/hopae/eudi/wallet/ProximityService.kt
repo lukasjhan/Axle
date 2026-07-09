@@ -53,6 +53,8 @@ class ProximityService internal constructor(
     private val recordFailures: Boolean = false,
     /** ISO 18013-5 §9.1.3.5: sign the DeviceResponse, or MAC it with the DeviceKey/EReaderKey EMacKey. */
     private val deviceAuthMode: MdocDeviceAuthMode = MdocDeviceAuthMode.Signature,
+    /** ISO 18013-5 §9.1.5.2 Table 22: the curve of the session EDeviceKey (P-256 default, or P-384 / P-521). */
+    private val sessionCurve: com.hopae.eudi.wallet.cbor.cose.EcCurve = com.hopae.eudi.wallet.cbor.cose.EcCurve.P256,
 ) {
     /**
      * Starts a proximity session over [transport]: engage → session → reader request → consent → reply.
@@ -62,7 +64,7 @@ class ProximityService internal constructor(
     fun present(transport: ProximityTransport, nfc: Boolean = false): ProximitySession {
         val session = ProximitySession(scope) {
             emit(ProximityState.GeneratingEngagement)
-            val eDevice = EphemeralKeyPair.generate()
+            val eDevice = EphemeralKeyPair.generate(sessionCurve)
             // QR: DeviceEngagement carries the BLE method + null handover. NFC: engagement has no connection
             // methods; the BLE carrier + engagement live in the Handover Select message, which is also hashed
             // into the SessionTranscript handover.

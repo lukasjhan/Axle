@@ -1,3 +1,4 @@
+import CborCose
 import Foundation
 import MDoc
 import OpenID4VP
@@ -52,10 +53,16 @@ public struct PresentationConfig {
     /// (ISO 18013-7 B.2.1). Nil (default) → the wallet rejects transaction_data bound to an mdoc, since the
     /// type→element mapping is credential-type specific and only the host knows it.
     public let mdocTransactionDataBinder: OpenID4VP.MdocTransactionDataBinder?
+    /// ISO 18013-5 §9.1.5.2 Table 22: the curve of the ephemeral session key (EDeviceKey) for proximity. P-256
+    /// (default), P-384 or P-521 — the reader matches whatever the mdoc offers. Remote OpenID4VP response
+    /// encryption already follows the verifier's chosen curve, so no wallet setting is needed there.
+    public let proximitySessionCurve: EcCurve
     public init(mdocDeviceAuth: MdocDeviceAuthMode = .signature,
-                mdocTransactionDataBinder: OpenID4VP.MdocTransactionDataBinder? = nil) {
+                mdocTransactionDataBinder: OpenID4VP.MdocTransactionDataBinder? = nil,
+                proximitySessionCurve: EcCurve = .p256) {
         self.mdocDeviceAuth = mdocDeviceAuth
         self.mdocTransactionDataBinder = mdocTransactionDataBinder
+        self.proximitySessionCurve = proximitySessionCurve
     }
 }
 

@@ -38,7 +38,8 @@ class ProximityReaderService internal constructor(
     ): List<VerifiedDocument> {
         // Session setup runs before the try: if it throws there is no session yet to terminate.
         val eDeviceKey = DeviceEngagement.parseEDeviceKey(engagement)
-        val eReader = EphemeralKeyPair.generate()
+        // §9.1.5.2: the reader's ephemeral key must be on the same curve as the mdoc's EDeviceKey.
+        val eReader = EphemeralKeyPair.generate(eDeviceKey.curve)
         val handover = if (handoverNdef != null) ProximitySessionTranscript.nfcHandover(handoverNdef) else Cbor.Null
         val transcript = ProximitySessionTranscript.build(engagement, eReader.publicKey, handover)
         val transcriptBytes = ProximitySessionTranscript.encode(transcript)

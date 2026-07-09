@@ -1,5 +1,6 @@
 package com.hopae.eudi.wallet
 
+import com.hopae.eudi.wallet.cbor.cose.EcCurve
 import com.hopae.eudi.wallet.mdoc.MdocDeviceAuthMode
 import com.hopae.eudi.wallet.vp.MdocTransactionDataBinder
 
@@ -46,6 +47,12 @@ class PresentationConfig(
      * type→element mapping is credential-type specific and only the host knows it.
      */
     val mdocTransactionDataBinder: MdocTransactionDataBinder? = null,
+    /**
+     * ISO 18013-5 §9.1.5.2 Table 22: the curve of the ephemeral session key (EDeviceKey) for proximity. P-256
+     * (default), P-384 or P-521 — the reader matches whatever the mdoc offers. Remote OpenID4VP response
+     * encryption already follows the verifier's chosen curve, so no wallet setting is needed there.
+     */
+    val proximitySessionCurve: EcCurve = EcCurve.P256,
     // Phase C: clientIdPrefixes, responseEncryption.
 )
 

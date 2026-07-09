@@ -50,6 +50,18 @@ class JweTest {
         }
     }
 
+    /** OpenID4VP §8.3 response encryption must follow the verifier's curve — P-384 and P-521, not only P-256. */
+    @Test
+    fun encryptDecryptRoundtripOnP384AndP521() {
+        for (curve in listOf(EcCurve.P384, EcCurve.P521)) {
+            val recipient = JweRecipientKey.generate(curve)
+            assertEquals(curve, recipient.publicKey.curve)
+            val plaintext = """{"vp_token":{"pid":"eyJ...~"}}""".encodeToByteArray()
+            val jwe = Jwe.encryptEcdhEs(plaintext, recipient.publicKey, JweEnc.A256GCM, apv = "nonce".encodeToByteArray())
+            assertContentEquals(plaintext, recipient.decrypt(jwe), "ECDH-ES round-trips on $curve")
+        }
+    }
+
     @Test
     fun tamperedCiphertextFails() {
         val kp = KeyPairGenerator.getInstance("EC")

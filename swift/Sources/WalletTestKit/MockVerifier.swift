@@ -102,7 +102,7 @@ public actor MockVerifier: HttpTransport {
                 if case let .str(k)? = header["kid"] { seenJweKid = k }
                 if case let .str(a)? = header["apv"] { seenJweApv = try? Base64Url.decodeToString(a) }
             }
-            let dec = try Jwe.decryptEcdhEs(response, recipientPrivateD: encPrivD)
+            let dec = try Jwe.decryptEcdhEs(response, recipient: try Ecdh.PrivateKey(curve: .p256, rawD: encPrivD))
             vpToken = try JsonValue.parse(String(bytes: dec, encoding: .utf8)!)["vp_token"]!
         } else {
             vpToken = try JsonValue.parse(form["vp_token"]!)

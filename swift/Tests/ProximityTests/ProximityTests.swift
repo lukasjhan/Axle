@@ -43,6 +43,23 @@ final class ProximityTests: XCTestCase {
         XCTAssertEqual([UInt8]("again".utf8), try reader.decrypt(try device.encrypt([UInt8]("again".utf8))))
     }
 
+    /// ISO 18013-5 §9.1.5.2 Table 22: session establishment must also work on P-384 and P-521, not only P-256.
+    func testSessionRoundTripOnP384AndP521() throws {
+        for curve in [EcCurve.p384, EcCurve.p521] {
+            let eDevice = EphemeralKeyPair(curve: curve), eReader = EphemeralKeyPair(curve: curve)
+            XCTAssertEqual(curve, eDevice.publicKey.curve)
+            let transcript = try transcriptBytes(eDevice, eReader)
+            let device = try SessionEncryption.forMdoc(ephemeral: eDevice, readerPublicKey: eReader.publicKey, sessionTranscriptBytes: transcript)
+            let reader = try SessionEncryption.forReader(ephemeral: eReader, devicePublicKey: eDevice.publicKey, sessionTranscriptBytes: transcript)
+            let msg = [UInt8]("secret-on-\(curve)".utf8)
+            XCTAssertEqual(msg, try reader.decrypt(try device.encrypt(msg)), "SKDevice/SKReader agree on \(curve)")
+            // EMacKey (§9.1.3.5) agrees across both sides on the stronger curve (ECDH is symmetric).
+            XCTAssertEqual(
+                try SessionEncryption.deriveEMacKey(ephemeral: eReader, deviceKey: eDevice.publicKey, sessionTranscriptBytes: transcript),
+                try SessionEncryption.emacKey(sharedSecret: try eDevice.sharedSecret(eReader.publicKey), sessionTranscriptBytes: transcript))
+        }
+    }
+
     func testTamperedMessageRejected() throws {
         let eDevice = EphemeralKeyPair(), eReader = EphemeralKeyPair()
         let transcript = try transcriptBytes(eDevice, eReader)

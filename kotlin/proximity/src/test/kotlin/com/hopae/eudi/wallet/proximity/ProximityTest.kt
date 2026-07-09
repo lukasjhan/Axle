@@ -6,6 +6,7 @@ import com.hopae.eudi.wallet.cbor.CborEncoder
 import com.hopae.eudi.wallet.cbor.Hkdf
 import com.hopae.eudi.wallet.cbor.cose.CoseMac0
 import com.hopae.eudi.wallet.cbor.cose.CoseSign1
+import com.hopae.eudi.wallet.cbor.cose.EcCurve
 import com.hopae.eudi.wallet.mdoc.IssuerSigned
 import com.hopae.eudi.wallet.mdoc.MdocPresenter
 import com.hopae.eudi.wallet.mdoc.MdocTestIssuer
@@ -57,6 +58,28 @@ class ProximityTest {
         assertContentEquals("hello".encodeToByteArray(), reader.decrypt(device.encrypt("hello".encodeToByteArray())))
         assertContentEquals("world".encodeToByteArray(), device.decrypt(reader.encrypt("world".encodeToByteArray())))
         assertContentEquals("again".encodeToByteArray(), reader.decrypt(device.encrypt("again".encodeToByteArray())))
+    }
+
+    /** ISO 18013-5 §9.1.5.2 Table 22: session establishment must also work on P-384 and P-521, not only P-256. */
+    @Test
+    fun sessionRoundTripOnP384AndP521() {
+        for (curve in listOf(EcCurve.P384, EcCurve.P521)) {
+            val eDevice = EphemeralKeyPair.generate(curve)
+            val eReader = EphemeralKeyPair.generate(curve)
+            assertEquals(curve, eDevice.publicKey.curve, "ephemeral key is on $curve")
+            val transcript = transcriptBytes(eDevice, eReader)
+
+            val device = SessionEncryption.forMdoc(eDevice, eReader.publicKey, transcript)
+            val reader = SessionEncryption.forReader(eReader, eDevice.publicKey, transcript)
+            val msg = "secret-on-$curve".encodeToByteArray()
+            assertContentEquals(msg, reader.decrypt(device.encrypt(msg)), "SKDevice/SKReader agree on $curve")
+
+            // EMacKey (§9.1.3.5) also agrees across both sides on the stronger curve (ECDH is symmetric).
+            assertContentEquals(
+                SessionEncryption.deriveEMacKey(eReader, eDevice.publicKey, transcript),
+                SessionEncryption.emacKey(eDevice.sharedSecret(eReader.publicKey), transcript),
+            )
+        }
     }
 
     @Test

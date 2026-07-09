@@ -29,14 +29,11 @@ public enum JweEnc: String, Sendable {
 /// `credential_response_encryption.jwk`. Short-lived transport material, not credential key material, so
 /// it is generated in process rather than in a `SecureArea`; the private scalar never leaves this object.
 public struct JweRecipientKey {
-    private let privateKey: P256.KeyAgreement.PrivateKey
-    public let publicKey: EcPublicKey
+    private let privateKey: Ecdh.PrivateKey
+    public var publicKey: EcPublicKey { privateKey.publicKey }
 
-    public init() {
-        privateKey = P256.KeyAgreement.PrivateKey()
-        let raw = privateKey.publicKey.rawRepresentation
-        publicKey = EcPublicKey(curve: .p256, x: [UInt8](raw.prefix(32)), y: [UInt8](raw.suffix(32)))
-    }
+    public init(curve: EcCurve = .p256) { privateKey = Ecdh.PrivateKey.generate(curve) }
+    public static func generate(_ curve: EcCurve = .p256) -> JweRecipientKey { JweRecipientKey(curve: curve) }
 
     /// The public JWK to hand the issuer. §10 requires `alg` to be present on the chosen key.
     public func publicJwk(alg: String = "ECDH-ES") -> JsonValue {
@@ -45,7 +42,7 @@ public struct JweRecipientKey {
     }
 
     public func decrypt(_ compact: String) throws -> [UInt8] {
-        try Jwe.decryptEcdhEs(compact, recipientPrivateD: [UInt8](privateKey.rawRepresentation))
+        try Jwe.decryptEcdhEs(compact, recipient: privateKey)
     }
 }
 
@@ -64,15 +61,13 @@ public enum Jwe {
         apv: [UInt8]? = nil,
         kid: String? = nil
     ) throws -> String {
-        guard recipient.curve == .p256 else { throw JweError("only P-256 JWE is supported") }
-        let ephemeral = P256.KeyAgreement.PrivateKey()
-        let recipientKa = try P256.KeyAgreement.PublicKey(x963Representation: Data([0x04] + pad(recipient.x) + pad(recipient.y)))
-        let shared = try ephemeral.sharedSecretFromKeyAgreement(with: recipientKa)
-        let z = shared.withUnsafeBytes { [UInt8]($0) }
+        // ECDH-ES on the recipient's curve (P-256 / P-384 / P-521). ConcatKDF (RFC 7518 §4.6.2) is SHA-256
+        // regardless of curve, so nothing else depends on the curve.
+        let ephemeral = Ecdh.PrivateKey.generate(recipient.curve)
+        let z = try ephemeral.sharedSecret(with: recipient)
         let cek = concatKdf(z: z, keyBytes: enc.keyBytes, algId: enc.rawValue, apu: apu ?? [], apv: apv ?? [])
 
-        let epkRaw = ephemeral.publicKey.rawRepresentation // x || y (64 bytes)
-        let epk = JwkEc.toJson(EcPublicKey(curve: .p256, x: [UInt8](epkRaw.prefix(32)), y: [UInt8](epkRaw.suffix(32))))
+        let epk = JwkEc.toJson(ephemeral.publicKey)
         var headerEntries: [(String, JsonValue)] = [
             ("alg", .str("ECDH-ES")),
             ("enc", .str(enc.rawValue)),
@@ -97,8 +92,8 @@ public enum Jwe {
         ].joined(separator: ".")
     }
 
-    /// Decrypts a compact ECDH-ES JWE with the recipient private key scalar (P-256). Verifier-side.
-    public static func decryptEcdhEs(_ compact: String, recipientPrivateD: [UInt8]) throws -> [UInt8] {
+    /// Decrypts a compact ECDH-ES JWE with the recipient private key (its curve must match the header `epk`).
+    public static func decryptEcdhEs(_ compact: String, recipient: Ecdh.PrivateKey) throws -> [UInt8] {
         let parts = compact.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
         guard parts.count == 5 else { throw JweError("compact JWE must have 5 parts") }
         guard case let .obj(hdr)? = try? JsonValue.parse(try Base64Url.decodeToString(parts[0])) else {
@@ -107,7 +102,7 @@ public enum Jwe {
         let header = JsonValue.obj(hdr)
         guard case .str("ECDH-ES")? = header["alg"] else { throw JweError("unsupported alg") }
         guard case let .str(encId)? = header["enc"], let enc = JweEnc.from(encId) else { throw JweError("unsupported enc") }
-        guard let epkJson = header["epk"], let epk = JwkEc.fromJson(epkJson), epk.curve == .p256 else {
+        guard let epkJson = header["epk"], let epk = JwkEc.fromJson(epkJson), epk.curve == recipient.curve else {
             throw JweError("bad epk")
         }
         var apu: [UInt8] = []
@@ -115,9 +110,7 @@ public enum Jwe {
         var apv: [UInt8] = []
         if case let .str(s)? = header["apv"] { apv = try Base64Url.decode(s) }
 
-        let priv = try P256.KeyAgreement.PrivateKey(rawRepresentation: Data(recipientPrivateD))
-        let epkKa = try P256.KeyAgreement.PublicKey(x963Representation: Data([0x04] + pad(epk.x) + pad(epk.y)))
-        let z = try priv.sharedSecretFromKeyAgreement(with: epkKa).withUnsafeBytes { [UInt8]($0) }
+        let z = try recipient.sharedSecret(with: epk)
         let cek = concatKdf(z: z, keyBytes: enc.keyBytes, algId: enc.rawValue, apu: apu, apv: apv)
 
         let iv = try Base64Url.decode(parts[2])
@@ -126,10 +119,6 @@ public enum Jwe {
         let box = try AES.GCM.SealedBox(nonce: try AES.GCM.Nonce(data: Data(iv)), ciphertext: Data(ct), tag: Data(tag))
         let plaintext = try AES.GCM.open(box, using: SymmetricKey(data: cek), authenticating: Data(parts[0].utf8))
         return [UInt8](plaintext)
-    }
-
-    private static func pad(_ b: [UInt8]) -> [UInt8] {
-        b.count >= 32 ? b : [UInt8](repeating: 0, count: 32 - b.count) + b
     }
 
     /// Concat KDF (NIST SP 800-56A) for ECDH-ES direct (RFC 7518 §4.6.2).

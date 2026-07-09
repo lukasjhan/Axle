@@ -20,6 +20,7 @@ public struct ProximityService {
     var recordFailures: Bool = false
     /// ISO 18013-5 §9.1.3.5: sign the DeviceResponse, or MAC it with the DeviceKey/EReaderKey EMacKey.
     var deviceAuthMode: MdocDeviceAuthMode = .signature
+    var sessionCurve: EcCurve = .p256
 
     /// Starts a proximity session over `transport`: engage → session → reader request → consent → reply.
     /// With `nfc` = true the engagement is delivered via ISO 18013-5 NFC static handover (the app serves the
@@ -27,7 +28,7 @@ public struct ProximityService {
     public func present(_ transport: any ProximityTransport, nfc: Bool = false) -> ProximitySession {
         let session = ProximitySession { s in
             s.emit(.generatingEngagement)
-            let eDevice = EphemeralKeyPair()
+            let eDevice = EphemeralKeyPair(curve: sessionCurve)
             let engagement: [UInt8]
             let handover: Cbor
             let handoverNdef: [UInt8]?

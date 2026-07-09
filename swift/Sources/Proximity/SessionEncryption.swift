@@ -7,22 +7,18 @@ public struct ProximityError: Error, CustomStringConvertible {
     init(_ description: String) { self.description = description }
 }
 
-/// An ephemeral P-256 key pair for mdoc session establishment (EDeviceKey / EReaderKey).
+/// An ephemeral EC key pair for mdoc session establishment (EDeviceKey / EReaderKey). ISO 18013-5 §9.1.5.2
+/// Table 22 allows P-256 (default), P-384 and P-521; both parties use the curve of the mdoc's EDeviceKey.
 public struct EphemeralKeyPair {
-    private let privateKey: P256.KeyAgreement.PrivateKey
+    private let privateKey: Ecdh.PrivateKey
+    public var curve: EcCurve { privateKey.curve }
 
-    public init() { privateKey = P256.KeyAgreement.PrivateKey() }
+    public init(curve: EcCurve = .p256) { privateKey = Ecdh.PrivateKey.generate(curve) }
 
-    public var publicKey: EcPublicKey {
-        let raw = privateKey.publicKey.rawRepresentation // x || y
-        return EcPublicKey(curve: .p256, x: [UInt8](raw.prefix(32)), y: [UInt8](raw.suffix(32)))
-    }
+    public var publicKey: EcPublicKey { privateKey.publicKey }
 
-    /// Raw ECDH shared secret (Zab) with the peer's ephemeral key.
-    public func sharedSecret(_ peer: EcPublicKey) throws -> [UInt8] {
-        let peerKey = try P256.KeyAgreement.PublicKey(rawRepresentation: Data(peer.x + peer.y))
-        return try privateKey.sharedSecretFromKeyAgreement(with: peerKey).withUnsafeBytes { [UInt8]($0) }
-    }
+    /// Raw ECDH shared secret (Zab) with the peer's ephemeral key (on the same curve).
+    public func sharedSecret(_ peer: EcPublicKey) throws -> [UInt8] { try privateKey.sharedSecret(with: peer) }
 }
 
 /// mdoc session encryption (ISO/IEC 18013-5 §9.1.1): derives `SKDevice`/`SKReader` from the ECDH

@@ -139,7 +139,7 @@ field. Spec-compliant requests fail to decode there, so it is not a usable inter
 | Session termination | §9.1.1.4 | ✅ holder + reader send the status-20 termination frame after the exchange, destroy the session keys (`SessionEncryption.destroy`), and close; the received `status` is decoded (Table 20 10/11/20). BLE `End` command remains a demo-transport concern |
 | BLE / NFC transports | §8.3.3.1 | 🟡 core SDK exposes a transport port only; GATT (both modes, MTU chunking) + NFC APDU live in the **Android demo**; **no iOS/Swift transport**; BLE Ident characteristic absent |
 | MSO digest algorithms | §9.1.2.5 | ✅ the reader verifies `valueDigests` under the MSO `digestAlgorithm` — SHA-256, SHA-384 and SHA-512 (Table 21); any other name is rejected. `MdocTestIssuer` can emit each for round-trip + tamper tests |
-| Ephemeral-key curves | §9.1.5.2 Table 22 | 🟡 P-256 only |
+| Ephemeral-key curves | §9.1.5.2 Table 22 | ✅ P-256, P-384 and P-521 — proximity session keys (`EphemeralKeyPair(curve)`; holder via `PresentationConfig.proximitySessionCurve`, reader matches the mdoc's EDeviceKey curve) and OpenID4VP `direct_post.jwt` / `dc_api.jwt` response encryption (ECDH-ES follows the verifier's chosen curve). No Brainpool / X25519 / X448 |
 | `DeviceResponse` errors/status | §8.3.2.1.2.2-.3 | ⬜ `errors`/`documentErrors`/status-code semantics not parsed or emitted (holder always sends `status: 0`) |
 | MSO optional fields | §9.1.2.4 | 🟡 `keyAuthorizations` parsed (`nameSpaces` + `dataElements`, used to authorize mdoc `transaction_data` device-signed elements); `expectedUpdate`, `keyInfo` not parsed |
 | Wi-Fi Aware · server retrieval (WebAPI/OIDC) | §8.3.3.1.3/§8.3.3.2 (optional) | ⬜ |

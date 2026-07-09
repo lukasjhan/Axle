@@ -37,7 +37,8 @@ public struct ProximityReaderService: Sendable {
     ) async throws -> [VerifiedDocument] {
         // Session setup runs before the session begins: if it throws there is nothing to terminate.
         let eDeviceKey = try DeviceEngagement.parseEDeviceKey(engagement)
-        let eReader = EphemeralKeyPair()
+        // §9.1.5.2: the reader's ephemeral key must be on the same curve as the mdoc's EDeviceKey.
+        let eReader = EphemeralKeyPair(curve: eDeviceKey.curve)
         let handover: Cbor = handoverNdef != nil ? ProximitySessionTranscript.nfcHandover(handoverNdef!) : .null
         let transcript = try ProximitySessionTranscript.build(deviceEngagement: engagement, eReaderKey: eReader.publicKey, handover: handover)
         let transcriptBytes = try ProximitySessionTranscript.encode(transcript)

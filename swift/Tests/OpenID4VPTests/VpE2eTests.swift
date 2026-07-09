@@ -60,7 +60,7 @@ final class VpE2eTests: XCTestCase {
             }
             let vpToken: JsonValue
             if let response = form["response"] {
-                let dec = try Jwe.decryptEcdhEs(response, recipientPrivateD: encPrivD)
+                let dec = try Jwe.decryptEcdhEs(response, recipient: try Ecdh.PrivateKey(curve: .p256, rawD: encPrivD))
                 let obj = try JsonValue.parse(String(bytes: dec, encoding: .utf8)!)
                 vpToken = obj["vp_token"]!
             } else {

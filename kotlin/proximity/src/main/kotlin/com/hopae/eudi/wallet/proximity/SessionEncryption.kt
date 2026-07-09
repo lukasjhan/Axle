@@ -5,17 +5,13 @@ import com.hopae.eudi.wallet.cbor.CborEncoder
 import com.hopae.eudi.wallet.cbor.Hkdf
 import com.hopae.eudi.wallet.cbor.cose.EcCurve
 import com.hopae.eudi.wallet.cbor.cose.EcPublicKey
+import com.hopae.eudi.wallet.cbor.cose.Ecdsa
 import java.math.BigInteger
-import java.security.AlgorithmParameters
-import java.security.KeyFactory
 import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.MessageDigest
 import java.security.interfaces.ECPublicKey
 import java.security.spec.ECGenParameterSpec
-import java.security.spec.ECParameterSpec
-import java.security.spec.ECPoint
-import java.security.spec.ECPublicKeySpec
 import javax.crypto.Cipher
 import javax.crypto.KeyAgreement
 import javax.crypto.spec.GCMParameterSpec
@@ -23,39 +19,33 @@ import javax.crypto.spec.SecretKeySpec
 
 class ProximityException(message: String) : Exception(message)
 
-/** An ephemeral P-256 key pair for mdoc session establishment (EDeviceKey / EReaderKey). */
-class EphemeralKeyPair private constructor(private val keyPair: KeyPair) {
+/**
+ * An ephemeral EC key pair for mdoc session establishment (EDeviceKey / EReaderKey). ISO 18013-5 §9.1.5.2
+ * Table 22 allows P-256 (default), P-384 and P-521; both parties use the curve of the mdoc's EDeviceKey.
+ */
+class EphemeralKeyPair private constructor(private val keyPair: KeyPair, val curve: EcCurve) {
 
     val publicKey: EcPublicKey
         get() {
             val pub = keyPair.public as ECPublicKey
-            return EcPublicKey(EcCurve.P256, fixed(pub.w.affineX), fixed(pub.w.affineY))
+            return EcPublicKey(curve, fixed(pub.w.affineX, curve.coordinateSize), fixed(pub.w.affineY, curve.coordinateSize))
         }
 
-    /** Raw ECDH shared secret (Zab) with the peer's ephemeral key. */
+    /** Raw ECDH shared secret (Zab) with the peer's ephemeral key (on the same curve). */
     fun sharedSecret(peer: EcPublicKey): ByteArray = KeyAgreement.getInstance("ECDH").run {
         init(keyPair.private)
-        doPhase(toJca(peer), true)
+        doPhase(Ecdsa.publicKeyOf(peer), true)
         generateSecret()
     }
 
     companion object {
-        fun generate(): EphemeralKeyPair = EphemeralKeyPair(
-            KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
+        fun generate(curve: EcCurve = EcCurve.P256): EphemeralKeyPair = EphemeralKeyPair(
+            KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec(curve.jcaName)) }.generateKeyPair(),
+            curve,
         )
 
-        private val p256Params: ECParameterSpec by lazy {
-            AlgorithmParameters.getInstance("EC").apply { init(ECGenParameterSpec("secp256r1")) }
-                .getParameterSpec(ECParameterSpec::class.java)
-        }
-
-        private fun toJca(key: EcPublicKey): ECPublicKey {
-            val point = ECPoint(BigInteger(1, key.x), BigInteger(1, key.y))
-            return KeyFactory.getInstance("EC").generatePublic(ECPublicKeySpec(point, p256Params)) as ECPublicKey
-        }
-
-        private fun fixed(b: BigInteger): ByteArray =
-            b.toByteArray().dropWhile { it == 0.toByte() }.toByteArray().let { ByteArray(32 - it.size) + it }
+        private fun fixed(b: BigInteger, size: Int): ByteArray =
+            b.toByteArray().dropWhile { it == 0.toByte() }.toByteArray().let { ByteArray(size - it.size) + it }
     }
 }
 

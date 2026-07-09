@@ -58,7 +58,8 @@ public struct Wallet {
         let proximity = ProximityService(store: store, txlog: txlog, secureAreas: ports.secureAreas,
                                          readerTrust: readerValidator.map { X5cMdocReaderTrust(validator: $0) },
                                          recordFailures: recordFailures,
-                                         deviceAuthMode: config.presentation.mdocDeviceAuth)
+                                         deviceAuthMode: config.presentation.mdocDeviceAuth,
+                                         sessionCurve: config.presentation.proximitySessionCurve)
         // Reader side: verify presented mdocs against the same issuer anchors used for status/issuance.
         let reader = ProximityReaderService(issuerTrust: X5cMdocIssuerTrust(validator: validator))
 
