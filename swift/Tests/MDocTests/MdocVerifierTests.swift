@@ -17,7 +17,7 @@ final class MdocVerifierTests: XCTestCase {
     }
 
     private func issued(area: SoftwareSecureArea, issuerKey: KeyInfo, deviceKey: EcPublicKey,
-                        validUntil: String = "2027-01-01T00:00:00Z") async throws -> [UInt8] {
+                        validUntil: String = "2027-01-01T00:00:00Z", digestAlgorithm: String = "SHA-256") async throws -> [UInt8] {
         try await MdocTestIssuer.issue(
             area: area, issuerKey: issuerKey, deviceKey: deviceKey,
             docType: docType, namespace: namespace,
@@ -29,8 +29,37 @@ final class MdocVerifierTests: XCTestCase {
             x5chain: [[0x30, 0x01, 0x02]], // placeholder DER; resolver returns the known key
             signed: MsoCodec.isoFormatter.date(from: "2026-01-01T00:00:00Z")!,
             validFrom: MsoCodec.isoFormatter.date(from: "2026-01-01T00:00:00Z")!,
-            validUntil: MsoCodec.isoFormatter.date(from: validUntil)!
+            validUntil: MsoCodec.isoFormatter.date(from: validUntil)!,
+            digestAlgorithm: digestAlgorithm
         )
+    }
+
+    func testVerifiesSha384AndSha512Digests() async throws {
+        // ISO 18013-5 §9.1.2.5: readers must support SHA-384 and SHA-512, not only SHA-256.
+        for alg in ["SHA-384", "SHA-512"] {
+            let area = SoftwareSecureArea()
+            let issuerKey = try await area.createKey(spec: KeySpec(secureArea: area.id, algorithm: .es256))
+            let deviceKey = try await area.createKey(spec: KeySpec(secureArea: area.id, algorithm: .es256)).publicKey
+            var bytes = try await issued(area: area, issuerKey: issuerKey, deviceKey: deviceKey, digestAlgorithm: alg)
+
+            let verified = try await MdocVerifier(trust: TestTrust(expected: issuerKey.publicKey), now: { [now] in now }).verify(try IssuerSigned.decode(bytes))
+            XCTAssertEqual(.text("Han"), verified.elements[namespace]?["family_name"], "\(alg) digests verify")
+            // a tampered element still fails under the stronger digest
+            let idx = indexOf(bytes, [UInt8]("Jongho".utf8))!
+            bytes[idx] = UInt8(ascii: "X")
+            let verifier = MdocVerifier(trust: TestTrust(expected: issuerKey.publicKey), now: { [now] in now })
+            do { _ = try await verifier.verify(try IssuerSigned.decode(bytes)); XCTFail("tamper must fail under \(alg)") } catch is MdocError {}
+        }
+    }
+
+    func testUnsupportedDigestAlgorithmRejected() async throws {
+        let area = SoftwareSecureArea()
+        let issuerKey = try await area.createKey(spec: KeySpec(secureArea: area.id, algorithm: .es256))
+        let deviceKey = try await area.createKey(spec: KeySpec(secureArea: area.id, algorithm: .es256)).publicKey
+        let bytes = try await issued(area: area, issuerKey: issuerKey, deviceKey: deviceKey, digestAlgorithm: "SHA-1")
+
+        let verifier = MdocVerifier(trust: TestTrust(expected: issuerKey.publicKey), now: { [now] in now })
+        do { _ = try await verifier.verify(try IssuerSigned.decode(bytes)); XCTFail("should reject SHA-1") } catch is MdocError {}
     }
 
     func testParseRoundtrip() async throws {

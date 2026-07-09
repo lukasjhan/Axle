@@ -40,7 +40,8 @@ public struct MdocVerifier {
 
         let mso = try issuerSigned.parseMso()
 
-        guard mso.digestAlgorithm.uppercased() == "SHA-256" else {
+        // ISO 18013-5 §9.1.2.5 / Table 21: readers must support SHA-256, SHA-384 and SHA-512.
+        guard let digestOf = Self.digester(mso.digestAlgorithm) else {
             throw MdocError("unsupported MSO digest algorithm \(mso.digestAlgorithm)")
         }
 
@@ -57,7 +58,7 @@ public struct MdocVerifier {
                 guard let expected = nsDigests[entry.item.digestId] else {
                     throw MdocError("no MSO digest for \(namespace)/\(entry.item.digestId)")
                 }
-                let actual = [UInt8](SHA256.hash(data: Data(entry.itemBytes)))
+                let actual = digestOf(entry.itemBytes)
                 guard actual == expected else {
                     throw MdocError("digest mismatch for \(namespace)/\(entry.item.elementIdentifier)")
                 }
@@ -69,5 +70,15 @@ public struct MdocVerifier {
             docType: mso.docType, deviceKey: mso.deviceKey, elements: elements,
             signed: mso.signed, validFrom: mso.validFrom, validUntil: mso.validUntil
         )
+    }
+
+    /// The digest function named by the MSO `digestAlgorithm` (§9.1.2.5), or nil if unsupported.
+    private static func digester(_ algorithm: String) -> (([UInt8]) -> [UInt8])? {
+        switch algorithm.uppercased() {
+        case "SHA-256": return { [UInt8](SHA256.hash(data: Data($0))) }
+        case "SHA-384": return { [UInt8](SHA384.hash(data: Data($0))) }
+        case "SHA-512": return { [UInt8](SHA512.hash(data: Data($0))) }
+        default: return nil
+        }
     }
 }

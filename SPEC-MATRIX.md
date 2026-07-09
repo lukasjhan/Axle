@@ -20,7 +20,7 @@ Legend: ✅ implemented · 🟡 partial · ⬜ not yet.
 | HPKE | RFC 9180 base mode — DHKEM(P-256, HKDF-SHA256) / HKDF-SHA256 / AES-128-GCM | ✅ `mdoc` `Hpke` / `MDoc` — **seal** (wallet) and **open** (verifier/reader) of the `org-iso-mdoc` DC API response (ISO 18013-7 Annex C). RFC 9180 A.3 vector pins `seal` both languages; `open` (KEM decap + AEAD open via `RecipientKey`) round-trips it and rejects tampered ciphertext / wrong `info` / wrong recipient |
 | SD-JWT | RFC 9901 | ✅ issue / present / verify, KB-JWT, recursive & array disclosures, decoys; RFC disclosure vectors (73 entries) pass both languages. `alg=none` explicitly rejected on the issuer JWT and KB-JWT (§7.1(2.a)/§7.3(5.b)); KB-JWT `iat` validated against a configurable acceptable window (§7.3(5.e), `KbRequirement.maxAgeSeconds`/`skewSeconds`). Gaps: §7.1(6) `exp`/`nbf` enforced only in the VC layer, §8 JWS JSON serialization absent (optional) |
 | SD-JWT VC | draft-ietf-oauth-sd-jwt-vc-17 (2026-07-06) | 🟡 `SdJwtVcVerifier` — typ/iss/vct enforcement, time validation, issuer-key resolution (`.well-known/jwt-vc-issuer` + x5c), holder binding, status extraction. **Type Metadata (§4) and `vct#integrity` entirely unimplemented**; the legacy `vc+sd-jwt` typ is rejected — a [deliberate non-goal](#deliberate-non-goals) |
-| ISO/IEC 18013-5 mdoc | :2021 | ✅ `mdoc` / `MDoc` — `IssuerSigned`/MSO, `DeviceResponse`, selective disclosure, device signature **and `deviceMac`** (holder + reader), reader auth (§9.1.4). MSO digest SHA-256 only; `DeviceResponse` errors/status semantics not modeled |
+| ISO/IEC 18013-5 mdoc | :2021 | ✅ `mdoc` / `MDoc` — `IssuerSigned`/MSO, `DeviceResponse`, selective disclosure, device signature **and `deviceMac`** (holder + reader), reader auth (§9.1.4). MSO digest SHA-256/384/512; `DeviceResponse` errors/status semantics not modeled |
 | X.509 PKIX | RFC 5280 | ✅ `trust` / `Trust` — chain validation (path build, validity, basic constraints), SAN, x509_san_dns / x509_hash; x5c adapters for SD-JWT VC issuers, mdoc issuer/reader, and signed issuer metadata |
 
 ## Issuance (OpenID4VCI)
@@ -138,7 +138,7 @@ field. Spec-compliant requests fail to decode there, so it is not a usable inter
 | NFC negotiated handover | §8.2.2.1/§9.1.5.1 | ⬜ static handover only (`[Hs, null]` hardcoded); no ReaderEngagement / Handover Request |
 | Session termination | §9.1.1.4 | ✅ holder + reader send the status-20 termination frame after the exchange, destroy the session keys (`SessionEncryption.destroy`), and close; the received `status` is decoded (Table 20 10/11/20). BLE `End` command remains a demo-transport concern |
 | BLE / NFC transports | §8.3.3.1 | 🟡 core SDK exposes a transport port only; GATT (both modes, MTU chunking) + NFC APDU live in the **Android demo**; **no iOS/Swift transport**; BLE Ident characteristic absent |
-| MSO digest algorithms | §9.1.2.5 | 🟡 SHA-256 only (readers must also support SHA-384/512) |
+| MSO digest algorithms | §9.1.2.5 | ✅ the reader verifies `valueDigests` under the MSO `digestAlgorithm` — SHA-256, SHA-384 and SHA-512 (Table 21); any other name is rejected. `MdocTestIssuer` can emit each for round-trip + tamper tests |
 | Ephemeral-key curves | §9.1.5.2 Table 22 | 🟡 P-256 only |
 | `DeviceResponse` errors/status | §8.3.2.1.2.2-.3 | ⬜ `errors`/`documentErrors`/status-code semantics not parsed or emitted (holder always sends `status: 0`) |
 | MSO optional fields | §9.1.2.4 | 🟡 `expectedUpdate`, `keyAuthorizations`, `keyInfo` not parsed |

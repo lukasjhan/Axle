@@ -28,6 +28,7 @@ object MdocTestIssuer {
         signed: Instant,
         validFrom: Instant,
         validUntil: Instant,
+        digestAlgorithm: String = "SHA-256",
     ): ByteArray {
         // IssuerSignedItems + their #6.24 bytes + digests
         val itemEntries = mutableListOf<Cbor>()
@@ -45,13 +46,13 @@ object MdocTestIssuer {
             val tagged = Cbor.Tagged(TAG_ENCODED_CBOR, Cbor.Bytes(CborEncoder.encode(itemMap)))
             val itemBytes = CborEncoder.encode(tagged)
             itemEntries.add(tagged)
-            digests.add(Cbor.int(digestId) to Cbor.Bytes(sha256(itemBytes)))
+            digests.add(Cbor.int(digestId) to Cbor.Bytes(MessageDigest.getInstance(digestAlgorithm).digest(itemBytes)))
         }
 
         val mso = Cbor.CborMap(
             listOf(
                 Cbor.Text("version") to Cbor.Text("1.0"),
-                Cbor.Text("digestAlgorithm") to Cbor.Text("SHA-256"),
+                Cbor.Text("digestAlgorithm") to Cbor.Text(digestAlgorithm),
                 Cbor.Text("valueDigests") to Cbor.CborMap(listOf(Cbor.Text(namespace) to Cbor.CborMap(digests))),
                 Cbor.Text("deviceKeyInfo") to Cbor.CborMap(listOf(Cbor.Text("deviceKey") to CoseKey.encode(deviceKey))),
                 Cbor.Text("docType") to Cbor.Text(docType),
@@ -84,6 +85,4 @@ object MdocTestIssuer {
     }
 
     private fun tdate(instant: Instant): Cbor = Cbor.Tagged(TAG_TDATE, Cbor.Text(instant.toString()))
-
-    private fun sha256(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes)
 }

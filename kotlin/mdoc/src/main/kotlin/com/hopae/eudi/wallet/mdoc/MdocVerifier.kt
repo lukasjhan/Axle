@@ -43,8 +43,12 @@ class MdocVerifier(
 
         val mso = issuerSigned.parseMso()
 
-        if (!mso.digestAlgorithm.equals("SHA-256", ignoreCase = true)) {
-            throw MdocException("unsupported MSO digest algorithm ${mso.digestAlgorithm}")
+        // ISO 18013-5 §9.1.2.5 / Table 21: readers must support SHA-256, SHA-384 and SHA-512.
+        val digestAlgorithm = when (mso.digestAlgorithm.uppercase()) {
+            "SHA-256" -> "SHA-256"
+            "SHA-384" -> "SHA-384"
+            "SHA-512" -> "SHA-512"
+            else -> throw MdocException("unsupported MSO digest algorithm ${mso.digestAlgorithm}")
         }
 
         val instant = now()
@@ -58,7 +62,7 @@ class MdocVerifier(
             for (entry in items) {
                 val expected = nsDigests[entry.item.digestId]
                     ?: throw MdocException("no MSO digest for ${namespace}/${entry.item.digestId}")
-                val actual = sha256(entry.itemBytes)
+                val actual = MessageDigest.getInstance(digestAlgorithm).digest(entry.itemBytes)
                 if (!actual.contentEquals(expected)) {
                     throw MdocException("digest mismatch for ${namespace}/${entry.item.elementIdentifier}")
                 }
@@ -75,6 +79,4 @@ class MdocVerifier(
             validUntil = mso.validUntil,
         )
     }
-
-    private fun sha256(bytes: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(bytes)
 }

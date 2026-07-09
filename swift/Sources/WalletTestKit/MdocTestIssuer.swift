@@ -20,7 +20,8 @@ public enum MdocTestIssuer {
         x5chain: [[UInt8]],
         signed: Date,
         validFrom: Date,
-        validUntil: Date
+        validUntil: Date,
+        digestAlgorithm: String = "SHA-256"
     ) async throws -> [UInt8] {
         var itemEntries: [Cbor] = []
         var digests: [(Cbor, Cbor)] = []
@@ -34,12 +35,12 @@ public enum MdocTestIssuer {
             ])
             let tagged = Cbor.tagged(tagEncodedCbor, .bytes(try CborEncoder.encode(itemMap)))
             itemEntries.append(tagged)
-            digests.append((.int(digestId), .bytes([UInt8](SHA256.hash(data: Data(try CborEncoder.encode(tagged)))))))
+            digests.append((.int(digestId), .bytes(digest(digestAlgorithm, try CborEncoder.encode(tagged)))))
         }
 
         let mso = Cbor.map([
             (.text("version"), .text("1.0")),
-            (.text("digestAlgorithm"), .text("SHA-256")),
+            (.text("digestAlgorithm"), .text(digestAlgorithm)),
             (.text("valueDigests"), .map([(.text(namespace), .map(digests))])),
             (.text("deviceKeyInfo"), .map([(.text("deviceKey"), CoseKey.encode(deviceKey))])),
             (.text("docType"), .text(docType)),
@@ -67,6 +68,15 @@ public enum MdocTestIssuer {
     }
 
     private static func tdate(_ date: Date) -> Cbor { .tagged(tagTdate, .text(isoFormatter.string(from: date))) }
+
+    private static func digest(_ algorithm: String, _ bytes: [UInt8]) -> [UInt8] {
+        switch algorithm.uppercased() {
+        case "SHA-384": return [UInt8](SHA384.hash(data: Data(bytes)))
+        case "SHA-512": return [UInt8](SHA512.hash(data: Data(bytes)))
+        case "SHA-1": return [UInt8](Insecure.SHA1.hash(data: Data(bytes)))
+        default: return [UInt8](SHA256.hash(data: Data(bytes)))
+        }
+    }
 
     public static let isoFormatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()

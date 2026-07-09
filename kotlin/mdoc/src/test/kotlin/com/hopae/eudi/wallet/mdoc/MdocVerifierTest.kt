@@ -24,7 +24,8 @@ class MdocVerifierTest {
     }
 
     private fun issued(area: SoftwareSecureArea, issuerKey: com.hopae.eudi.wallet.spi.KeyInfo, deviceKey: EcPublicKey,
-                       validUntil: Instant = Instant.parse("2027-01-01T00:00:00Z")): ByteArray = runBlocking {
+                       validUntil: Instant = Instant.parse("2027-01-01T00:00:00Z"),
+                       digestAlgorithm: String = "SHA-256"): ByteArray = runBlocking {
         MdocTestIssuer.issue(
             area = area, issuerKey = issuerKey, deviceKey = deviceKey,
             docType = docType, namespace = namespace,
@@ -37,6 +38,7 @@ class MdocVerifierTest {
             signed = Instant.parse("2026-01-01T00:00:00Z"),
             validFrom = Instant.parse("2026-01-01T00:00:00Z"),
             validUntil = validUntil,
+            digestAlgorithm = digestAlgorithm,
         )
     }
 
@@ -66,6 +68,37 @@ class MdocVerifierTest {
         assertEquals(Cbor.Text("Jongho"), verified.elements[namespace]!!["given_name"])
         assertEquals(Cbor.Bool(true), verified.elements[namespace]!!["age_over_18"])
         assertContentEquals(deviceKey.x, verified.deviceKey.x) // holder binding preserved
+    }
+
+    @Test
+    fun verifiesSha384AndSha512Digests() = runBlocking {
+        // ISO 18013-5 §9.1.2.5: readers must support SHA-384 and SHA-512, not only SHA-256.
+        for (alg in listOf("SHA-384", "SHA-512")) {
+            val area = SoftwareSecureArea()
+            val issuerKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+            val deviceKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256)).publicKey
+            val bytes = issued(area, issuerKey, deviceKey, digestAlgorithm = alg)
+
+            val verified = MdocVerifier(TestTrust(issuerKey.publicKey), now = { now }).verify(IssuerSigned.decode(bytes))
+            assertEquals(Cbor.Text("Han"), verified.elements[namespace]!!["family_name"], "$alg digests verify")
+            // a tampered element still fails under the stronger digest
+            val idx = bytes.indexOf("Jongho".encodeToByteArray()); bytes[idx] = 'X'.code.toByte()
+            assertFailsWith<MdocException>("tamper must fail under $alg") {
+                MdocVerifier(TestTrust(issuerKey.publicKey), now = { now }).verify(IssuerSigned.decode(bytes))
+            }
+        }
+    }
+
+    @Test
+    fun unsupportedDigestAlgorithmRejected(): Unit = runBlocking {
+        val area = SoftwareSecureArea()
+        val issuerKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val deviceKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256)).publicKey
+        val bytes = issued(area, issuerKey, deviceKey, digestAlgorithm = "SHA-1")
+
+        assertFailsWith<MdocException> {
+            MdocVerifier(TestTrust(issuerKey.publicKey), now = { now }).verify(IssuerSigned.decode(bytes))
+        }
     }
 
     @Test
