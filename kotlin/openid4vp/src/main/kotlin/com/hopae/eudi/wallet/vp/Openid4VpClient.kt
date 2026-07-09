@@ -10,13 +10,24 @@ import com.hopae.eudi.wallet.spi.HttpTransport
 import com.hopae.eudi.wallet.spi.Rng
 import java.net.URLEncoder
 
-/** Per-query choice: which held credential to present for a DCQL credential-query id. */
-class PresentationSelection(val chosen: Map<String, String>) {
+/**
+ * Per-query choice: which held credential(s) to present for a DCQL credential-query id. A `multiple: false`
+ * query (§6.1) takes exactly one credential; a `multiple: true` query may take several — the vp_token then
+ * carries one Presentation per chosen credential (§8.1).
+ */
+class PresentationSelection(val chosen: Map<String, List<String>>) {
     companion object {
-        /** Auto-pick the first candidate for every required query. */
+        /**
+         * Auto-pick for every required query: all matching candidates when the query is `multiple`, else the
+         * first candidate only.
+         */
         fun auto(matches: DcqlMatchResult): PresentationSelection {
             val chosen = matches.requiredQueryIds.mapNotNull { qid ->
-                matches.candidatesByQuery[qid]?.firstOrNull()?.let { qid to it.credential.credentialId }
+                val candidates = matches.candidatesByQuery[qid].orEmpty()
+                if (candidates.isEmpty()) return@mapNotNull null
+                val ids = if (candidates.first().query.multiple) candidates.map { it.credential.credentialId }
+                else listOf(candidates.first().credential.credentialId)
+                qid to ids
             }.toMap()
             return PresentationSelection(chosen)
         }
@@ -142,25 +153,35 @@ class Openid4VpClient(
         val deviceAuthAlgValues = deviceAuthAlgValues(request)
 
         val vpEntries = mutableListOf<Pair<String, JsonValue>>()
-        for ((queryId, credentialId) in selection.chosen) {
-            val candidate = matches.candidatesByQuery[queryId]?.firstOrNull { it.credential.credentialId == credentialId }
-                ?: throw VpException.SelectionIncomplete("no candidate $credentialId for query $queryId")
-            val cred = heldById[credentialId] ?: throw VpException.SelectionIncomplete("unknown credential $credentialId")
-            val presentation = cred.present(
-                PresentationContext(
-                    disclosedPaths = candidate.disclosedPaths,
-                    clientId = request.clientId,
-                    nonce = request.nonce,
-                    responseUri = request.responseUri,
-                    issuedAt = iat,
-                    transactionData = request.transactionData,
-                    verifierJwkThumbprint = jwkThumbprint,
-                    origin = request.origin,
-                    verifierEncryptionKey = encryptionKey?.publicKey,
-                    deviceAuthAlgValues = deviceAuthAlgValues,
+        for ((queryId, credentialIds) in selection.chosen) {
+            val queryCandidates = matches.candidatesByQuery[queryId].orEmpty()
+            // §8.1: a query that is not `multiple` MUST return exactly one Presentation.
+            if (credentialIds.isEmpty()) throw VpException.SelectionIncomplete("no credential selected for query $queryId")
+            if (queryCandidates.firstOrNull()?.query?.multiple != true && credentialIds.size > 1) {
+                throw VpException.InvalidRequest("query '$queryId' is not 'multiple' but ${credentialIds.size} credentials were selected")
+            }
+            val presentations = credentialIds.map { credentialId ->
+                val candidate = queryCandidates.firstOrNull { it.credential.credentialId == credentialId }
+                    ?: throw VpException.SelectionIncomplete("no candidate $credentialId for query $queryId")
+                val cred = heldById[credentialId] ?: throw VpException.SelectionIncomplete("unknown credential $credentialId")
+                JsonValue.Str(
+                    cred.present(
+                        PresentationContext(
+                            disclosedPaths = candidate.disclosedPaths,
+                            clientId = request.clientId,
+                            nonce = request.nonce,
+                            responseUri = request.responseUri,
+                            issuedAt = iat,
+                            transactionData = request.transactionData,
+                            verifierJwkThumbprint = jwkThumbprint,
+                            origin = request.origin,
+                            verifierEncryptionKey = encryptionKey?.publicKey,
+                            deviceAuthAlgValues = deviceAuthAlgValues,
+                        )
+                    )
                 )
-            )
-            vpEntries.add(queryId to JsonValue.Arr(listOf(JsonValue.Str(presentation))))
+            }
+            vpEntries.add(queryId to JsonValue.Arr(presentations))
         }
         return JsonValue.Obj(vpEntries)
     }

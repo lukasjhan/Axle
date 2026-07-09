@@ -30,6 +30,8 @@ public struct CredentialQuery {
     public let meta: CredentialMeta?
     public let claims: [ClaimQuery]
     public let claimSets: [[String]]?
+    /// §6.1: whether more than one Credential may be returned for this query. Default false (exactly one).
+    public var multiple: Bool = false
 }
 
 public struct CredentialSetQuery {
@@ -87,7 +89,9 @@ public struct DcqlQuery {
                 }
             }
         }
-        return CredentialQuery(id: id, format: format, meta: meta, claims: claims, claimSets: claimSets)
+        var multiple = false
+        if case let .bool(m)? = o["multiple"] { multiple = m }
+        return CredentialQuery(id: id, format: format, meta: meta, claims: claims, claimSets: claimSets, multiple: multiple)
     }
 
     private static func parseClaimQuery(_ o: JsonValue) throws -> ClaimQuery {

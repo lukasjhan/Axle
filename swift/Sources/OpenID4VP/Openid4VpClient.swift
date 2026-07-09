@@ -3,21 +3,23 @@ import Foundation
 import SdJwt
 import WalletAPI
 
-/// Per-query choice: which held credential to present for a DCQL credential-query id.
+/// Per-query choice: which held credential(s) to present for a DCQL credential-query id. A `multiple: false`
+/// query (§6.1) takes exactly one credential; a `multiple: true` query may take several — the vp_token then
+/// carries one Presentation per chosen credential (§8.1).
 public struct PresentationSelection {
-    public let chosen: [String: String]
+    public let chosen: [String: [String]]
 
-    public init(chosen: [String: String]) {
+    public init(chosen: [String: [String]]) {
         self.chosen = chosen
     }
 
-    /// Auto-pick the first candidate for every required query.
+    /// Auto-pick for every required query: all matching candidates when the query is `multiple`, else the
+    /// first candidate only.
     public static func auto(_ matches: DcqlMatchResult) -> PresentationSelection {
-        var chosen: [String: String] = [:]
+        var chosen: [String: [String]] = [:]
         for qid in matches.requiredQueryIds {
-            if let first = matches.candidatesByQuery[qid]?.first {
-                chosen[qid] = first.credential.credentialId
-            }
+            guard let candidates = matches.candidatesByQuery[qid], let first = candidates.first else { continue }
+            chosen[qid] = first.query.multiple ? candidates.map { $0.credential.credentialId } : [first.credential.credentialId]
         }
         return PresentationSelection(chosen: chosen)
     }
@@ -137,20 +139,29 @@ public struct Openid4VpClient {
         let deviceAuthAlgValues = deviceAuthAlgValues(request)
 
         var vpEntries: [(String, JsonValue)] = []
-        for (queryId, credentialId) in selection.chosen {
-            guard let candidate = matches.candidatesByQuery[queryId]?.first(where: { $0.credential.credentialId == credentialId }) else {
-                throw VpError.selectionIncomplete("no candidate \(credentialId) for query \(queryId)")
+        for (queryId, credentialIds) in selection.chosen {
+            let queryCandidates = matches.candidatesByQuery[queryId] ?? []
+            // §8.1: a query that is not `multiple` MUST return exactly one Presentation.
+            if credentialIds.isEmpty { throw VpError.selectionIncomplete("no credential selected for query \(queryId)") }
+            if queryCandidates.first?.query.multiple != true && credentialIds.count > 1 {
+                throw VpError.invalidRequest("query '\(queryId)' is not 'multiple' but \(credentialIds.count) credentials were selected")
             }
-            guard let cred = heldById[credentialId] else {
-                throw VpError.selectionIncomplete("unknown credential \(credentialId)")
+            var presentations: [JsonValue] = []
+            for credentialId in credentialIds {
+                guard let candidate = queryCandidates.first(where: { $0.credential.credentialId == credentialId }) else {
+                    throw VpError.selectionIncomplete("no candidate \(credentialId) for query \(queryId)")
+                }
+                guard let cred = heldById[credentialId] else {
+                    throw VpError.selectionIncomplete("unknown credential \(credentialId)")
+                }
+                presentations.append(.str(try await cred.present(PresentationContext(
+                    disclosedPaths: candidate.disclosedPaths,
+                    clientId: request.clientId, nonce: request.nonce, responseUri: request.responseUri,
+                    issuedAt: iat, transactionData: request.transactionData, verifierJwkThumbprint: jwkThumbprint, origin: request.origin,
+                    verifierEncryptionKey: encryptionKey?.publicKey, deviceAuthAlgValues: deviceAuthAlgValues
+                ))))
             }
-            let presentation = try await cred.present(PresentationContext(
-                disclosedPaths: candidate.disclosedPaths,
-                clientId: request.clientId, nonce: request.nonce, responseUri: request.responseUri,
-                issuedAt: iat, transactionData: request.transactionData, verifierJwkThumbprint: jwkThumbprint, origin: request.origin,
-                verifierEncryptionKey: encryptionKey?.publicKey, deviceAuthAlgValues: deviceAuthAlgValues
-            ))
-            vpEntries.append((queryId, .arr([.str(presentation)])))
+            vpEntries.append((queryId, .arr(presentations)))
         }
         return .obj(vpEntries)
     }

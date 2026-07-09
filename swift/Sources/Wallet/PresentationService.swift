@@ -100,7 +100,8 @@ public struct PresentationService {
         let queries = matches.candidatesByQuery.map { queryId, candidates in
             QueryPresentation(
                 queryId: queryId, required: required.contains(queryId),
-                candidates: candidates.map { PresentationCandidate(credentialId: CredentialId($0.credential.credentialId), disclosedPaths: $0.disclosedPaths) })
+                candidates: candidates.map { PresentationCandidate(credentialId: CredentialId($0.credential.credentialId), disclosedPaths: $0.disclosedPaths) },
+                multiple: candidates.first?.query.multiple ?? false)
         }
         let v = resolved.verifier
         return PresentationRequest(
@@ -114,7 +115,7 @@ public struct PresentationService {
         var byId: [String: CredentialEnvelope] = [:]
         for envelope in envelopes { byId[envelope.id.value] = envelope }
         var result: [any PresentableCredential] = []
-        for idValue in Set(selection.chosen.values.map { $0.value }) {
+        for idValue in Set(selection.chosen.values.flatMap { $0 }.map { $0.value }) {
             guard let envelope = byId[idValue] else { continue }
             guard let consumed = try await store.consumeInstance(CredentialId(idValue)) else { continue }
             if let p = presentableFor(envelope, consumed.instance) { result.append(p) }
@@ -151,8 +152,8 @@ public struct PresentationService {
     }
 
     private func toVpSelection(_ selection: PresentationSelection) -> OpenID4VP.PresentationSelection {
-        var chosen: [String: String] = [:]
-        for (queryId, credentialId) in selection.chosen { chosen[queryId] = credentialId.value }
+        var chosen: [String: [String]] = [:]
+        for (queryId, credentialIds) in selection.chosen { chosen[queryId] = credentialIds.map { $0.value } }
         return OpenID4VP.PresentationSelection(chosen: chosen)
     }
 
@@ -179,13 +180,15 @@ public struct PresentationService {
     }
 
     private func loggedDocuments(_ selection: PresentationSelection, _ matches: DcqlMatchResult) -> [LoggedDocument] {
-        selection.chosen.compactMap { queryId, credentialId in
-            guard let candidate = matches.candidatesByQuery[queryId]?.first(where: { $0.credential.credentialId == credentialId.value }) else { return nil }
-            return LoggedDocument(
-                format: candidate.credential.format,
-                type: candidate.credential.vct ?? candidate.credential.docType,
-                queryId: queryId,
-                claims: candidate.disclosedPaths.map { LoggedClaim(path: $0) })
+        selection.chosen.flatMap { queryId, credentialIds in
+            credentialIds.compactMap { credentialId -> LoggedDocument? in
+                guard let candidate = matches.candidatesByQuery[queryId]?.first(where: { $0.credential.credentialId == credentialId.value }) else { return nil }
+                return LoggedDocument(
+                    format: candidate.credential.format,
+                    type: candidate.credential.vct ?? candidate.credential.docType,
+                    queryId: queryId,
+                    claims: candidate.disclosedPaths.map { LoggedClaim(path: $0) })
+            }
         }
     }
 

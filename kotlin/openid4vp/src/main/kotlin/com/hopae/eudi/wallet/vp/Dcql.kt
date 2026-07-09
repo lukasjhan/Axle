@@ -33,6 +33,8 @@ data class CredentialQuery(
     val claims: List<ClaimQuery>,
     /** Alternative sets of claim ids; at least one set must be fully satisfiable. */
     val claimSets: List<List<String>>?,
+    /** §6.1: whether more than one Credential may be returned for this query. Default false (exactly one). */
+    val multiple: Boolean = false,
 )
 
 data class CredentialSetQuery(
@@ -78,7 +80,8 @@ data class DcqlQuery(
                     }
                 }
             }
-            return CredentialQuery(id, format, meta, claims, claimSets)
+            val multiple = (o["multiple"] as? JsonValue.Bool)?.value ?: false
+            return CredentialQuery(id, format, meta, claims, claimSets, multiple)
         }
 
         private fun parseClaimQuery(o: JsonValue.Obj): ClaimQuery {

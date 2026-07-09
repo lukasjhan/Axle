@@ -30,6 +30,8 @@ class QueryPresentation(
     val queryId: String,
     val required: Boolean,
     val candidates: List<PresentationCandidate>,
+    /** §6.1 `multiple`: whether the verifier accepts more than one credential for this query. */
+    val multiple: Boolean = false,
 )
 
 /** A stored credential that satisfies a query, with the claim paths it would disclose. */
@@ -38,15 +40,20 @@ class PresentationCandidate(
     val disclosedPaths: List<List<String>>,
 )
 
-/** The user's choice of which credential answers each query. */
-class PresentationSelection(val chosen: Map<String, CredentialId>) {
+/**
+ * The user's choice of which credential(s) answer each query. A `multiple: false` query takes exactly one
+ * credential; a `multiple: true` query (§6.1) may take several.
+ */
+class PresentationSelection(val chosen: Map<String, List<CredentialId>>) {
     companion object {
-        /** Auto-pick the first candidate for every required query. */
+        /** Auto-pick: all candidates for a `multiple` query, else the first candidate, for every required query. */
         fun auto(request: PresentationRequest): PresentationSelection =
             PresentationSelection(
-                request.queries.filter { it.required }
-                    .mapNotNull { q -> q.candidates.firstOrNull()?.let { q.queryId to it.credentialId } }
-                    .toMap(),
+                request.queries.filter { it.required && it.candidates.isNotEmpty() }
+                    .associate { q ->
+                        q.queryId to if (q.multiple) q.candidates.map { it.credentialId }
+                        else listOf(q.candidates.first().credentialId)
+                    },
             )
     }
 }

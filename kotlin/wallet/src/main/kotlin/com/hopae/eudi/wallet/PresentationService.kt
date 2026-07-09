@@ -120,6 +120,7 @@ class PresentationService internal constructor(
                 queryId = queryId,
                 required = queryId in required,
                 candidates = candidates.map { PresentationCandidate(CredentialId(it.credential.credentialId), it.disclosedPaths) },
+                multiple = candidates.firstOrNull()?.query?.multiple ?: false,
             )
         }
         val v = resolved.verifier
@@ -136,7 +137,7 @@ class PresentationService internal constructor(
     /** Consumes one instance per chosen credential (usage counting) and builds a signer-backed presentable. */
     private suspend fun buildChosenHeld(envelopes: List<CredentialEnvelope>, selection: PresentationSelection): List<PresentableCredential> {
         val byId = envelopes.associateBy { it.id }
-        return selection.chosen.values.distinct().mapNotNull { credentialId ->
+        return selection.chosen.values.flatten().distinct().mapNotNull { credentialId ->
             val envelope = byId[credentialId] ?: return@mapNotNull null
             val consumed = store.consumeInstance(credentialId) ?: return@mapNotNull null
             presentableFor(envelope, consumed.instance)
@@ -167,7 +168,7 @@ class PresentationService internal constructor(
     }
 
     private fun toVpSelection(selection: PresentationSelection): VpSelection =
-        VpSelection(selection.chosen.mapValues { it.value.value })
+        VpSelection(selection.chosen.mapValues { (_, ids) -> ids.map { it.value } })
 
     private fun CredentialEnvelope.firstInstance(): CredentialInstance? =
         (lifecycle as? EnvelopeLifecycle.Issued)?.instances?.firstOrNull()
@@ -192,15 +193,17 @@ class PresentationService internal constructor(
     )
 
     private fun loggedDocuments(selection: PresentationSelection, matches: DcqlMatchResult): List<LoggedDocument> =
-        selection.chosen.mapNotNull { (queryId, credentialId) ->
-            val candidate = matches.candidatesByQuery[queryId].orEmpty()
-                .firstOrNull { it.credential.credentialId == credentialId.value } ?: return@mapNotNull null
-            LoggedDocument(
-                format = candidate.credential.format,
-                type = candidate.credential.vct ?: candidate.credential.docType,
-                queryId = queryId,
-                claims = candidate.disclosedPaths.map { LoggedClaim(it, null) },
-            )
+        selection.chosen.flatMap { (queryId, credentialIds) ->
+            credentialIds.mapNotNull { credentialId ->
+                val candidate = matches.candidatesByQuery[queryId].orEmpty()
+                    .firstOrNull { it.credential.credentialId == credentialId.value } ?: return@mapNotNull null
+                LoggedDocument(
+                    format = candidate.credential.format,
+                    type = candidate.credential.vct ?: candidate.credential.docType,
+                    queryId = queryId,
+                    claims = candidate.disclosedPaths.map { LoggedClaim(it, null) },
+                )
+            }
         }
 
     private suspend fun <T> catchingVp(block: suspend () -> T): T = try {
