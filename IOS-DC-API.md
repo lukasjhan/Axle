@@ -3,6 +3,10 @@
 Researched 2026-07-09. Question: **can this SDK serve both `openid4vp-v1-*` and `org-iso-mdoc` over the
 Digital Credentials API on iOS, the way it already does on Android?**
 
+> **Status (2026-07-09):** not started. Blocked on P0, which is blocked on the Apple toolchain — no Mac
+> or iOS device on the current dev machine. Picking up once that environment exists; P1–P4 will be done
+> in the same pass rather than piecemeal on Linux.
+
 ## Answer
 
 **No — and not because of anything in our code.** Apple's platform routes exactly one DC API protocol
@@ -71,17 +75,82 @@ reference teardown.
 
 ### P0 — Apple platform adapters (blocks everything else)
 
-The provider extension is a **separate process**. It must open the wallet's keychain and sign with the
-credential's device key. Today `swift/Sources` has no Apple `SecureArea` or `StorageDriver` adapter at
-all — only `WalletTestKit.SoftwareSecureArea`. We need:
+Two implementations of ports that already exist in `swift/Sources/WalletAPI/Ports.swift`:
 
-- a Secure Enclave `SecureArea` that creates keys with `kSecAttrAccessGroup` set to a **shared**
-  keychain group, otherwise the extension cannot sign with keys the main app created;
-- a keychain/App-Group-container `StorageDriver` that both processes can read.
+1. **`SecureEnclaveSecureArea: SecureArea`** — `createKey / publicKey / sign / keyAgreement /
+   attestation / deleteKey`.
+2. **A Keychain (or App Group container) `StorageDriver`** — `put / get / delete / keys / transaction`.
 
-The reference sidesteps the design question by having `DcApiHandler(serviceName:accessGroup:)`
-construct `KeyChainStorageService` and register secure areas itself. Our ports model is cleaner: the
-extension builds a `Wallet` with the same adapters the app uses, pointed at the shared group.
+Today `swift/Sources` has **no Apple adapter at all** — only `WalletTestKit.SoftwareSecureArea`, which
+is what its name says it is. The reference puts this logic inside
+`DcApiHandler(serviceName:accessGroup:)`, which builds a `KeyChainStorageService` and registers secure
+areas itself. Our ports model is cleaner: the extension builds a `Wallet` from the same adapters the
+app uses, pointed at the same shared group.
+
+#### Why it blocks DC API
+
+The provider extension is a **separate process**. The browser wakes the *extension*, not the app, and
+it must read credentials the app issued and sign a `DeviceResponse` with that credential's device key.
+Both processes must see the same keys and the same storage, and that has to be true from the moment
+the adapters are written.
+
+`kSecAttrAccessGroup` is **fixed when the key is created and cannot be changed afterwards.** If the app
+ships keys created without a shared group, no later extension can ever sign with them, and there is no
+migration path — Secure Enclave private keys cannot be exported, so the only remedy is re-issuance.
+This is why it is a prerequisite rather than a feature to bolt on.
+
+#### Known sharp edges
+
+- **Signature encoding.** The port returns raw `r||s` (`Ecdsa.verify(rawSignature:)`).
+  `SecKeyCreateSignature` returns DER ECDSA. `Sources/CborCose/Ecdsa.swift` has `verify` and `leftPad`
+  only — no DER→raw converter — so the adapter must carry one.
+- **Secure Enclave is P-256 only.** `capabilities.algorithms = [.es256]`; es384/es512 are impossible.
+  No practical impact (mdoc device keys and SD-JWT holder keys are ES256) but the capability must be
+  declared honestly.
+- **`attestation` starts as `nil`.** The port returns `KeyAttestation?`, so this is legal. Apple key
+  attestation is App Attest (`DCAppAttestService`), a different animal from an SE key attestation, and
+  our HAIP key attestation already routes through the wallet-provider backend
+  (`WalletAttestationProvider`). Wire App Attest later, alongside the WP production integrity adapter.
+- **`keyAgreement`** is `SecKeyCopyKeyExchangeResult(.ecdhKeyExchangeStandard)` → 32-byte x-coordinate.
+  Proximity session encryption and JWE ECDH-ES depend on it.
+- **Keychain has no transactions.** `StorageDriver.transaction` must be emulated.
+- **Build isolation.** Core is Linux-testable and that is the PR gate. Importing `Security` /
+  `LocalAuthentication` breaks the Linux build, so these adapters need a **new Apple-only target**
+  (say `WalletApple`) excluded from the Linux lane. `Package.swift` also declares `iOS(.v14)` while
+  `IdentityDocumentServices` is iOS 26 — `@available(iOS 26, *)` guards, or a separately-versioned
+  target.
+
+#### Definition of done
+
+Our existing rule applies: **adapter qualification = passing the shared contract suite.** Run
+`WalletTestKit.SecureAreaContract.verify(_:)` and `StorageDriverContract` against both adapters on a
+real device.
+
+The contract suites only exercise a **single process**, and the process boundary is the thing that
+actually blocks DC API. So add two checks on top:
+
+1. a key created by the **app** can be signed with by the **extension** (shared `kSecAttrAccessGroup`);
+2. storage written by the **app** is readable by the **extension** (shared App Group).
+
+Once those pass, P1–P3 are ordinary work.
+
+#### Prerequisites (environment)
+
+Our dev machine is Linux, so none of this compiles or runs here.
+
+- a Mac with Xcode;
+- an iOS 26 device — the Secure Enclave itself works on Apple Silicon simulators, but extensions,
+  entitlements, and App Group sharing need real hardware;
+- an Apple Developer account, including an **approved** special entitlement for
+  `com.apple.developer.identity-document-services.document-provider.mobile-document-types`, with every
+  servable doctype listed. Approval takes lead time — request it when the machine is set up.
+
+#### Scope note
+
+P0 is not DC-API-specific. It *is* the hardware `SecureArea` work deferred since M1 ("platform
+artifacts"). The Android demo likewise still runs on `SoftwareSecureArea` + `FileStorageDriver`
+(`demo/app/.../adapters`). Doing P0 unblocks iOS DC API and **production key custody on both
+platforms** at once. DC API is simply the first consumer that forces the issue.
 
 ### P1 — small API impedance mismatches
 
