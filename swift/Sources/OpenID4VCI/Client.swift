@@ -78,11 +78,14 @@ public struct Openid4VciClient {
     private let keyAttestation: (any KeyAttestationSource)?
     /// How to negotiate signed issuer metadata (OpenID4VCI §12.2.2/§12.2.3). Default: unsigned JSON.
     private let metadataPolicy: IssuerMetadataPolicy
+    /// Encrypted Credential Requests/Responses (§8.2, §10). Default: only when the issuer requires it.
+    private let credentialEncryption: CredentialEncryption
 
     public init(http: any HttpTransport, rng: any Rng, clock: @escaping () -> Int64,
                 clientId: String = "wallet-dev", clientAuth: WalletClientAuth? = nil,
                 keyAttestation: (any KeyAttestationSource)? = nil,
-                metadataPolicy: IssuerMetadataPolicy = .ignoreSigned) {
+                metadataPolicy: IssuerMetadataPolicy = .ignoreSigned,
+                credentialEncryption: CredentialEncryption = .whenRequired) {
         self.http = http
         self.rng = rng
         self.clock = clock
@@ -91,6 +94,7 @@ public struct Openid4VciClient {
         self.clientAuth = clientAuth
         self.keyAttestation = keyAttestation
         self.metadataPolicy = metadataPolicy
+        self.credentialEncryption = credentialEncryption
     }
 
     /// Client-attestation headers bound to the authorization server (empty when not configured).
@@ -385,17 +389,43 @@ public struct Openid4VciClient {
         }
 
         let requestFormat = issuerMeta.credentialConfigurationsSupported[configurationId]?.format ?? "dc+sd-jwt"
-        let requestBody = JsonValue.obj([
+        let encryption = try CredentialEncryptionSession.negotiate(credentialEncryption, issuerMeta)
+        var entries: [(String, JsonValue)] = [
             ("credential_configuration_id", .str(configurationId)),
             ("proofs", .obj([("jwt", .arr(proofJwts))])),
-        ]).serialize()
+        ]
+        if let encryption { entries.append(("credential_response_encryption", encryption.requestObject())) }
+        let requestBody = JsonValue.obj(entries).serialize()
 
-        let credResp = try await postJsonWithDpop(
-            issuerMeta.credentialEndpoint, json: requestBody, dpop: dpop, accessToken: token.accessToken
-        )
-        return CredentialResponse.fromObj(try parseObj(credResp, "credential response"), requestedFormat: requestFormat)
+        let credResp: HttpResponse
+        if let encryption {
+            credResp = try await postWithDpop(
+                issuerMeta.credentialEndpoint, body: try encryption.encryptRequest(requestBody),
+                contentType: "application/jwt", dpop: dpop, accessToken: token.accessToken)
+        } else {
+            credResp = try await postJsonWithDpop(
+                issuerMeta.credentialEndpoint, json: requestBody, dpop: dpop, accessToken: token.accessToken)
+        }
+        return CredentialResponse.fromObj(try credentialBody(credResp, encryption), requestedFormat: requestFormat)
             .withContext(accessToken: token.accessToken, credentialIssuer: issuerMeta.credentialIssuer, requestedFormat: requestFormat,
                          refreshToken: token.refreshToken, configurationId: configurationId)
+    }
+
+    /// §8.3: an encrypted Credential Response arrives as `application/jwt`, an unencrypted one as
+    /// `application/json`. §10 also says a message that had to be encrypted but arrived in the clear
+    /// should be rejected — so a plaintext answer to an encrypted request is an error, not a fallback.
+    private func credentialBody(_ response: HttpResponse, _ encryption: CredentialEncryptionSession?) throws -> JsonValue {
+        let mediaType = header(response, "Content-Type")?
+            .split(separator: ";").first
+            .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+        let text = (String(bytes: response.body, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let encrypted = mediaType == "application/jwt" || (mediaType == nil && !text.hasPrefix("{"))
+        guard let encryption else {
+            if encrypted { throw VciError.protocolError("issuer encrypted a response the wallet did not ask to be encrypted") }
+            return try parseObj(response, "credential response")
+        }
+        if !encrypted { throw VciError.protocolError("issuer answered an encrypted credential request in the clear") }
+        return try encryption.decryptResponse(text)
     }
 
     /// Reissues (renews) a credential using the refresh token from a prior issuance (OAuth 2.0
@@ -479,16 +509,23 @@ public struct Openid4VciClient {
     private func postJsonWithDpop(
         _ url: String, json: String, dpop: DpopProver, accessToken: String, nonce: String? = nil
     ) async throws -> HttpResponse {
+        try await postWithDpop(url, body: json, contentType: "application/json", dpop: dpop, accessToken: accessToken, nonce: nonce)
+    }
+
+    /// §10: an encrypted Credential Request is a compact JWE with media type `application/jwt`.
+    private func postWithDpop(
+        _ url: String, body: String, contentType: String, dpop: DpopProver, accessToken: String, nonce: String? = nil
+    ) async throws -> HttpResponse {
         let headers: [(String, String)] = [
-            ("Content-Type", "application/json"),
-            ("Accept", "application/json"),
+            ("Content-Type", contentType),
+            ("Accept", contentType == "application/jwt" ? "application/jwt" : "application/json"),
             ("DPoP", try await dpop.proof(method: "POST", url: url, accessToken: accessToken, nonce: nonce)),
             ("Authorization", "DPoP \(accessToken)"),
         ]
-        let response = try await http.execute(HttpRequest(method: .post, url: url, headers: headers, body: [UInt8](json.utf8)))
+        let response = try await http.execute(HttpRequest(method: .post, url: url, headers: headers, body: [UInt8](body.utf8)))
 
         if nonce == nil, let serverNonce = dpopNonceChallenge(response) {
-            return try await postJsonWithDpop(url, json: json, dpop: dpop, accessToken: accessToken, nonce: serverNonce)
+            return try await postWithDpop(url, body: body, contentType: contentType, dpop: dpop, accessToken: accessToken, nonce: serverNonce)
         }
         try checkOAuth(response, url)
         return response

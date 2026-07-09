@@ -25,16 +25,44 @@ public enum JweEnc: String, Sendable {
 }
 
 /// JWE with ECDH-ES direct key agreement (RFC 7518 §4.6) + AES-GCM. P-256 only.
+/// An ephemeral EC key pair the wallet publishes as a JWE recipient — OpenID4VCI §8.2's
+/// `credential_response_encryption.jwk`. Short-lived transport material, not credential key material, so
+/// it is generated in process rather than in a `SecureArea`; the private scalar never leaves this object.
+public struct JweRecipientKey {
+    private let privateKey: P256.KeyAgreement.PrivateKey
+    public let publicKey: EcPublicKey
+
+    public init() {
+        privateKey = P256.KeyAgreement.PrivateKey()
+        let raw = privateKey.publicKey.rawRepresentation
+        publicKey = EcPublicKey(curve: .p256, x: [UInt8](raw.prefix(32)), y: [UInt8](raw.suffix(32)))
+    }
+
+    /// The public JWK to hand the issuer. §10 requires `alg` to be present on the chosen key.
+    public func publicJwk(alg: String = "ECDH-ES") -> JsonValue {
+        guard case let .obj(entries) = JwkEc.toJson(publicKey) else { return JwkEc.toJson(publicKey) }
+        return .obj(entries + [("use", .str("enc")), ("alg", .str(alg))])
+    }
+
+    public func decrypt(_ compact: String) throws -> [UInt8] {
+        try Jwe.decryptEcdhEs(compact, recipientPrivateD: [UInt8](privateKey.rawRepresentation))
+    }
+}
+
 /// This is the OpenID4VP `direct_post.jwt` response-encryption path.
 public enum Jwe {
 
     /// Encrypts `plaintext` to `recipient` (ECDH-ES direct). Returns compact JWE.
+    ///
+    /// `kid` identifies the recipient key: OpenID4VCI §10 requires the JWE header to echo the `kid` of the
+    /// JWK it encrypted to, when that JWK has one.
     public static func encryptEcdhEs(
         plaintext: [UInt8],
         recipient: EcPublicKey,
         enc: JweEnc = .a128gcm,
         apu: [UInt8]? = nil,
-        apv: [UInt8]? = nil
+        apv: [UInt8]? = nil,
+        kid: String? = nil
     ) throws -> String {
         guard recipient.curve == .p256 else { throw JweError("only P-256 JWE is supported") }
         let ephemeral = P256.KeyAgreement.PrivateKey()
@@ -50,6 +78,7 @@ public enum Jwe {
             ("enc", .str(enc.rawValue)),
             ("epk", epk),
         ]
+        if let kid { headerEntries.append(("kid", .str(kid))) }
         if let apu { headerEntries.append(("apu", .str(Base64Url.encode(apu)))) }
         if let apv { headerEntries.append(("apv", .str(Base64Url.encode(apv)))) }
         let headerB64 = Base64Url.encode(JsonValue.obj(headerEntries).serialize())

@@ -82,6 +82,46 @@ public struct CredentialOffer {
 }
 
 /// Credential issuer metadata (OpenID4VCI §11.2).
+/// The issuer's `credential_response_encryption` metadata (OpenID4VCI §12.2.4): which JWE algorithms it
+/// can encrypt Credential Responses with, and whether encryption is mandatory.
+public struct ResponseEncryptionMetadata {
+    public let algValuesSupported: [String]
+    public let encValuesSupported: [String]
+    public let encryptionRequired: Bool
+
+    static func fromObj(_ o: JsonValue) -> ResponseEncryptionMetadata {
+        var required = false
+        if case let .bool(b)? = o["encryption_required"] { required = b }
+        return ResponseEncryptionMetadata(
+            algValuesSupported: o.stringArray("alg_values_supported") ?? [],
+            encValuesSupported: o.stringArray("enc_values_supported") ?? [],
+            encryptionRequired: required)
+    }
+}
+
+/// The issuer's `credential_request_encryption` metadata: the public keys a Credential Request may be
+/// encrypted to. §8.2 makes request encryption mandatory whenever a `credential_response_encryption`
+/// object is sent, so that an attacker cannot substitute the wallet's response-encryption key.
+public struct RequestEncryptionMetadata {
+    /// Raw JWKs — `alg` (§10 requires it) and `kid` matter, so the parsed EC key alone is not enough.
+    public let jwks: [JsonValue]
+    public let encValuesSupported: [String]
+    public let encryptionRequired: Bool
+
+    static func fromObj(_ o: JsonValue) -> RequestEncryptionMetadata {
+        var required = false
+        if case let .bool(b)? = o["encryption_required"] { required = b }
+        var keys: [JsonValue] = []
+        if case let .arr(items)? = o["jwks"]?["keys"] {
+            keys = items.filter { if case .obj = $0 { return true }; return false }
+        }
+        return RequestEncryptionMetadata(
+            jwks: keys,
+            encValuesSupported: o.stringArray("enc_values_supported") ?? [],
+            encryptionRequired: required)
+    }
+}
+
 public struct CredentialIssuerMetadata {
     public let credentialIssuer: String
     public let credentialEndpoint: String
@@ -92,6 +132,8 @@ public struct CredentialIssuerMetadata {
     public let credentialConfigurationsSupported: [String: CredentialConfiguration]
     /// Issuer display name (first `display` entry), if advertised.
     public let issuerDisplayName: String?
+    public let credentialResponseEncryption: ResponseEncryptionMetadata?
+    public let credentialRequestEncryption: RequestEncryptionMetadata?
 
     public static func fromObj(_ o: JsonValue) throws -> CredentialIssuerMetadata {
         let issuer = try o.requireString("credential_issuer", "issuer metadata")
@@ -114,7 +156,9 @@ public struct CredentialIssuerMetadata {
             notificationEndpoint: o.string("notification_endpoint"),
             authorizationServers: o.stringArray("authorization_servers") ?? [issuer],
             credentialConfigurationsSupported: configs,
-            issuerDisplayName: issuerDisplayName
+            issuerDisplayName: issuerDisplayName,
+            credentialResponseEncryption: o["credential_response_encryption"].map { ResponseEncryptionMetadata.fromObj($0) },
+            credentialRequestEncryption: o["credential_request_encryption"].map { RequestEncryptionMetadata.fromObj($0) }
         )
     }
 }

@@ -73,6 +73,8 @@ class Openid4VciClient(
     private val keyAttestation: KeyAttestationSource? = null,
     /** How to negotiate signed issuer metadata (OpenID4VCI §12.2.2/§12.2.3). Default: unsigned JSON. */
     private val metadataPolicy: IssuerMetadataPolicy = IssuerMetadataPolicy.IgnoreSigned,
+    /** Encrypted Credential Requests/Responses (§8.2, §10). Default: only when the issuer requires it. */
+    private val credentialEncryption: CredentialEncryption = CredentialEncryption.WhenRequired,
 ) {
     /** With attestation-based client auth the client_id is the wallet instance's attestation subject. */
     private val clientId: String = clientAuth?.clientId ?: clientId
@@ -362,23 +364,42 @@ class Openid4VciClient(
         }
 
         val requestFormat = issuerMeta.credentialConfigurationsSupported[configurationId]?.format ?: "dc+sd-jwt"
+        val encryption = CredentialEncryptionSession.negotiate(credentialEncryption, issuerMeta)
         val requestBody = JsonValue.Obj(
-            listOf(
-                "credential_configuration_id" to JsonValue.Str(configurationId),
-                "proofs" to JsonValue.Obj(
-                    listOf("jwt" to JsonValue.Arr(proofJwts.map { JsonValue.Str(it) }))
-                ),
-            )
+            buildList {
+                add("credential_configuration_id" to JsonValue.Str(configurationId))
+                add("proofs" to JsonValue.Obj(listOf("jwt" to JsonValue.Arr(proofJwts.map { JsonValue.Str(it) }))))
+                encryption?.let { add("credential_response_encryption" to it.requestObject()) }
+            }
         ).serialize()
 
-        val credResp = postJsonWithDpop(
-            issuerMeta.credentialEndpoint,
-            requestBody,
-            dpop,
-            accessToken = token.accessToken,
-        )
-        return CredentialResponse.fromObj(parseObj(credResp, "credential response"), requestFormat)
+        val credResp = if (encryption == null) {
+            postJsonWithDpop(issuerMeta.credentialEndpoint, requestBody, dpop, accessToken = token.accessToken)
+        } else {
+            postWithDpop(
+                issuerMeta.credentialEndpoint, encryption.encryptRequest(requestBody), "application/jwt",
+                dpop, accessToken = token.accessToken,
+            )
+        }
+        return CredentialResponse.fromObj(credentialBody(credResp, encryption), requestFormat)
             .withContext(token.accessToken, issuerMeta.credentialIssuer, requestFormat, token.refreshToken, configurationId)
+    }
+
+    /**
+     * §8.3: an encrypted Credential Response arrives as `application/jwt`, an unencrypted one as
+     * `application/json`. §10 also says a message that had to be encrypted but arrived in the clear
+     * should be rejected — so a plaintext answer to an encrypted request is an error, not a fallback.
+     */
+    private fun credentialBody(response: HttpResponse, encryption: CredentialEncryptionSession?): JsonValue.Obj {
+        val mediaType = header(response, "Content-Type")?.substringBefore(';')?.trim()?.lowercase()
+        val text = response.body.decodeToString().trim()
+        val encrypted = mediaType == "application/jwt" || (mediaType == null && !text.startsWith("{"))
+        if (encryption == null) {
+            if (encrypted) throw VciException.ProtocolError("issuer encrypted a response the wallet did not ask to be encrypted")
+            return parseObj(response, "credential response")
+        }
+        if (!encrypted) throw VciException.ProtocolError("issuer answered an encrypted credential request in the clear")
+        return encryption.decryptResponse(text)
     }
 
     /**
@@ -485,17 +506,27 @@ class Openid4VciClient(
         dpop: DpopProver,
         accessToken: String,
         nonce: String? = null,
+    ): HttpResponse = postWithDpop(url, json, "application/json", dpop, accessToken, nonce)
+
+    /** §10: an encrypted Credential Request is a compact JWE with media type `application/jwt`. */
+    private suspend fun postWithDpop(
+        url: String,
+        body: String,
+        contentType: String,
+        dpop: DpopProver,
+        accessToken: String,
+        nonce: String? = null,
     ): HttpResponse {
         val headers = listOf(
-            "Content-Type" to "application/json",
-            "Accept" to "application/json",
+            "Content-Type" to contentType,
+            "Accept" to if (contentType == "application/jwt") "application/jwt" else "application/json",
             "DPoP" to dpop.proof("POST", url, accessToken, nonce),
             "Authorization" to "DPoP $accessToken",
         )
-        val response = http.execute(HttpRequest(HttpMethod.POST, url, headers, json.encodeToByteArray()))
+        val response = http.execute(HttpRequest(HttpMethod.POST, url, headers, body.encodeToByteArray()))
 
         dpopNonceChallenge(response)?.let { serverNonce ->
-            if (nonce == null) return postJsonWithDpop(url, json, dpop, accessToken, serverNonce)
+            if (nonce == null) return postWithDpop(url, body, contentType, dpop, accessToken, serverNonce)
         }
         checkOAuth(response, url)
         return response

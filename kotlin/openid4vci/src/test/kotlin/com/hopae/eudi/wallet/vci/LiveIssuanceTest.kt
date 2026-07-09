@@ -115,11 +115,15 @@ class LiveIssuanceTest {
         val dpop = LocalEcKey.generate()
         val keys = IssuanceKeys(proof.signer(), proof.publicKey, dpop.signer(), dpop.publicKey)
 
+        // EUDI_ENCRYPT=1 exercises OpenID4VCI §8.2/§10: the Credential Request goes out as a JWE and the
+        // Credential Response comes back as application/jwt. issuer.eudiw.dev advertises both.
+        val encryption = if (System.getenv("EUDI_ENCRYPT") == "1") CredentialEncryption.Preferred else CredentialEncryption.WhenRequired
         val client = Openid4VciClient(
             transport, secureRng(), clock = { System.currentTimeMillis() / 1000 }, clientId = "wallet-dev",
+            credentialEncryption = encryption,
         )
         val offer = client.resolveCredentialOffer(offerInput)
-        println("pre-auth offer: config=${offer.credentialConfigurationIds.first()} txCodeRequired=${offer.txCode != null}")
+        println("pre-auth offer: config=${offer.credentialConfigurationIds.first()} txCodeRequired=${offer.txCode != null} encryption=$encryption")
 
         val response = client.issueWithPreAuthorizedCode(
             offer = offer,

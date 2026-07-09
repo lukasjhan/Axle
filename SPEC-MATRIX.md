@@ -16,7 +16,7 @@ Legend: ✅ implemented · 🟡 partial · ⬜ not yet.
 | CBOR | RFC 8949 (deterministic encoding §4.2.1) | ✅ `cbor` / `CborCose` — RFC 8949 Appendix A vectors pass both languages; bytewise + length-first key ordering profiles |
 | COSE | RFC 9052 §4.2 `COSE_Sign1` · RFC 9053 ES256/384/512 · RFC 9360 x5chain | ✅ verify (JCA / swift-crypto) + sign (`CoseSigner` → `SecureArea` port); COSE-WG Sign1 vectors pass. `COSE_Mac0` sign + verify (HMAC 256/256) |
 | JOSE / JWS | RFC 7515 / 7518 subset (compact, ES256/384/512) | ✅ `sdjwt` / `SdJwt` — in-house, fixed-`alg` verification (no negotiation) |
-| JWE | RFC 7518 ECDH-ES direct + A128/192/256GCM | ✅ Concat KDF (RFC 7518 Appendix C vectors) — encrypts `direct_post.jwt` / `dc_api.jwt` responses |
+| JWE | RFC 7518 ECDH-ES direct + A128/192/256GCM | ✅ Concat KDF (RFC 7518 Appendix C vectors) — encrypts `direct_post.jwt` / `dc_api.jwt` responses and OpenID4VCI Credential Requests; decrypts Credential Responses (`JweRecipientKey`). `kid` header per OpenID4VCI §10 |
 | HPKE | RFC 9180 base mode — DHKEM(P-256, HKDF-SHA256) / HKDF-SHA256 / AES-128-GCM | ✅ `mdoc` `Hpke` / `MDoc` — seals the `org-iso-mdoc` DC API response (ISO 18013-7 Annex C); RFC 9180 A.3 test vector passes both languages. Seal only — no verifier-side `open` |
 | SD-JWT | RFC 9901 | ✅ issue / present / verify, KB-JWT, recursive & array disclosures, decoys; RFC disclosure vectors (73 entries) pass both languages. Gaps: KB-JWT `iat` presence-only (no §7.3 time-window check), §7.1(6) `exp`/`nbf` enforced only in the VC layer, §8 JWS JSON serialization absent (optional) |
 | SD-JWT VC | draft-ietf-oauth-sd-jwt-vc | 🟡 `SdJwtVcVerifier` — typ/iss/vct enforcement, time validation, issuer-key resolution (`.well-known/jwt-vc-issuer` + x5c), holder binding, status extraction. **Type Metadata (§4) and `vct#integrity` entirely unimplemented**; transitional `vc+sd-jwt` typ rejected |
@@ -27,7 +27,7 @@ Legend: ✅ implemented · 🟡 partial · ⬜ not yet.
 
 | Spec | Anchor version | Status |
 |---|---|---|
-| OpenID4VCI | 1.0 Final (2025-09-16) | ✅ `openid4vci` — pre-authorized & authorization-code (+PAR), offer resolution, scope-preferred; **signed metadata** (§12.2.2 `Accept` negotiation + §12.2.3 `application/jwt` with `typ`/`alg`/`sub`/`iat`/`exp` rules); **live-issued a real PID from `issuer.eudiw.dev`** and **live-verified signed metadata from `dev.issuer-backend.eudiw.dev`** (see `INTEROP.md`). Gaps: credential response encryption, `attestation` proof type, `credential_identifiers`, deferred `interval` — see audit below |
+| OpenID4VCI | 1.0 Final (2025-09-16) | ✅ `openid4vci` — pre-authorized & authorization-code (+PAR), offer resolution, scope-preferred; **signed metadata** (§12.2.2 `Accept` negotiation + §12.2.3 `application/jwt` with `typ`/`alg`/`sub`/`iat`/`exp` rules); **live-issued a real PID from `issuer.eudiw.dev`** and **live-verified signed metadata from `dev.issuer-backend.eudiw.dev`** (see `INTEROP.md`). **encrypted Credential Requests/Responses** (§8.2/§10, ECDH-ES + A*GCM, live-verified against `issuer.eudiw.dev`). Gaps: `attestation` proof type, `credential_identifiers`, deferred `interval`, encryption on the deferred endpoint — see audit below |
 | PKCE | RFC 7636 (S256) | ✅ |
 | DPoP | RFC 9449 | ✅ jti/htm/htu/ath + DPoP-Nonce retry |
 | OAuth Attestation-Based Client Auth | draft (wallet attestation + PoP) | ✅ WUA client authentication during issuance |
@@ -80,7 +80,6 @@ Only what is 🟡/⬜ is listed; everything else in the tables above verified cl
 
 | Gap | Spec ref | Detail |
 |---|---|---|
-| Credential response encryption | §8.2/§10 | ⬜ no `credential_response_encryption` request object, response never JWE-decrypted |
 | `attestation` proof type | §8.2.1.3 | ⬜ only `jwt` proofs sent (key attestation rides in the `key_attestation` JOSE header, which **is** implemented) |
 | `credential_identifier(s)` issuance flow | §3.4/§6.2/§8.2 | ⬜ requests always use `credential_configuration_id`; token-response `authorization_details` parsed-but-ignored (Kotlin) / not parsed (Swift) |
 | Deferred `interval` backoff | §8.3/§9.2 | ⬜ not parsed or honored (REQUIRED alongside `transaction_id`) |
@@ -134,7 +133,7 @@ Only what is 🟡/⬜ is listed; everything else in the tables above verified cl
 | SD-JWT VC Type Metadata (§4: vct resolution, `extends`, display, claim metadata, schema) + `vct#integrity` | ⬜ largest single gap; §4.7 is a step of the verification algorithm |
 | OpenID4VP hardening: DCQL `multiple`/`trusted_authorities`, `require_cryptographic_holder_binding` | ⬜ |
 | iOS proximity transport (CoreBluetooth / CoreNFC) + BLE Ident characteristic + session termination (status 20) | ⬜ Android demo adapters only |
-| OpenID4VCI: credential response encryption, `attestation` proof type, `credential_identifiers`, deferred `interval` | ⬜ |
+| OpenID4VCI: `attestation` proof type, `credential_identifiers`, deferred `interval`, encryption on the deferred endpoint | ⬜ |
 | NFC negotiated handover · 18013-7 Annex A (website REST retrieval) | ⬜ |
 | LOTL Level 2 · CRL / OCSP real-time revocation | ⬜ trust hardening |
 | Wallet Provider backend end-to-end (WUA issue → verify loop) | 🟡 backend exists (`wallet-provider/`); e2e loop closure pending |

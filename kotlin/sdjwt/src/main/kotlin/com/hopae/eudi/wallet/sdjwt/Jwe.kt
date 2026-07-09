@@ -14,6 +14,37 @@ import javax.crypto.spec.SecretKeySpec
 
 class JweException(message: String) : Exception(message)
 
+/**
+ * An ephemeral EC key pair the wallet publishes as a JWE recipient — OpenID4VCI §8.2's
+ * `credential_response_encryption.jwk`. Short-lived transport material, not credential key material, so
+ * it is generated in process rather than in a [SecureArea][com.hopae.eudi.wallet.spi.SecureArea]; the
+ * private scalar never leaves this object.
+ */
+class JweRecipientKey private constructor(private val privateD: ByteArray, val publicKey: EcPublicKey) {
+
+    /** The public JWK to hand the issuer. §10 requires `alg` to be present on the chosen key. */
+    fun publicJwk(alg: String = "ECDH-ES"): JsonValue.Obj = JsonValue.Obj(
+        JwkEc.toJson(publicKey).entries + listOf("use" to JsonValue.Str("enc"), "alg" to JsonValue.Str(alg))
+    )
+
+    fun decrypt(compact: String): ByteArray = Jwe.decryptEcdhEs(compact, privateD, publicKey.curve)
+
+    companion object {
+        fun generate(curve: EcCurve = EcCurve.P256): JweRecipientKey {
+            val kp = KeyPairGenerator.getInstance("EC")
+                .apply { initialize(ECGenParameterSpec(curve.jcaName)) }
+                .generateKeyPair()
+            val pub = kp.public as ECPublicKey
+            val priv = kp.private as java.security.interfaces.ECPrivateKey
+            fun fixed(b: java.math.BigInteger): ByteArray {
+                val s = b.toByteArray().dropWhile { it == 0.toByte() }.toByteArray()
+                return ByteArray(curve.coordinateSize - s.size) + s
+            }
+            return JweRecipientKey(fixed(priv.s), EcPublicKey(curve, fixed(pub.w.affineX), fixed(pub.w.affineY)))
+        }
+    }
+}
+
 /** JWE content-encryption algorithms this SDK supports (AES-GCM, RFC 7518 §5.3). */
 enum class JweEnc(val id: String, val keyBits: Int) {
     A128GCM("A128GCM", 128),
@@ -34,13 +65,19 @@ enum class JweEnc(val id: String, val keyBits: Int) {
  */
 object Jwe {
 
-    /** Encrypts [plaintext] to [recipient] (ECDH-ES direct). Returns compact JWE. */
+    /**
+     * Encrypts [plaintext] to [recipient] (ECDH-ES direct). Returns compact JWE.
+     *
+     * [kid] identifies the recipient key: OpenID4VCI §10 requires the JWE header to echo the `kid` of the
+     * JWK it encrypted to, when that JWK has one.
+     */
     fun encryptEcdhEs(
         plaintext: ByteArray,
         recipient: EcPublicKey,
         enc: JweEnc = JweEnc.A128GCM,
         apu: ByteArray? = null,
         apv: ByteArray? = null,
+        kid: String? = null,
     ): String {
         // ephemeral EC key on the recipient's curve
         val kpg = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec(recipient.curve.jcaName)) }
@@ -59,6 +96,7 @@ object Jwe {
                 add("alg" to JsonValue.Str("ECDH-ES"))
                 add("enc" to JsonValue.Str(enc.id))
                 add("epk" to ephemeralJwk(recipient.curve, ephPub))
+                kid?.let { add("kid" to JsonValue.Str(it)) }
                 apu?.let { add("apu" to JsonValue.Str(Base64Url.encode(it))) }
                 apv?.let { add("apv" to JsonValue.Str(Base64Url.encode(it))) }
             }

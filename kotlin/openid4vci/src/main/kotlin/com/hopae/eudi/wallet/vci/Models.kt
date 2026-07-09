@@ -53,7 +53,46 @@ class CredentialOffer(
     }
 }
 
-/** Credential issuer metadata (OpenID4VCI §11.2). */
+/**
+ * The issuer's `credential_response_encryption` metadata (OpenID4VCI §12.2.4): which JWE algorithms it
+ * can encrypt Credential Responses with, and whether encryption is mandatory.
+ */
+class ResponseEncryptionMetadata(
+    val algValuesSupported: List<String>,
+    val encValuesSupported: List<String>,
+    val encryptionRequired: Boolean,
+) {
+    companion object {
+        fun fromObj(o: JsonValue.Obj) = ResponseEncryptionMetadata(
+            algValuesSupported = o.arrStr("alg_values_supported") ?: emptyList(),
+            encValuesSupported = o.arrStr("enc_values_supported") ?: emptyList(),
+            encryptionRequired = (o["encryption_required"] as? JsonValue.Bool)?.value ?: false,
+        )
+    }
+}
+
+/**
+ * The issuer's `credential_request_encryption` metadata: the public keys a Credential Request may be
+ * encrypted to. §8.2 makes request encryption mandatory whenever a `credential_response_encryption`
+ * object is sent, so that an attacker cannot substitute the wallet's response-encryption key.
+ */
+class RequestEncryptionMetadata(
+    /** Raw JWKs — `alg` (§10 requires it) and `kid` matter, so the parsed EC key alone is not enough. */
+    val jwks: List<JsonValue.Obj>,
+    val encValuesSupported: List<String>,
+    val encryptionRequired: Boolean,
+) {
+    companion object {
+        fun fromObj(o: JsonValue.Obj) = RequestEncryptionMetadata(
+            jwks = ((o["jwks"] as? JsonValue.Obj)?.get("keys") as? JsonValue.Arr)?.items?.filterIsInstance<JsonValue.Obj>()
+                ?: emptyList(),
+            encValuesSupported = o.arrStr("enc_values_supported") ?: emptyList(),
+            encryptionRequired = (o["encryption_required"] as? JsonValue.Bool)?.value ?: false,
+        )
+    }
+}
+
+/** Credential issuer metadata (OpenID4VCI §12.2). */
 class CredentialIssuerMetadata(
     val credentialIssuer: String,
     val credentialEndpoint: String,
@@ -64,6 +103,8 @@ class CredentialIssuerMetadata(
     val credentialConfigurationsSupported: Map<String, CredentialConfiguration>,
     /** Issuer display name (first `display` entry), if advertised. */
     val issuerDisplayName: String? = null,
+    val credentialResponseEncryption: ResponseEncryptionMetadata? = null,
+    val credentialRequestEncryption: RequestEncryptionMetadata? = null,
 ) {
     companion object {
         fun fromObj(o: JsonValue.Obj): CredentialIssuerMetadata {
@@ -84,6 +125,10 @@ class CredentialIssuerMetadata(
                 authorizationServers = o.arrStr("authorization_servers") ?: listOf(issuer),
                 credentialConfigurationsSupported = configs,
                 issuerDisplayName = (issuerDisplay?.get("name") as? JsonValue.Str)?.value,
+                credentialResponseEncryption = (o["credential_response_encryption"] as? JsonValue.Obj)
+                    ?.let { ResponseEncryptionMetadata.fromObj(it) },
+                credentialRequestEncryption = (o["credential_request_encryption"] as? JsonValue.Obj)
+                    ?.let { RequestEncryptionMetadata.fromObj(it) },
             )
         }
     }

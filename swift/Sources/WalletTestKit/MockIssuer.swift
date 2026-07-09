@@ -28,6 +28,35 @@ public actor MockIssuer: HttpTransport {
     public private(set) var seenKeyAttestation: String?
     public private(set) var seenProofCount = 0
 
+    /* ---- OpenID4VCI §8.2/§10 encrypted Credential Requests & Responses ---- */
+
+    /// When set, the metadata advertises request/response encryption. `required` forces the wallet to use it.
+    public var encryptionSupported = false
+    public var encryptionRequired = false
+    public func setEncryption(supported: Bool, required: Bool = false) {
+        encryptionSupported = supported
+        encryptionRequired = required
+    }
+
+    public private(set) var seenEncryptedRequest = false
+    public private(set) var seenRequestKid: String?
+    public private(set) var seenResponseEnc: String?
+
+    public let requestEncKid = "mock-request-enc-key"
+    private let requestEncKey = JweRecipientKey()
+
+    private func requestEncryptionJson() -> String {
+        var entries: [(String, JsonValue)] = []
+        if case let .obj(e) = JwkEc.toJson(requestEncKey.publicKey) { entries = e }
+        entries += [("use", .str("enc")), ("alg", .str("ECDH-ES")), ("kid", .str(requestEncKid))]
+        let jwk = JsonValue.obj(entries).serialize()
+        return #""credential_request_encryption":{"jwks":{"keys":[\#(jwk)]},"enc_values_supported":["A256GCM","A128GCM"],"encryption_required":\#(encryptionRequired)},"#
+    }
+
+    private func responseEncryptionJson() -> String {
+        #""credential_response_encryption":{"alg_values_supported":["ECDH-ES"],"enc_values_supported":["A256GCM","A128GCM"],"encryption_required":\#(encryptionRequired)},"#
+    }
+
     /// When true, /credential defers (returns a transaction_id); the credential comes from /deferred_credential.
     private var deferMode = false
     private var deferredHolderKey: EcPublicKey?
@@ -185,7 +214,22 @@ public actor MockIssuer: HttpTransport {
         precondition(request.headers.contains { $0.0 == "Authorization" && $0.1 == "DPoP \(token)" }, "bad auth")
         _ = try await verifyDpop(request, htm: "POST", htu: "\(issuer)/credential", accessToken: token)
 
-        guard case let .obj(entries)? = try? JsonValue.parse(String(bytes: request.body ?? [], encoding: .utf8) ?? "") else {
+        // §10: an encrypted Credential Request arrives as application/jwt, encrypted to our request key.
+        let contentType = request.headers.first { $0.0.caseInsensitiveCompare("Content-Type") == .orderedSame }?.1
+        let raw = String(bytes: request.body ?? [], encoding: .utf8) ?? ""
+        let plaintext: String
+        if contentType?.hasPrefix("application/jwt") == true {
+            seenEncryptedRequest = true
+            if case let .obj(hdr)? = try? JsonValue.parse(try Base64Url.decodeToString(String(raw.split(separator: ".")[0]))),
+               case let .str(k)? = JsonValue.obj(hdr)["kid"] {
+                seenRequestKid = k
+            }
+            plaintext = String(bytes: try requestEncKey.decrypt(raw), encoding: .utf8) ?? ""
+        } else {
+            plaintext = raw
+        }
+
+        guard case let .obj(entries)? = try? JsonValue.parse(plaintext) else {
             preconditionFailure("bad credential request body")
         }
         let body = JsonValue.obj(entries)
@@ -197,10 +241,13 @@ public actor MockIssuer: HttpTransport {
             seenKeyAttestation = ka
         }
 
+        // The wallet's response-encryption key, when it asked for one (§8.2).
+        let responseEnc = body["credential_response_encryption"]
+
         if deferMode, case let .str(first) = jwts[0] {
             // Defer: verify the proof, remember the holder key, return a transaction_id (no credential yet).
             deferredHolderKey = try await verifyKeyProof(first)
-            return ok(#"{"transaction_id":"tx-1","notification_id":"n-1"}"#)
+            return try respond(#"{"transaction_id":"tx-1","notification_id":"n-1"}"#, responseEnc)
         }
 
         // One credential per proof (batch issuance), each bound to that proof's holder key.
@@ -210,7 +257,22 @@ public actor MockIssuer: HttpTransport {
             let holderKey = try await verifyKeyProof(proofJwt)
             creds.append(#"{"credential":"\#(try await issueSdJwtVc(holderKey: holderKey))"}"#)
         }
-        return ok(#"{"credentials":[\#(creds.joined(separator: ","))],"notification_id":"n-1"}"#)
+        return try respond(#"{"credentials":[\#(creds.joined(separator: ","))],"notification_id":"n-1"}"#, responseEnc)
+    }
+
+    /// Encrypts the Credential Response to the wallet's `jwk` when it requested encryption (§8.3 / §10).
+    private func respond(_ json: String, _ responseEnc: JsonValue?) throws -> HttpResponse {
+        guard let responseEnc, let jwk = responseEnc["jwk"] else { return ok(json) }
+        guard case let .str(alg)? = jwk["alg"], alg == "ECDH-ES" else {
+            preconditionFailure("§10 requires alg on the chosen JWK")
+        }
+        guard let recipient = JwkEc.fromJson(jwk) else { preconditionFailure("bad response-encryption jwk") }
+        guard case let .str(encId)? = responseEnc["enc"], let enc = JweEnc(rawValue: encId) else {
+            preconditionFailure("bad enc")
+        }
+        seenResponseEnc = enc.rawValue
+        let jwe = try Jwe.encryptEcdhEs(plaintext: [UInt8](json.utf8), recipient: recipient, enc: enc)
+        return HttpResponse(status: 200, headers: [("Content-Type", "application/jwt")], body: [UInt8](jwe.utf8))
     }
 
     /// Verifies a DPoP proof; returns its `nonce` claim (nil if absent). Fails on any invalidity.
@@ -271,9 +333,10 @@ public actor MockIssuer: HttpTransport {
     }
 
     private func issuerMetadata() -> String {
+        let encryption = encryptionSupported ? requestEncryptionJson() + responseEncryptionJson() : ""
         return """
         {"credential_issuer":"\(issuer)",
-         "credential_endpoint":"\(issuer)/credential",
+         \(encryption)"credential_endpoint":"\(issuer)/credential",
          "nonce_endpoint":"\(issuer)/nonce",
          "deferred_credential_endpoint":"\(issuer)/deferred_credential",
          "notification_endpoint":"\(issuer)/notification",

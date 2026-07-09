@@ -3,6 +3,9 @@ package com.hopae.eudi.wallet.vci
 import com.hopae.eudi.wallet.cbor.cose.EcPublicKey
 import com.hopae.eudi.wallet.sdjwt.Base64Url
 import com.hopae.eudi.wallet.sdjwt.JsonValue
+import com.hopae.eudi.wallet.sdjwt.Jwe
+import com.hopae.eudi.wallet.sdjwt.JweEnc
+import com.hopae.eudi.wallet.sdjwt.JweRecipientKey
 import com.hopae.eudi.wallet.sdjwt.JwkEc
 import com.hopae.eudi.wallet.sdjwt.Jws
 import com.hopae.eudi.wallet.sdjwt.SdJwtIssuer
@@ -29,6 +32,33 @@ class MockIssuer(
 
     private val issuer = "https://issuer.example"
     private val preAuthCode = "PRE-AUTH-123"
+
+    /* ---- OpenID4VCI §8.2/§10 encrypted Credential Requests & Responses ---- */
+
+    /** When set, the metadata advertises request/response encryption. `required` forces the wallet to use it. */
+    var encryptionSupported: Boolean = false
+    var encryptionRequired: Boolean = false
+
+    var seenEncryptedRequest = false; private set
+    var seenRequestKid: String? = null; private set
+    var seenResponseEnc: String? = null; private set
+
+    val requestEncKid = "mock-request-enc-key"
+    private val requestEncKey = JweRecipientKey.generate()
+
+    private fun requestEncryptionJson(): String {
+        val jwk = JsonValue.Obj(
+            JwkEc.toJson(requestEncKey.publicKey).entries + listOf(
+                "use" to JsonValue.Str("enc"),
+                "alg" to JsonValue.Str("ECDH-ES"),
+                "kid" to JsonValue.Str(requestEncKid),
+            )
+        ).serialize()
+        return """"credential_request_encryption":{"jwks":{"keys":[$jwk]},"enc_values_supported":["A256GCM","A128GCM"],"encryption_required":$encryptionRequired},"""
+    }
+
+    private fun responseEncryptionJson(): String =
+        """"credential_response_encryption":{"alg_values_supported":["ECDH-ES"],"enc_values_supported":["A256GCM","A128GCM"],"encryption_required":$encryptionRequired},"""
     private var expectedNonce: String? = null
     private var cNonce: String? = null
     private var accessToken: String? = null
@@ -197,20 +227,47 @@ class MockIssuer(
         require(request.headers.any { it.first == "Authorization" && it.second == "DPoP $token" }) { "bad auth" }
         verifyDpop(request, "POST", "$issuer/credential", accessToken = token) // asserts ath binding internally
 
-        val body = JsonValue.parse(request.body!!.decodeToString()) as JsonValue.Obj
+        // §10: an encrypted Credential Request arrives as application/jwt, encrypted to our request key.
+        val contentType = request.headers.firstOrNull { it.first.equals("Content-Type", true) }?.second
+        val raw = request.body!!.decodeToString()
+        val plaintext = if (contentType?.startsWith("application/jwt") == true) {
+            seenEncryptedRequest = true
+            seenRequestKid = (JsonValue.parse(Base64Url.decodeToString(raw.substringBefore('.'))) as JsonValue.Obj)
+                .let { (it["kid"] as? JsonValue.Str)?.value }
+            requestEncKey.decrypt(raw).decodeToString()
+        } else {
+            raw
+        }
+
+        val body = JsonValue.parse(plaintext) as JsonValue.Obj
         val proofs = ((body["proofs"] as JsonValue.Obj)["jwt"] as JsonValue.Arr).items.map { (it as JsonValue.Str).value }
         seenProofCount = proofs.size
         seenKeyAttestation = (Jws.parse(proofs.first()).header["key_attestation"] as? JsonValue.Str)?.value
 
+        // The wallet's response-encryption key, when it asked for one (§8.2).
+        val responseEnc = body["credential_response_encryption"] as? JsonValue.Obj
+
         if (deferMode) {
             // Defer: verify the proof, remember the holder key, return a transaction_id (no credential yet).
             deferredHolderKey = verifyKeyProof(proofs.first())
-            return ok("""{"transaction_id":"tx-1","notification_id":"n-1"}""")
+            return respond("""{"transaction_id":"tx-1","notification_id":"n-1"}""", responseEnc)
         }
 
         // One credential per proof (batch issuance), each bound to that proof's holder key.
         val credentials = proofs.map { proof -> """{"credential":"${issueSdJwtVc(verifyKeyProof(proof))}"}""" }.joinToString(",")
-        return ok("""{"credentials":[$credentials],"notification_id":"n-1"}""")
+        return respond("""{"credentials":[$credentials],"notification_id":"n-1"}""", responseEnc)
+    }
+
+    /** Encrypts the Credential Response to the wallet's `jwk` when it requested encryption (§8.3 / §10). */
+    private fun respond(json: String, responseEnc: JsonValue.Obj?): HttpResponse {
+        if (responseEnc == null) return ok(json)
+        val jwk = responseEnc["jwk"] as? JsonValue.Obj ?: error("credential_response_encryption has no jwk")
+        require((jwk["alg"] as? JsonValue.Str)?.value == "ECDH-ES") { "§10 requires alg on the chosen JWK" }
+        val recipient = JwkEc.fromJson(jwk) ?: error("bad response-encryption jwk")
+        val enc = JweEnc.from((responseEnc["enc"] as? JsonValue.Str)?.value ?: "") ?: error("bad enc")
+        seenResponseEnc = enc.id
+        val jwe = Jwe.encryptEcdhEs(json.encodeToByteArray(), recipient, enc)
+        return HttpResponse(200, listOf("Content-Type" to "application/jwt"), jwe.encodeToByteArray())
     }
 
     /** Verifies a DPoP proof; returns its `nonce` claim (null if absent). Throws on any invalidity. */
@@ -266,6 +323,7 @@ class MockIssuer(
 
     private fun issuerMetadata(): String = """
         {"credential_issuer":"$issuer",
+         ${if (encryptionSupported) requestEncryptionJson() + responseEncryptionJson() else ""}
          "credential_endpoint":"$issuer/credential",
          "nonce_endpoint":"$issuer/nonce",
          "deferred_credential_endpoint":"$issuer/deferred_credential",

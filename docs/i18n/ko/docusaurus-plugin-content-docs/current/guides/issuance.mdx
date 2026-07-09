@@ -324,3 +324,45 @@ IssuanceRequest.fromOffer(
 
 `batchSize`는 한 번의 배치로 요청하는 인스턴스의 개수입니다. `OneTime`에서는 각 인스턴스가 한 번씩
 소비되며, 잔량이 부족해지면 `reissue(id)`로 보충합니다.
+
+## 암호화된 Credential 요청/응답
+
+OpenID4VCI §8.2/§10은 지갑이 제공한 키로 issuer가 Credential 응답을 암호화하게 합니다. SDK가 issuer
+메타데이터를 보고 협상합니다:
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+Openid4VciClient(http, rng, clock, credentialEncryption = CredentialEncryption.Preferred)
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+Openid4VciClient(http: http, rng: rng, clock: clock, credentialEncryption: .preferred)
+```
+
+</TabItem>
+</Tabs>
+
+| 정책 | 동작 |
+| --- | --- |
+| `WhenRequired` (기본) | issuer가 `encryption_required`를 설정한 경우에만 암호화 — 그 외엔 평문 |
+| `Preferred` | issuer가 `credential_response_encryption`을 광고하면 암호화 |
+| `Required` | 항상 암호화; 지원하지 않는 issuer면 실패 |
+
+:::note 둘 다이거나, 둘 다 아니거나
+> Credential Request encryption MUST be used if the `credential_response_encryption` parameter is
+> included, to prevent it being substituted by an attacker.
+
+그렇지 않으면 공격자가 평문 요청 안의 지갑 `jwk`를 바꿔치기해 크리덴셜을 자기 키로 암호화시킬 수 있습니다.
+그래서 암호화가 켜지면 SDK는 Credential 요청도 `credential_request_encryption.jwks`의 키로 암호화한 compact
+JWE(`application/jwt`)로 보내고, §10이 요구하는 대로 그 키의 `kid`를 JWE 헤더에 그대로 실습니다. 응답 암호화는
+광고하면서 요청 암호화 키가 없는 issuer는 비준수로 거부합니다.
+:::
+
+지갑의 응답 암호화 키는 요청마다 새로 만드는 in-process P-256 키(`JweRecipientKey`)입니다 — 크리덴셜 키가
+아니라 수명이 짧은 전송용 재료라 `SecureArea`를 거치지 않습니다. ECDH-ES + `A128GCM`/`A192GCM`/`A256GCM`을
+지원하며, 상호 지원되는 가장 강한 `enc`가 선택됩니다. 암호화 요청에 평문으로 답하면 폴백이 아니라 오류입니다(§10).

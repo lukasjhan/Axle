@@ -327,3 +327,47 @@ IssuanceRequest.fromOffer(
 
 `batchSize` is the number of instances requested in a single batch. With `OneTime`, each instance is
 spent once; when they run low, `reissue(id)` tops them up.
+
+## Encrypted Credential Requests and Responses
+
+OpenID4VCI §8.2/§10 lets the issuer encrypt the Credential Response to a key the wallet supplies. The
+SDK negotiates it from the issuer's metadata:
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+Openid4VciClient(http, rng, clock, credentialEncryption = CredentialEncryption.Preferred)
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+Openid4VciClient(http: http, rng: rng, clock: clock, credentialEncryption: .preferred)
+```
+
+</TabItem>
+</Tabs>
+
+| Policy | Behaviour |
+| --- | --- |
+| `WhenRequired` (default) | Encrypt only if the issuer sets `encryption_required` — plaintext otherwise |
+| `Preferred` | Encrypt whenever the issuer advertises `credential_response_encryption` |
+| `Required` | Always encrypt; fail against an issuer that cannot |
+
+:::note Both directions, or neither
+> Credential Request encryption MUST be used if the `credential_response_encryption` parameter is
+> included, to prevent it being substituted by an attacker.
+
+Otherwise an attacker could swap the wallet's `jwk` in the plaintext request and have the credential
+encrypted to their own key. So when encryption is on, the SDK also sends the Credential Request as a
+compact JWE (`application/jwt`) encrypted to a key from `credential_request_encryption.jwks`, echoing
+that key's `kid` in the JWE header as §10 requires. An issuer that advertises response encryption but
+no request-encryption key is rejected as non-conformant.
+:::
+
+The wallet's response-encryption key is a fresh in-process P-256 key per request (`JweRecipientKey`) —
+short-lived transport material, not credential key material, so it does not go through `SecureArea`.
+ECDH-ES with `A128GCM`/`A192GCM`/`A256GCM` is supported; the strongest mutually supported `enc` wins.
+A plaintext answer to an encrypted request is an error, not a fallback (§10).

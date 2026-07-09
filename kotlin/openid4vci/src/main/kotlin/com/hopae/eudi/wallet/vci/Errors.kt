@@ -18,6 +18,9 @@ sealed class VciException(message: String, cause: Throwable? = null) : Exception
 
     class ProtocolError(message: String) : VciException("protocol error: $message")
 
+    /** The issuer needs an algorithm or feature this SDK does not implement. */
+    class Unsupported(message: String) : VciException("unsupported: $message")
+
     class TxCodeRequired(val length: Int?, val inputMode: String?) :
         VciException("transaction code required (length=$length, mode=$inputMode)")
 

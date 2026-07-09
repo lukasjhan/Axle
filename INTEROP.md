@@ -171,6 +171,28 @@ encrypted DeviceResponse (HTTP 200)**, i.e. our DeviceSigned verifies over the h
 reconstructs. Note the two PID forms use different field names (mdoc `birth_date` +
 `nationality[…]`, SD-JWT `birthdate` + `nationalities[…]`); `DEFAULT_DATA` fills a superset.
 
+## Encrypted Credential Requests and Responses (OpenID4VCI §8.2 / §10)
+
+`issuer.eudiw.dev` advertises both `credential_request_encryption` (an `ECDH-ES` P-256 JWK with a `kid`)
+and `credential_response_encryption` (`ECDH-ES` + `A*GCM`, `encryption_required: false`). §8.2 makes the
+two inseparable — *"Credential Request encryption MUST be used if the `credential_response_encryption`
+parameter is included, to prevent it being substituted by an attacker"* — so the SDK encrypts both
+directions or neither.
+
+```sh
+cd tools/headless-interop && node drive.js preauth "$TMPDIR/eudi-preauth-offer.txt" "$TMPDIR/eudi-preauth-txcode.txt"
+cd ../../kotlin && EUDI_LIVE=preauth EUDI_ENCRYPT=1 \
+  EUDI_OFFER="$(cat "$TMPDIR/eudi-preauth-offer.txt")" EUDI_TXCODE="$(cat "$TMPDIR/eudi-preauth-txcode.txt")" \
+  ./gradlew :openid4vci:test --tests '*LiveIssuanceTest.preAuthIssue'
+# pre-auth offer: config=eu.europa.ec.eudi.pid_vc_sd_jwt txCodeRequired=true encryption=Preferred
+# credentials received: 1
+```
+
+The Credential Request went out as a compact JWE (`application/jwt`, `kid` echoed per §10), the issuer
+answered `application/jwt`, and the decrypted PID then verified through the full chain to the EUDI IACA
+(`LiveTrustE2eTest.verifyRealPidWithChain`). A plaintext answer to an encrypted request is rejected
+rather than accepted as a fallback, per §10.
+
 ## Signed Credential Issuer Metadata (OpenID4VCI §12.2.2 / §12.2.3)
 
 `signed_metadata` — the JSON member our implementation originally looked for — **does not exist in
