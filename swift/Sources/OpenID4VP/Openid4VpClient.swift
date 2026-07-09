@@ -37,13 +37,17 @@ public struct Openid4VpClient {
     private let http: any HttpTransport
     private let clock: () -> Int64
     private let resolver: AuthorizationRequestResolver
+    /// The `transaction_data` types (§8.4) this wallet recognizes. When non-nil, a request carrying any other
+    /// type is rejected with `invalid_transaction_data`; nil = the host vets types (structure is still validated).
+    private let supportedTransactionDataTypes: Set<String>?
 
     /// `rng` enables the `wallet_nonce` replay mitigation on `request_uri_method=post` (§5.10); nil = don't send one.
     public init(http: any HttpTransport, clock: @escaping () -> Int64, trust: (any RequestTrustVerifier)? = nil,
-                rng: (any Rng)? = nil) {
+                rng: (any Rng)? = nil, supportedTransactionDataTypes: Set<String>? = nil) {
         self.http = http
         self.clock = clock
         self.resolver = AuthorizationRequestResolver(http: http, trust: trust, rng: rng)
+        self.supportedTransactionDataTypes = supportedTransactionDataTypes
     }
 
     public func resolveRequest(_ requestUri: String) async throws -> ResolvedRequest {
@@ -137,6 +141,8 @@ public struct Openid4VpClient {
         let encryptionKey = request.responseMode.hasSuffix(".jwt") ? verifierEncryptionKey(request) : nil
         let jwkThumbprint = encryptionKey.map { ecJwkThumbprint($0.publicKey) }
         let deviceAuthAlgValues = deviceAuthAlgValues(request)
+        // §8.4: validate transaction_data and bind each entry to exactly one presented credential (§5.1).
+        let txByQuery = try assignTransactionData(request, matches, selection, heldById)
 
         var vpEntries: [(String, JsonValue)] = []
         for (queryId, credentialIds) in selection.chosen {
@@ -154,10 +160,12 @@ public struct Openid4VpClient {
                 guard let cred = heldById[credentialId] else {
                     throw VpError.selectionIncomplete("unknown credential \(credentialId)")
                 }
+                // A transaction_data entry binds to exactly one credential (§5.1): the query's first presented one.
+                let txData = credentialId == credentialIds.first ? txByQuery[queryId] : nil
                 presentations.append(.str(try await cred.present(PresentationContext(
                     disclosedPaths: candidate.disclosedPaths,
                     clientId: request.clientId, nonce: request.nonce, responseUri: request.responseUri,
-                    issuedAt: iat, transactionData: request.transactionData, verifierJwkThumbprint: jwkThumbprint, origin: request.origin,
+                    issuedAt: iat, transactionData: txData, verifierJwkThumbprint: jwkThumbprint, origin: request.origin,
                     verifierEncryptionKey: encryptionKey?.publicKey, deviceAuthAlgValues: deviceAuthAlgValues,
                     requireHolderBinding: candidate.query.requireCryptographicHolderBinding
                 ))))
@@ -165,6 +173,47 @@ public struct Openid4VpClient {
             vpEntries.append((queryId, .arr(presentations)))
         }
         return .obj(vpEntries)
+    }
+
+    /// Validates the request's `transaction_data` (§8.4) and maps each entry to the one presented credential that
+    /// will carry it (§5.1: "use only one of the referenced Credentials"). Throws `VpError.invalidTransactionData`
+    /// for a malformed entry, an unsupported type, a `credential_ids` reference to an unknown query, a referenced
+    /// query with `require_cryptographic_holder_binding=false` (B.3.3), or a hash-algorithm set without `sha-256`.
+    /// mdoc transaction data (B.2.1) is not yet carried, so an entry that can only bind to a presented mdoc is
+    /// rejected. Returns an empty map when there is none.
+    private func assignTransactionData(
+        _ request: ResolvedRequest, _ matches: DcqlMatchResult,
+        _ selection: PresentationSelection, _ heldById: [String: any PresentableCredential]
+    ) throws -> [String: [String]] {
+        guard let raws = request.transactionData, !raws.isEmpty else { return [:] }
+        let queryIds = Set(matches.candidatesByQuery.keys)
+        var byQuery: [String: [String]] = [:]
+        for raw in raws {
+            let td = try TransactionData.parse(raw)
+            if let supported = supportedTransactionDataTypes, !supported.contains(td.type) {
+                throw VpError.invalidTransactionData("unsupported type '\(td.type)'")
+            }
+            if let algs = td.hashAlgorithms, !algs.contains("sha-256") {
+                throw VpError.invalidTransactionData("no supported hash algorithm in \(algs) (need sha-256)")
+            }
+            for cid in td.credentialIds {
+                if !queryIds.contains(cid) { throw VpError.invalidTransactionData("references unknown credential query '\(cid)'") }
+                let requiresBinding = matches.candidatesByQuery[cid]?.first?.query.requireCryptographicHolderBinding ?? true
+                if !requiresBinding { throw VpError.invalidTransactionData("query '\(cid)' set require_cryptographic_holder_binding=false") }
+            }
+            // Bind to a presented SD-JWT VC among the referenced credentials (the only format that carries it here).
+            let target = td.credentialIds.first { q in
+                if let cred = selection.chosen[q]?.first { return heldById[cred]?.format == "dc+sd-jwt" }
+                return false
+            }
+            if let target {
+                byQuery[target, default: []].append(raw)
+            } else if td.credentialIds.contains(where: { selection.chosen[$0] != nil }) {
+                throw VpError.invalidTransactionData("only bindable to a presented mdoc credential (B.2.1 not supported)")
+            }
+            // else: no referenced credential is being presented — the transaction is simply not authorized here.
+        }
+        return byQuery
     }
 
     private func submitDirectPost(_ request: ResolvedRequest, _ vpToken: JsonValue) async throws -> SubmitResult {

@@ -9,6 +9,8 @@ sealed class VpException(message: String, cause: Throwable? = null) : Exception(
     class SelectionIncomplete(message: String) : VpException("selection incomplete: $message")
     class ResponseFailed(message: String, cause: Throwable? = null) : VpException("response failed: $message", cause)
     class Unsupported(message: String) : VpException("unsupported: $message")
+    /** §8.4: a `transaction_data` entry is an unknown/unsupported type, malformed, or references an invalid credential. */
+    class InvalidTransactionData(message: String) : VpException("invalid transaction_data: $message")
 }
 
 /**
@@ -55,4 +57,5 @@ val VpException.errorCode: VpErrorCode
         is VpException.VerifierNotTrusted -> VpErrorCode.ACCESS_DENIED
         is VpException.QueryNotSatisfiable -> VpErrorCode.ACCESS_DENIED
         is VpException.SelectionIncomplete -> VpErrorCode.ACCESS_DENIED
+        is VpException.InvalidTransactionData -> VpErrorCode.INVALID_TRANSACTION_DATA
     }

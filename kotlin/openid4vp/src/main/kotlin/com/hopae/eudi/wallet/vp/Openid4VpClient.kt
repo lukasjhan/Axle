@@ -53,6 +53,11 @@ class Openid4VpClient(
     trust: RequestTrustVerifier? = null,
     /** Enables the `wallet_nonce` replay mitigation on `request_uri_method=post` (§5.10); null = don't send one. */
     rng: Rng? = null,
+    /**
+     * The `transaction_data` types (§8.4) this wallet recognizes. When non-null, a request carrying any other
+     * type is rejected with `invalid_transaction_data`; null = the host vets types (structure is still validated).
+     */
+    private val supportedTransactionDataTypes: Set<String>? = null,
 ) {
     private val resolver = AuthorizationRequestResolver(http, trust, rng)
 
@@ -151,6 +156,8 @@ class Openid4VpClient(
         val encryptionKey = if (request.responseMode.endsWith(".jwt")) verifierEncryptionKey(request) else null
         val jwkThumbprint = encryptionKey?.let { ecJwkThumbprint(it.publicKey) }
         val deviceAuthAlgValues = deviceAuthAlgValues(request)
+        // §8.4: validate transaction_data and bind each entry to exactly one presented credential (§5.1).
+        val txByQuery = assignTransactionData(request, matches, selection, heldById)
 
         val vpEntries = mutableListOf<Pair<String, JsonValue>>()
         for ((queryId, credentialIds) in selection.chosen) {
@@ -164,6 +171,8 @@ class Openid4VpClient(
                 val candidate = queryCandidates.firstOrNull { it.credential.credentialId == credentialId }
                     ?: throw VpException.SelectionIncomplete("no candidate $credentialId for query $queryId")
                 val cred = heldById[credentialId] ?: throw VpException.SelectionIncomplete("unknown credential $credentialId")
+                // A transaction_data entry binds to exactly one credential (§5.1): the query's first presented one.
+                val txData = if (credentialId == credentialIds.first()) txByQuery[queryId] else null
                 JsonValue.Str(
                     cred.present(
                         PresentationContext(
@@ -172,7 +181,7 @@ class Openid4VpClient(
                             nonce = request.nonce,
                             responseUri = request.responseUri,
                             issuedAt = iat,
-                            transactionData = request.transactionData,
+                            transactionData = txData,
                             verifierJwkThumbprint = jwkThumbprint,
                             origin = request.origin,
                             verifierEncryptionKey = encryptionKey?.publicKey,
@@ -185,6 +194,50 @@ class Openid4VpClient(
             vpEntries.add(queryId to JsonValue.Arr(presentations))
         }
         return JsonValue.Obj(vpEntries)
+    }
+
+    /**
+     * Validates the request's `transaction_data` (§8.4) and maps each entry to the one presented credential
+     * that will carry it (§5.1: "use only one of the referenced Credentials"). Throws
+     * [VpException.InvalidTransactionData] for a malformed entry, an unsupported type, a `credential_ids`
+     * reference to an unknown query, a referenced query with `require_cryptographic_holder_binding=false`
+     * (B.3.3), or a hash-algorithm set without `sha-256`. mdoc transaction data (B.2.1) is not yet carried, so
+     * an entry that can only bind to a presented mdoc is rejected. Returns an empty map when there is none.
+     */
+    private fun assignTransactionData(
+        request: ResolvedRequest,
+        matches: DcqlMatchResult,
+        selection: PresentationSelection,
+        heldById: Map<String, PresentableCredential>,
+    ): Map<String, List<String>> {
+        val raws = request.transactionData?.takeIf { it.isNotEmpty() } ?: return emptyMap()
+        val queryIds = matches.candidatesByQuery.keys
+        val byQuery = mutableMapOf<String, MutableList<String>>()
+        for (raw in raws) {
+            val td = TransactionData.parse(raw)
+            supportedTransactionDataTypes?.let {
+                if (td.type !in it) throw VpException.InvalidTransactionData("unsupported type '${td.type}'")
+            }
+            td.hashAlgorithms?.let {
+                if ("sha-256" !in it) throw VpException.InvalidTransactionData("no supported hash algorithm in $it (need sha-256)")
+            }
+            for (cid in td.credentialIds) {
+                if (cid !in queryIds) throw VpException.InvalidTransactionData("references unknown credential query '$cid'")
+                val requiresBinding = matches.candidatesByQuery[cid]?.firstOrNull()?.query?.requireCryptographicHolderBinding ?: true
+                if (!requiresBinding) throw VpException.InvalidTransactionData("query '$cid' set require_cryptographic_holder_binding=false")
+            }
+            // Bind to a presented SD-JWT VC among the referenced credentials (the only format that carries it here).
+            val target = td.credentialIds.firstOrNull { q ->
+                selection.chosen[q]?.firstOrNull()?.let { heldById[it]?.format == "dc+sd-jwt" } == true
+            }
+            when {
+                target != null -> byQuery.getOrPut(target) { mutableListOf() }.add(raw)
+                td.credentialIds.any { it in selection.chosen } ->
+                    throw VpException.InvalidTransactionData("only bindable to a presented mdoc credential (B.2.1 not supported)")
+                // else: no referenced credential is being presented — the transaction is simply not authorized here.
+            }
+        }
+        return byQuery
     }
 
     private suspend fun submitDirectPost(request: ResolvedRequest, vpToken: JsonValue.Obj): SubmitResult {

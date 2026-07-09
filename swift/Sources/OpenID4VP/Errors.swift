@@ -8,6 +8,8 @@ public enum VpError: Error, CustomStringConvertible {
     case selectionIncomplete(String)
     case responseFailed(String)
     case unsupported(String)
+    /// §8.4: a `transaction_data` entry is an unknown/unsupported type, malformed, or references an invalid credential.
+    case invalidTransactionData(String)
 
     public var description: String {
         switch self {
@@ -17,6 +19,7 @@ public enum VpError: Error, CustomStringConvertible {
         case let .selectionIncomplete(m): return "selection incomplete: \(m)"
         case let .responseFailed(m): return "response failed: \(m)"
         case let .unsupported(m): return "unsupported: \(m)"
+        case let .invalidTransactionData(m): return "invalid transaction_data: \(m)"
         }
     }
 
@@ -27,6 +30,7 @@ public enum VpError: Error, CustomStringConvertible {
         switch self {
         case .invalidRequest, .unsupported, .responseFailed: return .invalidRequest
         case .verifierNotTrusted, .queryNotSatisfiable, .selectionIncomplete: return .accessDenied
+        case .invalidTransactionData: return .invalidTransactionData
         }
     }
 }
