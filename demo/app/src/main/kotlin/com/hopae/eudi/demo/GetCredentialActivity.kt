@@ -75,6 +75,7 @@ class GetCredentialActivity : ComponentActivity() {
             failException(resultData, "no openid4vp request"); finish(); return
         }
         LogStore.log("DC API request · origin=$origin")
+        logRequestShape(openid4vp)
 
         lifecycleScope.launch {
             runCatching {
@@ -134,10 +135,15 @@ class GetCredentialActivity : ComponentActivity() {
     private fun extractOpenId4Vp(requestJson: String): String? {
         val root = runCatching { JSONObject(requestJson) }.getOrNull() ?: return null
         val requests = root.optJSONArray("requests") ?: return requestJson
+        val offered = (0 until requests.length()).mapNotNull { requests.optJSONObject(it)?.optString("protocol") }
+        LogStore.log("DC API protocols offered: $offered")
         for (proto in listOf("openid4vp-v1-unsigned", "openid4vp-v1-signed", "openid4vp")) {
             for (i in 0 until requests.length()) {
                 val req = requests.optJSONObject(i) ?: continue
-                if (req.optString("protocol") == proto) return req.get("data").toString()
+                if (req.optString("protocol") == proto) {
+                    LogStore.log("DC API using protocol: $proto")
+                    return req.get("data").toString()
+                }
             }
         }
         return null
@@ -159,6 +165,29 @@ class GetCredentialActivity : ComponentActivity() {
     private fun fail(resultData: Intent, message: String) {
         failException(resultData, message)
         finish()
+    }
+
+    /**
+     * Debug aid: signed or unsigned, and — since the SDK now requires it (OpenID4VP A.2) — whether a
+     * signed request actually carries `expected_origins`. Reads the JWS payload without verifying it.
+     */
+    private fun logRequestShape(requestObject: String) {
+        val trimmed = requestObject.trim()
+        val jws = runCatching { JSONObject(trimmed).optString("request").ifEmpty { null } }.getOrNull()
+            ?: trimmed.takeUnless { it.startsWith("{") }
+        if (jws == null) {
+            LogStore.log("DC API request: unsigned")
+            return
+        }
+        val claims = runCatching {
+            JSONObject(String(Base64.decode(jws.split(".")[1], Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)))
+        }.getOrNull()
+        if (claims == null) {
+            LogStore.log("DC API request: signed (payload unreadable)")
+            return
+        }
+        val expected = claims.optJSONArray("expected_origins")?.toString() ?: "<ABSENT>"
+        LogStore.log("DC API request: signed · client_id=${claims.optString("client_id").ifEmpty { "<absent>" }} · expected_origins=$expected")
     }
 
     private fun failException(resultData: Intent, message: String?) {
