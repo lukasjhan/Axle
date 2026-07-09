@@ -39,7 +39,7 @@ Legend: ✅ implemented · 🟡 partial · ⬜ not yet.
 |---|---|---|
 | OpenID4VP | 1.0 Final (2025-07-09), DCQL | ✅ `openid4vp` — DCQL engine (null wildcard, values, claim_sets, credential_sets), JAR request resolution, `vp_token` (SD-JWT+KB-JWT and mdoc `DeviceResponse`), `direct_post` + `direct_post.jwt` (JWE), reader trust for signed requests, DC API `expected_origins` replay check (Appendix A.2), JAR hardening (`typ`, request-object `client_id` equality, `wallet_nonce`, case-sensitive `request_uri_method`), §8.5 Authorization Error Responses (`VpErrorCode` taxonomy + `reportError`; decline reports `access_denied` and follows the verifier's `redirect_uri`). Gaps: DCQL `multiple`/`trusted_authorities`/`require_cryptographic_holder_binding`, `transaction_data` partial — see audit below |
 | ISO/IEC 18013-5 device retrieval | :2021 §9 | 🟡 `proximity` / `Proximity` — QR **and NFC static handover** engagement, ECDH session keys (HKDF, salt = SHA-256 of the tag-24 SessionTranscript), `SessionEstablishment`/`SessionData` framing, encrypted exchange, reader authentication; **holder and reader** sides (`wallet.reader`). Device auth: `deviceSignature` **and `deviceMac`** end-to-end (holder derives the EMacKey via the `SecureArea` key-agreement port; opt in with `PresentationConfig.proximityDeviceAuth`). BLE (both modes) + NFC APDU transports are **Android demo host adapters only — no iOS transport**. **Live device-to-device interop with Multipaz** (BLE both modes + NFC, see `INTEROP.md`) |
-| ISO/IEC 18013-7 / DC API handover | :2025 Annex C | ✅ origin-bound mdoc `SessionTranscript` + **HPKE-sealed `org-iso-mdoc` response** for the Digital Credentials API. Annex B implemented per OpenID4VP 1.0 Final handover (not the TS-literal `OID4VPHandover`); Annex A (website REST retrieval) not implemented — see audit below |
+| ISO/IEC 18013-7 / DC API handover | :2025 Annex C | ✅ origin-bound mdoc `SessionTranscript` + **HPKE-sealed `org-iso-mdoc` response** for the Digital Credentials API. Annex B follows OpenID4VP 1.0 Final's handover, which superseded the TS-literal `OID4VPHandover`; Annex A (website REST retrieval) is a [deliberate non-goal](#deliberate-non-goals) |
 | W3C Digital Credentials API | browser-mediated (dc_api / dc_api.jwt) | ✅ `wallet.presentation.startDcApi` — no HTTP, response object returned to the platform |
 
 ## Status & audit
@@ -102,7 +102,7 @@ Only what is 🟡/⬜ is listed; everything else in the tables above verified cl
 
 | Gap | Spec ref | Detail |
 |---|---|---|
-| Single-purpose mdoc auth key | §9.1.3.4 | 🟡 "A single mdoc authentication key shall not be used to produce both MACs and signatures during its lifetime." Both mechanisms are implemented and selected by `PresentationConfig.proximityDeviceAuth`, but a reused (`KeyUse.Rotate`) DeviceKey can MAC over proximity while signing over DC API / OpenID4VP, since those paths have no EReaderKey. `KeyUse.OneTime` batch keys satisfy the clause structurally; pinning the mechanism to the key is the general fix. **Deliberate: accepted as a conformance gap, not a security one** |
+| Single-purpose mdoc auth key | §9.1.3.4 | 🟡 "A single mdoc authentication key shall not be used to produce both MACs and signatures during its lifetime." Both mechanisms are implemented and selected by `PresentationConfig.proximityDeviceAuth`, but a reused (`KeyUse.Rotate`) DeviceKey can MAC over proximity while signing over DC API / OpenID4VP, since those paths have no EReaderKey. `KeyUse.OneTime` batch keys satisfy the clause structurally; pinning the mechanism to the key is the general fix. **Deliberate — see [Deliberate non-goals](#deliberate-non-goals)** |
 | NFC negotiated handover | §8.2.2.1/§9.1.5.1 | ⬜ static handover only (`[Hs, null]` hardcoded); no ReaderEngagement / Handover Request |
 | Session termination | §9.1.1.4 | ⬜ status 20 never sent, `status` ignored on decode, session keys not destroyed; BLE `End` only in the demo client |
 | BLE / NFC transports | §8.3.3.1 | 🟡 core SDK exposes a transport port only; GATT (both modes, MTU chunking) + NFC APDU live in the **Android demo**; **no iOS/Swift transport**; BLE Ident characteristic absent |
@@ -113,18 +113,27 @@ Only what is 🟡/⬜ is listed; everything else in the tables above verified cl
 | Wi-Fi Aware · server retrieval (WebAPI/OIDC) | §8.3.3.1.3/§8.3.3.2 (optional) | ⬜ |
 | Shared mdoc golden vectors | — | ⬜ `vectors/` covers CBOR/COSE only; cross-language mdoc equivalence rests on round-trip tests + live interop |
 
-### ISO/IEC TS 18013-7:2025 — coverage: Annex C complete, Annex B via OID4VP Final, Annex A absent
+### ISO/IEC TS 18013-7:2025 — coverage: Annex C complete, Annex B aligned to OID4VP 1.0 Final
 
 | Gap | Spec ref | Detail |
 |---|---|---|
-| Annex B handover form | B.4.4 | 🟡 implements OpenID4VP 1.0 Final's `OpenID4VPHandover`/`OpenID4VPDCAPIHandover` (jwk-thumbprint form), not the TS-literal `OID4VPHandover` (clientIdHash/responseUriHash + `mdocGeneratedNonce`) — deliberate alignment with the published OID4VP Final, but not letter-of-TS |
-| `mdocGeneratedNonce` + `apu`/`apv` JWE headers | B.4.3.3/B.5.3 | ⬜ response JWE sent without apu/apv (the `Jwe` primitive supports them) |
 | mdoc MAC auth in OID4VP | B.4.5 | ⬜ the OID4VP mdoc path signs only (proximity does both) |
+| `apv` + `kid` JWE headers | B.5.3 | ⬜ `apv` (the request `nonce`) and `kid` (the key encrypted to) are not set on the response JWE. Independent of B.4.4; the same `kid` OpenID4VP §8.3 wants, and the `Jwe` primitive already takes one |
 | Annex B curve set | B.5.2 Table B.8 | 🟡 P-256/384/521 only; no Brainpool / Curve25519/448 (P-256 satisfies the mdoc-side minimum) |
-| **Annex A — all of it** | Annex A | ⬜ website REST retrieval (`RestApiOptions`, HTTP POST `application/cbor`), `OriginInfo`/domain origin, `EngagementToApp`, `MacKeys` (v1.1) — none implemented |
 | Verifier-side HPKE decryption | C.4 Table C.3 | ⬜ `Hpke` seals only; no `open` (wallet-side complete, reader/verifier side cannot unseal) |
 | Origin abort | C.5 | 🟡 origin is a required parameter folded into the transcript, but no explicit empty-origin abort |
 | Server retrieval | §6.4 | n/a — the TS adds no requirements beyond 18013-5 |
+
+## Deliberate non-goals
+
+Not gaps to be closed later — decisions. Recorded so the matrix cannot be read as a to-do list.
+
+| Item | Spec ref | Why not |
+|---|---|---|
+| TS-literal `OID4VPHandover` | 18013-7 B.4.4 | The TS predates OpenID4VP 1.0 Final, which replaced the `clientIdHash`/`responseUriHash` + `mdocGeneratedNonce` handover with `OpenID4VPHandover`/`OpenID4VPDCAPIHandover` (jwk-thumbprint form). We implement the Final form, which is what conformant verifiers send — `verifier.eudiw.dev` and `digital-credentials.dev` both interoperate live. Implementing the superseded form would break against them |
+| `mdocGeneratedNonce` + the `apu` JWE header | 18013-7 B.4.3.3 / B.5.3 | `apu` is defined as the `mdocGeneratedNonce` *of the B.4.4 SessionTranscript*. With that handover gone there is no such nonce, so `apu` has nothing to carry. (`apv` and `kid` survive — see above) |
+| **18013-7 Annex A** — website REST retrieval | Annex A | `RestApiOptions`, HTTP POST `application/cbor`, `OriginInfo`, `EngagementToApp`, `MacKeys`. Out of product scope: the SDK targets proximity (18013-5) and the browser-mediated DC API (Annex C), not a website REST channel |
+| Single-purpose mdoc auth key enforcement | 18013-5 §9.1.3.4 | Both mechanisms shipped; see the 18013-5 table. Accepted as a conformance gap, not a security one |
 
 ## Not yet / roadmap
 
@@ -134,7 +143,7 @@ Only what is 🟡/⬜ is listed; everything else in the tables above verified cl
 | OpenID4VP hardening: DCQL `multiple`/`trusted_authorities`, `require_cryptographic_holder_binding` | ⬜ |
 | iOS proximity transport (CoreBluetooth / CoreNFC) + BLE Ident characteristic + session termination (status 20) | ⬜ Android demo adapters only |
 | OpenID4VCI: `attestation` proof type, `credential_identifiers`, deferred `interval`, encryption on the deferred endpoint | ⬜ |
-| NFC negotiated handover · 18013-7 Annex A (website REST retrieval) | ⬜ |
+| NFC negotiated handover (18013-5 §8.2.2.1) | ⬜ |
 | LOTL Level 2 · CRL / OCSP real-time revocation | ⬜ trust hardening |
 | Wallet Provider backend end-to-end (WUA issue → verify loop) | 🟡 backend exists (`wallet-provider/`); e2e loop closure pending |
 | BLE / NFC transport production hardening | 🟡 demo adapters + live Multipaz interop done; reconnect / timeout / MTU / cancellation hardening pending |
