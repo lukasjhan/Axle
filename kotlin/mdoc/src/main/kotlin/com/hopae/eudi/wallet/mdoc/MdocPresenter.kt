@@ -58,6 +58,8 @@ object MdocPresenter {
         disclosed: Map<String, List<String>>,
         sessionTranscript: Cbor,
         deviceAuth: DeviceAuth,
+        /** Device-signed data elements (namespace -> id -> value), e.g. OpenID4VP mdoc transaction data (B.2.1). */
+        deviceSignedNamespaces: Map<String, Map<String, Cbor>> = emptyMap(),
     ): ByteArray {
         // Keep only the disclosed items, re-emitting their exact IssuerSignedItemBytes (#6.24).
         val filteredNs = issuerSigned.nameSpaces.mapNotNull { (ns, items) ->
@@ -72,8 +74,13 @@ object MdocPresenter {
             )
         )
 
-        // DeviceNameSpaces is empty for a basic presentation (no device-signed data elements).
-        val deviceNameSpacesBytes = Cbor.Tagged(TAG_ENCODED_CBOR, Cbor.Bytes(CborEncoder.encode(Cbor.CborMap(emptyList()))))
+        // DeviceNameSpaces: empty for a basic presentation, or the provided device-signed data elements.
+        val deviceNsMap = Cbor.CborMap(
+            deviceSignedNamespaces.map { (ns, elements) ->
+                Cbor.Text(ns) to Cbor.CborMap(elements.map { (id, value) -> Cbor.Text(id) to value })
+            }
+        )
+        val deviceNameSpacesBytes = Cbor.Tagged(TAG_ENCODED_CBOR, Cbor.Bytes(CborEncoder.encode(deviceNsMap)))
 
         // DeviceAuthentication = ["DeviceAuthentication", SessionTranscript, DocType, DeviceNameSpacesBytes]
         val deviceAuthentication =

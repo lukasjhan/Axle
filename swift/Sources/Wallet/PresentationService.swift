@@ -18,6 +18,7 @@ public struct PresentationService {
     var recordFailures: Bool = false
     /// ISO 18013-5 §9.1.3.5 device-auth preference for mdoc presentations (deviceMac when the verifier requests it).
     var deviceAuthMode: MdocDeviceAuthMode = .signature
+    var transactionDataBinder: OpenID4VP.MdocTransactionDataBinder?
 
     /// Remote (URL/QR) presentation: resolve → match stored credentials → consent → direct_post submit.
     public func start(_ requestUri: String) -> PresentationSession {
@@ -144,7 +145,8 @@ public struct PresentationService {
                     issuerSigned: try IssuerSigned.decode(instance.payload),
                     deviceSigner: SecureAreaCoseSigner(area: area, key: key, algorithm: .es256),
                     deviceKeyAgreement: keyAgreement,
-                    deviceAuth: deviceAuthMode)
+                    deviceAuth: deviceAuthMode,
+                    transactionDataBinder: transactionDataBinder)
             }
         } catch {
             return nil

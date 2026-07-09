@@ -74,7 +74,7 @@ class Wallet private constructor(
                 clock = clockSeconds,
             )
             val recordFailures = config.transactionLog.recordFailures
-            val presentation = PresentationService(vp, store, txlog, ports.secureAreas, scope, recordFailures, config.presentation.mdocDeviceAuth)
+            val presentation = PresentationService(vp, store, txlog, ports.secureAreas, scope, recordFailures, config.presentation.mdocDeviceAuth, config.presentation.mdocTransactionDataBinder)
             val proximity = ProximityService(store, txlog, ports.secureAreas, scope, readerValidator?.let { X5cMdocReaderTrust(it) }, recordFailures, config.presentation.mdocDeviceAuth)
             // Reader side: verify presented mdocs against the same issuer anchors used for status/issuance.
             val reader = ProximityReaderService(X5cMdocIssuerTrust(issuerValidator))

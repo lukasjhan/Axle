@@ -43,6 +43,8 @@ class PresentationService internal constructor(
     private val recordFailures: Boolean = false,
     /** ISO 18013-5 §9.1.3.5 device-auth preference for mdoc presentations (deviceMac when the verifier requests it). */
     private val deviceAuthMode: MdocDeviceAuthMode = MdocDeviceAuthMode.Signature,
+    /** Host mapping for mdoc `transaction_data` device-signed elements (ISO 18013-7 B.2.1); null = reject. */
+    private val transactionDataBinder: com.hopae.eudi.wallet.vp.MdocTransactionDataBinder? = null,
 ) {
     /** Remote (URL/QR) presentation: resolve → match stored credentials → consent → direct_post submit. */
     fun start(requestUri: String): PresentationSession = runSession(
@@ -162,6 +164,7 @@ class PresentationService internal constructor(
                         MdocKeyAgreement { peer -> area.keyAgreement(instance.key, peer) }
                     } else null,
                     deviceAuth = deviceAuthMode,
+                    transactionDataBinder = transactionDataBinder,
                 )
             }
         }.getOrNull()

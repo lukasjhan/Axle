@@ -21,7 +21,9 @@ public enum MdocTestIssuer {
         signed: Date,
         validFrom: Date,
         validUntil: Date,
-        digestAlgorithm: String = "SHA-256"
+        digestAlgorithm: String = "SHA-256",
+        /// namespace -> authorized device-signed element ids, emitted as MSO `keyAuthorizations.dataElements`.
+        authorizedElements: [String: [String]]? = nil
     ) async throws -> [UInt8] {
         var itemEntries: [Cbor] = []
         var digests: [(Cbor, Cbor)] = []
@@ -42,7 +44,14 @@ public enum MdocTestIssuer {
             (.text("version"), .text("1.0")),
             (.text("digestAlgorithm"), .text(digestAlgorithm)),
             (.text("valueDigests"), .map([(.text(namespace), .map(digests))])),
-            (.text("deviceKeyInfo"), .map([(.text("deviceKey"), CoseKey.encode(deviceKey))])),
+            (.text("deviceKeyInfo"), .map({
+                var dki: [(Cbor, Cbor)] = [(.text("deviceKey"), CoseKey.encode(deviceKey))]
+                if let auth = authorizedElements {
+                    let dataElements = Cbor.map(auth.map { (Cbor.text($0.key), Cbor.array($0.value.map { .text($0) })) })
+                    dki.append((.text("keyAuthorizations"), .map([(.text("dataElements"), dataElements)])))
+                }
+                return dki
+            }())),
             (.text("docType"), .text(docType)),
             (.text("validityInfo"), .map([
                 (.text("signed"), tdate(signed)),

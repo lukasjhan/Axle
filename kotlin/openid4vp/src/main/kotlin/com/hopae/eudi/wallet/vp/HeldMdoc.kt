@@ -31,6 +31,8 @@ class HeldMdoc(
     private val deviceKeyAgreement: MdocKeyAgreement? = null,
     /** Wallet preference when the verifier accepts both forms; `deviceMac` is only used when it can be. */
     private val deviceAuth: MdocDeviceAuthMode = MdocDeviceAuthMode.Signature,
+    /** Maps `transaction_data` (§8.4) to a device-signed data element (B.2.1); null = mdoc transaction data unsupported. */
+    private val transactionDataBinder: MdocTransactionDataBinder? = null,
 ) : PresentableCredential {
 
     override val format: String = "mso_mdoc"
@@ -59,8 +61,31 @@ class HeldMdoc(
             disclosed = disclosed,
             sessionTranscript = sessionTranscript,
             deviceAuth = selectDeviceAuth(ctx, sessionTranscript),
+            deviceSignedNamespaces = bindTransactionData(ctx.transactionData),
         )
         return Base64Url.encode(deviceResponse)
+    }
+
+    /**
+     * Turns the transaction_data bound to this mdoc (§8.4) into device-signed data elements (B.2.1). The host
+     * [transactionDataBinder] supplies the type-specific (namespace, elementId, value); the wallet then rejects
+     * (`invalid_transaction_data`) an unsupported type or an element the MSO `keyAuthorizations` did not authorize.
+     */
+    private fun bindTransactionData(transactionData: List<String>?): Map<String, Map<String, Cbor>> {
+        if (transactionData.isNullOrEmpty()) return emptyMap()
+        val binder = transactionDataBinder
+            ?: throw VpException.InvalidTransactionData("mdoc transaction_data (B.2.1) needs a binder; none is configured")
+        val authorizations = issuerSigned.parseMso().keyAuthorizations
+        val result = mutableMapOf<String, MutableMap<String, Cbor>>()
+        for (raw in transactionData) {
+            val element = binder.bind(TransactionData.parse(raw))
+                ?: throw VpException.InvalidTransactionData("no mdoc data element defined for this transaction_data type")
+            if (authorizations?.authorizes(element.namespace, element.elementId) != true) {
+                throw VpException.InvalidTransactionData("data element ${element.namespace}/${element.elementId} is not authorized by the MSO")
+            }
+            result.getOrPut(element.namespace) { mutableMapOf() }[element.elementId] = element.value
+        }
+        return result
     }
 
     /**

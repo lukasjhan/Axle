@@ -43,7 +43,9 @@ public enum MdocPresenter {
         docType: String,
         disclosed: [String: [String]], // namespace -> element identifiers to disclose
         sessionTranscript: Cbor,
-        deviceAuth: DeviceAuth
+        deviceAuth: DeviceAuth,
+        /// Device-signed data elements (namespace -> id -> value), e.g. OpenID4VP mdoc transaction data (B.2.1).
+        deviceSignedNamespaces: [String: [String: Cbor]] = [:]
     ) async throws -> [UInt8] {
         // Keep only the disclosed items, re-emitting their exact IssuerSignedItemBytes (#6.24).
         var filteredNs: [(Cbor, Cbor)] = []
@@ -57,8 +59,11 @@ public enum MdocPresenter {
             (.text("issuerAuth"), issuerSigned.issuerAuth.toCbor(tagged: false)),
         ])
 
-        // DeviceNameSpaces is empty for a basic presentation.
-        let deviceNameSpacesBytes = Cbor.tagged(tagEncodedCbor, .bytes(try CborEncoder.encode(.map([]))))
+        // DeviceNameSpaces: empty for a basic presentation, or the provided device-signed data elements.
+        let deviceNsMap = Cbor.map(deviceSignedNamespaces.map { (ns, elements) in
+            (Cbor.text(ns), Cbor.map(elements.map { (Cbor.text($0.key), $0.value) }))
+        })
+        let deviceNameSpacesBytes = Cbor.tagged(tagEncodedCbor, .bytes(try CborEncoder.encode(deviceNsMap)))
 
         let deviceAuthentication = Cbor.array([.text("DeviceAuthentication"), sessionTranscript, .text(docType), deviceNameSpacesBytes])
         let deviceAuthBytes = try CborEncoder.encode(.tagged(tagEncodedCbor, .bytes(try CborEncoder.encode(deviceAuthentication))))

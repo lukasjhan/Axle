@@ -1,5 +1,6 @@
 import Foundation
 import MDoc
+import OpenID4VP
 
 /// Immutable wallet configuration. Trust anchors are passed as DER so the public API stays free of
 /// trust-module types.
@@ -47,8 +48,14 @@ public struct PresentationConfig {
     /// wallet over needs re-issued credentials. Over OpenID4VP it additionally needs the verifier to request
     /// `deviceMac` (an encrypted response supplying an `EReaderKey`); otherwise it falls back to `deviceSignature`.
     public let mdocDeviceAuth: MdocDeviceAuthMode
-    public init(mdocDeviceAuth: MdocDeviceAuthMode = .signature) {
+    /// Maps an OpenID4VP `transaction_data` entry to the mdoc device-signed data element that protects it
+    /// (ISO 18013-7 B.2.1). Nil (default) → the wallet rejects transaction_data bound to an mdoc, since the
+    /// type→element mapping is credential-type specific and only the host knows it.
+    public let mdocTransactionDataBinder: OpenID4VP.MdocTransactionDataBinder?
+    public init(mdocDeviceAuth: MdocDeviceAuthMode = .signature,
+                mdocTransactionDataBinder: OpenID4VP.MdocTransactionDataBinder? = nil) {
         self.mdocDeviceAuth = mdocDeviceAuth
+        self.mdocTransactionDataBinder = mdocTransactionDataBinder
     }
 }
 

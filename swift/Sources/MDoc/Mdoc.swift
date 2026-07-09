@@ -25,6 +25,20 @@ public struct IssuerSignedItemEntry {
 }
 
 /// Mobile Security Object (ISO 18013-5 §9.1.2.4) — the issuer-signed integrity structure.
+/// `KeyAuthorizations` (ISO 18013-5 §9.1.2.4): the namespaces / data elements the issuer authorized the
+/// `DeviceKey` to device-sign. A device-signed data element (e.g. OpenID4VP mdoc transaction data, B.2.1) is
+/// authorized when its namespace is wholly authorized or its identifier is listed for that namespace.
+public struct KeyAuthorizations {
+    public let nameSpaces: Set<String>
+    public let dataElements: [String: Set<String>]
+    public init(nameSpaces: Set<String> = [], dataElements: [String: Set<String>] = [:]) {
+        self.nameSpaces = nameSpaces; self.dataElements = dataElements
+    }
+    public func authorizes(_ namespace: String, _ elementId: String) -> Bool {
+        nameSpaces.contains(namespace) || (dataElements[namespace]?.contains(elementId) ?? false)
+    }
+}
+
 public struct MobileSecurityObject {
     public let version: String
     public let digestAlgorithm: String
@@ -35,6 +49,16 @@ public struct MobileSecurityObject {
     public let signed: Date
     public let validFrom: Date
     public let validUntil: Date
+    /// `deviceKeyInfo.keyAuthorizations` — nil when the issuer authorized no device-signed data elements.
+    public let keyAuthorizations: KeyAuthorizations?
+
+    public init(version: String, digestAlgorithm: String, valueDigests: [String: [Int64: [UInt8]]],
+                deviceKey: EcPublicKey, docType: String, signed: Date, validFrom: Date, validUntil: Date,
+                keyAuthorizations: KeyAuthorizations? = nil) {
+        self.version = version; self.digestAlgorithm = digestAlgorithm; self.valueDigests = valueDigests
+        self.deviceKey = deviceKey; self.docType = docType; self.signed = signed
+        self.validFrom = validFrom; self.validUntil = validUntil; self.keyAuthorizations = keyAuthorizations
+    }
 }
 
 /// IssuerSigned (ISO 18013-5 §8.3.2.1.2.2): the disclosable items + the issuer's COSE_Sign1.
@@ -130,6 +154,24 @@ enum MsoCodec {
         guard case let .map(dki)? = value(m, "deviceKeyInfo"),
               let deviceKeyCbor = value(dki, "deviceKey") else { throw MdocError("missing deviceKey") }
 
+        var keyAuthorizations: KeyAuthorizations?
+        if case let .map(ka)? = value(dki, "keyAuthorizations") {
+            var nameSpaces: Set<String> = []
+            if case let .array(nsArr)? = value(ka, "nameSpaces") {
+                for case let .text(ns) in nsArr { nameSpaces.insert(ns) }
+            }
+            var dataElements: [String: Set<String>] = [:]
+            if case let .map(deEntries)? = value(ka, "dataElements") {
+                for (nsKey, ids) in deEntries {
+                    guard case let .text(ns) = nsKey, case let .array(idArr) = ids else { continue }
+                    var set: Set<String> = []
+                    for case let .text(id) in idArr { set.insert(id) }
+                    dataElements[ns] = set
+                }
+            }
+            keyAuthorizations = KeyAuthorizations(nameSpaces: nameSpaces, dataElements: dataElements)
+        }
+
         guard case let .map(validity)? = value(m, "validityInfo") else { throw MdocError("missing validityInfo") }
         func tdate(_ name: String) throws -> Date {
             guard let v = value(validity, name) else { throw MdocError("validityInfo missing \(name)") }
@@ -150,7 +192,8 @@ enum MsoCodec {
         return MobileSecurityObject(
             version: version, digestAlgorithm: digestAlg, valueDigests: valueDigests,
             deviceKey: try CoseKey.decode(deviceKeyCbor), docType: docType,
-            signed: try tdate("signed"), validFrom: try tdate("validFrom"), validUntil: try tdate("validUntil")
+            signed: try tdate("signed"), validFrom: try tdate("validFrom"), validUntil: try tdate("validUntil"),
+            keyAuthorizations: keyAuthorizations
         )
     }
 

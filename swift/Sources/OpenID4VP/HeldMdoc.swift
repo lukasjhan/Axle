@@ -23,16 +23,19 @@ public struct HeldMdoc: PresentableCredential {
     private let deviceSignAlgorithm: SigningAlgorithm
     private let deviceKeyAgreement: MdocKeyAgreement?
     private let deviceAuthMode: MdocDeviceAuthMode
+    private let transactionDataBinder: MdocTransactionDataBinder?
 
     public init(credentialId: String, issuerSigned: IssuerSigned,
                 deviceSigner: (any CoseSigner)? = nil, deviceSignAlgorithm: SigningAlgorithm = .es256,
-                deviceKeyAgreement: MdocKeyAgreement? = nil, deviceAuth: MdocDeviceAuthMode = .signature) throws {
+                deviceKeyAgreement: MdocKeyAgreement? = nil, deviceAuth: MdocDeviceAuthMode = .signature,
+                transactionDataBinder: MdocTransactionDataBinder? = nil) throws {
         self.credentialId = credentialId
         self.issuerSigned = issuerSigned
         self.deviceSigner = deviceSigner
         self.deviceSignAlgorithm = deviceSignAlgorithm
         self.deviceKeyAgreement = deviceKeyAgreement
         self.deviceAuthMode = deviceAuth
+        self.transactionDataBinder = transactionDataBinder
         self.docType = try issuerSigned.parseMso().docType
         self.claims = .obj(issuerSigned.elements().map { ns, elements in
             (ns, .obj(elements.map { ($0.0, CborJson.toJson($0.1)) }))
@@ -54,8 +57,31 @@ public struct HeldMdoc: PresentableCredential {
         let deviceAuth = try await selectDeviceAuth(ctx, sessionTranscript: sessionTranscript)
         let deviceResponse = try await MdocPresenter.deviceResponse(
             issuerSigned: issuerSigned, docType: docType ?? "", disclosed: disclosed,
-            sessionTranscript: sessionTranscript, deviceAuth: deviceAuth)
+            sessionTranscript: sessionTranscript, deviceAuth: deviceAuth,
+            deviceSignedNamespaces: try bindTransactionData(ctx.transactionData))
         return Base64Url.encode(deviceResponse)
+    }
+
+    /// Turns the transaction_data bound to this mdoc (§8.4) into device-signed data elements (B.2.1). The host
+    /// `transactionDataBinder` supplies the type-specific (namespace, elementId, value); the wallet then rejects
+    /// (`invalidTransactionData`) an unsupported type or an element the MSO `keyAuthorizations` did not authorize.
+    private func bindTransactionData(_ transactionData: [String]?) throws -> [String: [String: Cbor]] {
+        guard let transactionData, !transactionData.isEmpty else { return [:] }
+        guard let binder = transactionDataBinder else {
+            throw VpError.invalidTransactionData("mdoc transaction_data (B.2.1) needs a binder; none is configured")
+        }
+        let authorizations = try issuerSigned.parseMso().keyAuthorizations
+        var result: [String: [String: Cbor]] = [:]
+        for raw in transactionData {
+            guard let element = binder(try TransactionData.parse(raw)) else {
+                throw VpError.invalidTransactionData("no mdoc data element defined for this transaction_data type")
+            }
+            guard authorizations?.authorizes(element.namespace, element.elementId) == true else {
+                throw VpError.invalidTransactionData("data element \(element.namespace)/\(element.elementId) is not authorized by the MSO")
+            }
+            result[element.namespace, default: [:]][element.elementId] = element.value
+        }
+        return result
     }
 
     /// Picks `deviceSignature` or `deviceMac` (ISO 18013-5 §9.1.3.5). `deviceMac` needs all of: a

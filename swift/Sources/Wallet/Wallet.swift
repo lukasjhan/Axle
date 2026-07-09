@@ -53,7 +53,8 @@ public struct Wallet {
         let recordFailures = config.transactionLog.recordFailures
         let presentation = PresentationService(vp: vp, store: store, txlog: txlog, secureAreas: ports.secureAreas,
                                                recordFailures: recordFailures,
-                                               deviceAuthMode: config.presentation.mdocDeviceAuth)
+                                               deviceAuthMode: config.presentation.mdocDeviceAuth,
+                                               transactionDataBinder: config.presentation.mdocTransactionDataBinder)
         let proximity = ProximityService(store: store, txlog: txlog, secureAreas: ports.secureAreas,
                                          readerTrust: readerValidator.map { X5cMdocReaderTrust(validator: $0) },
                                          recordFailures: recordFailures,

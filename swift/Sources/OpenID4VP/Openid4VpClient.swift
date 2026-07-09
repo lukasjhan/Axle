@@ -201,17 +201,16 @@ public struct Openid4VpClient {
                 let requiresBinding = matches.candidatesByQuery[cid]?.first?.query.requireCryptographicHolderBinding ?? true
                 if !requiresBinding { throw VpError.invalidTransactionData("query '\(cid)' set require_cryptographic_holder_binding=false") }
             }
-            // Bind to a presented SD-JWT VC among the referenced credentials (the only format that carries it here).
-            let target = td.credentialIds.first { q in
+            // §5.1: bind to one referenced credential being presented — prefer an SD-JWT VC (KB-JWT hash),
+            // else fall back to any presented one (an mdoc carries it as a device-signed data element, B.2.1).
+            let sdJwtTarget = td.credentialIds.first { q in
                 if let cred = selection.chosen[q]?.first { return heldById[cred]?.format == "dc+sd-jwt" }
                 return false
             }
-            if let target {
-                byQuery[target, default: []].append(raw)
-            } else if td.credentialIds.contains(where: { selection.chosen[$0] != nil }) {
-                throw VpError.invalidTransactionData("only bindable to a presented mdoc credential (B.2.1 not supported)")
-            }
             // else: no referenced credential is being presented — the transaction is simply not authorized here.
+            if let target = sdJwtTarget ?? td.credentialIds.first(where: { selection.chosen[$0] != nil }) {
+                byQuery[target, default: []].append(raw)
+            }
         }
         return byQuery
     }

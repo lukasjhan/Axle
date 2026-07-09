@@ -29,6 +29,8 @@ object MdocTestIssuer {
         validFrom: Instant,
         validUntil: Instant,
         digestAlgorithm: String = "SHA-256",
+        /** namespace -> authorized device-signed element ids, emitted as MSO `keyAuthorizations.dataElements`. */
+        authorizedElements: Map<String, List<String>>? = null,
     ): ByteArray {
         // IssuerSignedItems + their #6.24 bytes + digests
         val itemEntries = mutableListOf<Cbor>()
@@ -54,7 +56,17 @@ object MdocTestIssuer {
                 Cbor.Text("version") to Cbor.Text("1.0"),
                 Cbor.Text("digestAlgorithm") to Cbor.Text(digestAlgorithm),
                 Cbor.Text("valueDigests") to Cbor.CborMap(listOf(Cbor.Text(namespace) to Cbor.CborMap(digests))),
-                Cbor.Text("deviceKeyInfo") to Cbor.CborMap(listOf(Cbor.Text("deviceKey") to CoseKey.encode(deviceKey))),
+                Cbor.Text("deviceKeyInfo") to Cbor.CborMap(
+                    buildList {
+                        add(Cbor.Text("deviceKey") to CoseKey.encode(deviceKey))
+                        authorizedElements?.let { auth ->
+                            val dataElements = Cbor.CborMap(auth.map { (ns, ids) ->
+                                Cbor.Text(ns) to Cbor.Array(ids.map { Cbor.Text(it) })
+                            })
+                            add(Cbor.Text("keyAuthorizations") to Cbor.CborMap(listOf(Cbor.Text("dataElements") to dataElements)))
+                        }
+                    }
+                ),
                 Cbor.Text("docType") to Cbor.Text(docType),
                 Cbor.Text("validityInfo") to Cbor.CborMap(
                     listOf(

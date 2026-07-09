@@ -226,16 +226,14 @@ class Openid4VpClient(
                 val requiresBinding = matches.candidatesByQuery[cid]?.firstOrNull()?.query?.requireCryptographicHolderBinding ?: true
                 if (!requiresBinding) throw VpException.InvalidTransactionData("query '$cid' set require_cryptographic_holder_binding=false")
             }
-            // Bind to a presented SD-JWT VC among the referenced credentials (the only format that carries it here).
-            val target = td.credentialIds.firstOrNull { q ->
+            // §5.1: bind to one referenced credential being presented — prefer an SD-JWT VC (KB-JWT hash),
+            // else fall back to any presented one (an mdoc carries it as a device-signed data element, B.2.1).
+            val sdJwtTarget = td.credentialIds.firstOrNull { q ->
                 selection.chosen[q]?.firstOrNull()?.let { heldById[it]?.format == "dc+sd-jwt" } == true
             }
-            when {
-                target != null -> byQuery.getOrPut(target) { mutableListOf() }.add(raw)
-                td.credentialIds.any { it in selection.chosen } ->
-                    throw VpException.InvalidTransactionData("only bindable to a presented mdoc credential (B.2.1 not supported)")
-                // else: no referenced credential is being presented — the transaction is simply not authorized here.
-            }
+            val target = sdJwtTarget ?: td.credentialIds.firstOrNull { it in selection.chosen }
+            // else: no referenced credential is being presented — the transaction is simply not authorized here.
+            if (target != null) byQuery.getOrPut(target) { mutableListOf() }.add(raw)
         }
         return byQuery
     }

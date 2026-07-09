@@ -25,6 +25,19 @@ class IssuerSignedItem(
 /** An item plus the exact `#6.24(bstr)` bytes the issuer digested (`IssuerSignedItemBytes`). */
 class IssuerSignedItemEntry(val item: IssuerSignedItem, val itemBytes: ByteArray)
 
+/**
+ * `KeyAuthorizations` (ISO 18013-5 §9.1.2.4): the namespaces / data elements the issuer authorized the
+ * `DeviceKey` to device-sign. A device-signed data element (e.g. OpenID4VP mdoc transaction data, B.2.1) is
+ * authorized when its namespace is wholly authorized or its identifier is listed for that namespace.
+ */
+class KeyAuthorizations(
+    val nameSpaces: Set<String> = emptySet(),
+    val dataElements: Map<String, Set<String>> = emptyMap(),
+) {
+    fun authorizes(namespace: String, elementId: String): Boolean =
+        namespace in nameSpaces || dataElements[namespace]?.contains(elementId) == true
+}
+
 /** Mobile Security Object (ISO 18013-5 §9.1.2.4) — the issuer-signed integrity structure. */
 class MobileSecurityObject(
     val version: String,
@@ -36,6 +49,8 @@ class MobileSecurityObject(
     val signed: Instant,
     val validFrom: Instant,
     val validUntil: Instant,
+    /** `deviceKeyInfo.keyAuthorizations` — null when the issuer authorized no device-signed data elements. */
+    val keyAuthorizations: KeyAuthorizations? = null,
 )
 
 /** IssuerSigned (ISO 18013-5 §8.3.2.1.2.2): the disclosable items + the issuer's COSE_Sign1. */
@@ -119,8 +134,18 @@ internal object MsoCodec {
             }
 
         val deviceKeyInfo = field("deviceKeyInfo") as? Cbor.CborMap ?: throw MdocException("missing deviceKeyInfo")
-        val deviceKeyCbor = deviceKeyInfo.entries.firstOrNull { (k, _) -> (k as? Cbor.Text)?.value == "deviceKey" }?.second
-            as? Cbor.CborMap ?: throw MdocException("missing deviceKey")
+        fun dkiField(name: String): Cbor? = deviceKeyInfo.entries.firstOrNull { (k, _) -> (k as? Cbor.Text)?.value == name }?.second
+        val deviceKeyCbor = dkiField("deviceKey") as? Cbor.CborMap ?: throw MdocException("missing deviceKey")
+
+        val keyAuthorizations = (dkiField("keyAuthorizations") as? Cbor.CborMap)?.let { ka ->
+            fun kaField(name: String) = ka.entries.firstOrNull { (k, _) -> (k as? Cbor.Text)?.value == name }?.second
+            val nameSpaces = (kaField("nameSpaces") as? Cbor.Array)?.items?.mapNotNull { (it as? Cbor.Text)?.value }?.toSet().orEmpty()
+            val dataElements = (kaField("dataElements") as? Cbor.CborMap)?.entries?.mapNotNull { (nsKey, ids) ->
+                val ns = (nsKey as? Cbor.Text)?.value ?: return@mapNotNull null
+                ns to ((ids as? Cbor.Array)?.items?.mapNotNull { (it as? Cbor.Text)?.value }?.toSet().orEmpty())
+            }?.toMap().orEmpty()
+            KeyAuthorizations(nameSpaces, dataElements)
+        }
 
         val validity = field("validityInfo") as? Cbor.CborMap ?: throw MdocException("missing validityInfo")
         fun tdate(name: String): Instant {
@@ -143,6 +168,7 @@ internal object MsoCodec {
             signed = tdate("signed"),
             validFrom = tdate("validFrom"),
             validUntil = tdate("validUntil"),
+            keyAuthorizations = keyAuthorizations,
         )
     }
 }

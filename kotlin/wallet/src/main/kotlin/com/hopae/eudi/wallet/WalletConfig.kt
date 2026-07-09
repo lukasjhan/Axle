@@ -1,6 +1,7 @@
 package com.hopae.eudi.wallet
 
 import com.hopae.eudi.wallet.mdoc.MdocDeviceAuthMode
+import com.hopae.eudi.wallet.vp.MdocTransactionDataBinder
 
 /**
  * Immutable wallet configuration. HAIP defaults (PAR/DPoP Required) live in the sub-configs.
@@ -39,6 +40,12 @@ class PresentationConfig(
      * falls back to `deviceSignature`.
      */
     val mdocDeviceAuth: MdocDeviceAuthMode = MdocDeviceAuthMode.Signature,
+    /**
+     * Maps an OpenID4VP `transaction_data` entry to the mdoc device-signed data element that protects it
+     * (ISO 18013-7 B.2.1). Null (default) → the wallet rejects transaction_data bound to an mdoc, since the
+     * type→element mapping is credential-type specific and only the host knows it.
+     */
+    val mdocTransactionDataBinder: MdocTransactionDataBinder? = null,
     // Phase C: clientIdPrefixes, responseEncryption.
 )
 
