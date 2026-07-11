@@ -29,6 +29,9 @@ dependencies {
     // JOSE (JWS signing of the instance-key PoP, JWK encoding, JSON) — no Android APIs, pure Kotlin.
     implementation("com.hopae.eudi:sdjwt:0.0.1-SNAPSHOT")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    // Google Play Integrity API (real device/app integrity) + Task<>.await() interop.
+    implementation("com.google.android.play:integrity:1.4.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
 
     // Gated integration test against a locally-running wallet-provider (EUDI_WP_LIVE).
     testImplementation("com.hopae.eudi:testkit:0.0.1-SNAPSHOT")

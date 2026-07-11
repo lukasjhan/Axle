@@ -91,8 +91,16 @@ are not lost; each deserves its own triage.
     extension (OID 1.3.6.1.4.1.11129.2.1.17) and the leaf key matches; a challenge-less key attests nothing.
     **Still open:** wire the OpenID4VCI `key_attestation` proof (`KeyAttestationSource` → backend
     `/key-attestation`) and have the WP verify the hardware chain before asserting `iso_18045_high`.
-  - [ ] **Phase 3 — Play Integrity (real) / App Attest:** `PlayIntegrityTokenProvider` (demo: attempt real →
-    log → dev fallback; production: no fallback) + backend Play Integrity verification (replaces the dev stub).
+  - [x] **Phase 3 — Play Integrity (real):** client `PlayIntegrityTokenProvider` (android/attestation) requests
+    a real Play Integrity token bound to the WP nonce + cloud project number, attempt→log→**dev fallback**
+    (`fallback = null` in production so a failed check surfaces). Backend `IntegrityService` gains a real
+    `verifyPlayIntegrity` path (Google `decodeIntegrityToken`, checks app/device verdicts + nonce) gated on
+    `PLAY_INTEGRITY_PACKAGE_NAME` + Application Default Credentials; the `dev-integrity:<nonce>` stub stays the
+    default. Client compiles with the Play Integrity SDK; backend compiles and the dev WUA loop still passes
+    against the restarted backend. **Not exercisable here** (needs a Google Cloud project + service account) —
+    the real path is coded and documented, dev fallback is operative.
+  - [ ] **Track follow-ups:** Swift parity (App Attest / SecureEnclave attestation); demo on-device wiring;
+    full §4.4.1 unlinkability (per-use WUA key batch); WP verifying the Android Key Attestation chain.
 - **Trust cluster** (audit #16–#20): DCQL `trusted_authorities` (`aki` → `etsi_tl` → `openid_federation`),
   the `verifier_attestation`/`decentralized_identifier`/`openid_federation` client-ID prefixes, LOTL/CRL/OCSP.
   Already **deliberately sequenced last** in `SPEC-MATRIX.md` (needs standing trust infrastructure).
