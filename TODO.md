@@ -90,9 +90,12 @@ are not lost; each deserves its own triage.
     cancellation). Note: this is the only meaningful "reconnect" — mdoc has no *session* resumption
     (keys/counters bound to the connection), so a mid-session drop restarts from engagement, by design.
   - **#31 promote demo adapters into supported Android library modules** — new `android/` composite build:
-    - [x] Phase 1: `android/core` (`com.hopae.eudi:core`) — SecureArea, Storage, TxLogStore, Http adapters;
-      `OkHttpTransport` decoupled from `LogStore` via an injected `WalletLogger`. Device-verified (commit `c10e9a8`).
-    - [ ] Phase 2: `android/proximity` — move BLE/NFC transports (swap `LogStore`→`WalletLogger` first).
+    - [x] Phase 1: `android/core` (`com.hopae.eudi.android:core`) — SecureArea, Storage, TxLogStore, Http
+      adapters; `OkHttpTransport` decoupled from `LogStore` via an injected `WalletLogger`. Device-verified (`c10e9a8`).
+    - [x] Phase 2: `android/proximity` (`com.hopae.eudi.android:proximity`) — BLE (GATT client/server, Ident,
+      retry) + NFC (HCE service, reader) transports; BLE `LogStore`→`WalletLogger`; library manifest merges the
+      BLE/NFC permissions + HCE service. android/ modules use group `com.hopae.eudi.android` (avoids clashing
+      with the SDK's `com.hopae.eudi:proximity`). Builds + launches on device (`337ca1a`).
     - [ ] Phase 3: `android/dcapi` — CredMan registration; needs UI/Activity separation (hardest).
 - **Test infrastructure** (audit #21–#22): shared mdoc golden vectors; RFC 9901 end-to-end fixtures.
 - **iOS** (explicitly out of scope here): CoreBluetooth/CoreNFC transport, session termination on that
