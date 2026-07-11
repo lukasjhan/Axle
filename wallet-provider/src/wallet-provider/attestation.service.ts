@@ -1,10 +1,12 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import * as jose from 'jose';
 import { KeystoreService } from './keystore.service';
+import { verifyAndroidKeyAttestation } from './android-key-attestation';
 
 /** Issues the two artifacts a HAIP wallet needs from its provider: WUA + key attestation. */
 @Injectable()
 export class AttestationService {
+  private readonly logger = new Logger(AttestationService.name);
   constructor(private readonly keystore: KeystoreService) {}
 
   /**
@@ -31,11 +33,12 @@ export class AttestationService {
    * Key attestation (OpenID4VCI §8.2.1.1) — attests the credential proof keys live in a secure area.
    * `nonce` binds it to the issuer's c_nonce (passed through, not a WP-issued nonce).
    */
-  async issueKeyAttestation(attestedKeys: jose.JWK[], nonce?: string): Promise<string> {
+  async issueKeyAttestation(attestedKeys: jose.JWK[], nonce?: string, keyAttestations?: string[]): Promise<string> {
+    const level = await this.resolveKeyStorageLevel(keyAttestations, nonce);
     const payload: jose.JWTPayload = {
       attested_keys: attestedKeys,
-      key_storage: ['iso_18045_high'],
-      user_authentication: ['iso_18045_high'],
+      key_storage: [level],
+      user_authentication: [level],
     };
     if (nonce) payload.nonce = nonce;
     return new jose.SignJWT(payload)
@@ -44,5 +47,27 @@ export class AttestationService {
       .setIssuedAt()
       .setExpirationTime('24h')
       .sign(this.keystore.signingKey);
+  }
+
+  /**
+   * The `key_storage` level to assert, *derived from evidence* rather than on faith: only when every
+   * provided Android Key Attestation chain verifies (roots in a trusted Google root, in TEE/StrongBox, with
+   * the challenge = the issuer nonce) is `iso_18045_high` claimed. A tampered/invalid chain is rejected; no
+   * chain (e.g. a software secure area) yields the lower `iso_18045_moderate`.
+   */
+  private async resolveKeyStorageLevel(keyAttestations: string[] | undefined, nonce?: string): Promise<string> {
+    if (!keyAttestations || keyAttestations.length === 0) {
+      this.logger.warn('key attestation issued without a hardware chain — asserting iso_18045_moderate');
+      return 'iso_18045_moderate';
+    }
+    const challenge = new TextEncoder().encode(nonce ?? '');
+    let allHardware = true;
+    for (const b64 of keyAttestations) {
+      const verdict = await verifyAndroidKeyAttestation(new Uint8Array(Buffer.from(b64, 'base64')), challenge);
+      if (!verdict.verified) throw new Error(`key attestation chain rejected: ${verdict.reason}`);
+      if (nonce && !verdict.challengeMatches) throw new Error('key attestation challenge does not match the issuer nonce');
+      if (verdict.securityLevel === 'software') allHardware = false;
+    }
+    return allHardware ? 'iso_18045_high' : 'iso_18045_moderate';
   }
 }

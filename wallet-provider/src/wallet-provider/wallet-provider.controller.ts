@@ -81,7 +81,7 @@ export class WalletProviderController {
   @Post('key-attestation')
   async keyAttestation(@Body() dto: KeyAttestationDto): Promise<{ key_attestation: string }> {
     if (!dto.attestedKeys?.length) throw new BadRequestException('attestedKeys required');
-    const ka = await this.attestation.issueKeyAttestation(dto.attestedKeys, dto.nonce);
+    const ka = await this.attestation.issueKeyAttestation(dto.attestedKeys, dto.nonce, dto.keyAttestations);
     return { key_attestation: ka };
   }
 

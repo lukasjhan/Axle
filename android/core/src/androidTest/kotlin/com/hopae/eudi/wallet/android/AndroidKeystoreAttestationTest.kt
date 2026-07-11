@@ -23,7 +23,7 @@ class AndroidKeystoreAttestationTest {
     private val keyAttestationExtensionOid = "1.3.6.1.4.1.11129.2.1.17"
 
     @Test
-    fun attestsAHardwareKeyBoundToAChallenge() = runBlocking {
+    fun attestsAHardwareKeyBoundToAChallenge() = runBlocking<Unit> {
         val area = AndroidKeystoreSecureArea()
         val challenge = "eudi-attestation-challenge".toByteArray()
         val key = area.createKey(KeySpec(secureArea = area.id, attestationChallenge = challenge))

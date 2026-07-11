@@ -89,8 +89,13 @@ are not lost; each deserves its own triage.
     concatenated DER leaf→root), or null when no challenge was set (was a `null` stub). **Device-verified**
     (instrumented test on SM-F731N): a challenged key yields a full chain with the Android Key Attestation
     extension (OID 1.3.6.1.4.1.11129.2.1.17) and the leaf key matches; a challenge-less key attests nothing.
-    **Still open:** wire the OpenID4VCI `key_attestation` proof (`KeyAttestationSource` → backend
-    `/key-attestation`) and have the WP verify the hardware chain before asserting `iso_18045_high`.
+  - [x] **WP verifies the Android Key Attestation chain** (the flagged `iso_18045_high`-on-faith bug).
+    `wallet-provider` `android-key-attestation.ts` (`@peculiar/x509` + `asn1-android`): validates the chain
+    signatures, roots it in a trusted Google attestation root (SHA-256 pinned), and parses the leaf's
+    KeyDescription for the storage security level + challenge. `issueKeyAttestation` now derives `key_storage`
+    from evidence — `iso_18045_high` only when a chain verifies (TEE/StrongBox + challenge = nonce); tampered
+    chains rejected; no chain → honest `iso_18045_moderate`. Verified against a **real device chain** captured
+    from SM-F731N (jest, 3 cases). `/key-attestation` DTO gains `keyAttestations` (base64 chains).
   - [x] **Phase 3 — Play Integrity (real):** client `PlayIntegrityTokenProvider` (android/attestation) requests
     a real Play Integrity token bound to the WP nonce + cloud project number, attempt→log→**dev fallback**
     (`fallback = null` in production so a failed check surfaces). Backend `IntegrityService` gains a real
@@ -104,9 +109,10 @@ are not lost; each deserves its own triage.
     fresh WUA per issuer, §4.4.1) wired in `Wallet.swift`; new `WalletProvider` SPM target with the reference
     `WalletProviderAttestation` (actor) + `IntegrityTokenProvider`/`DevIntegrityTokenProvider`. Offline +
     §4.4.1 unit tests pass; existing `ClientAttestationTests` green.
-  - [ ] **Track follow-ups:** iOS platform layer (App Attest / SecureEnclave `SecureArea` attestation — the
-    Swift equivalents of Phase 2/3, distinct APIs); demo on-device wiring; full §4.4.1 unlinkability (per-use
-    WUA key batch); WP verifying the Android Key Attestation chain; OpenID4VCI `key_attestation` proof wiring.
+  - [ ] **Track follow-ups:** OpenID4VCI `key_attestation` proof wiring — the wallet side (create proof keys
+    with the c_nonce as the attestation challenge → send the chains in `keyAttestations` → issuer verifies the
+    WP JWT); iOS platform layer (App Attest / SecureEnclave `SecureArea` attestation — Swift equivalents of
+    Phase 2/3); demo on-device wiring; full §4.4.1 unlinkability (per-use WUA key batch).
 - **Trust cluster** (audit #16–#20): DCQL `trusted_authorities` (`aki` → `etsi_tl` → `openid_federation`),
   the `verifier_attestation`/`decentralized_identifier`/`openid_federation` client-ID prefixes, LOTL/CRL/OCSP.
   Already **deliberately sequenced last** in `SPEC-MATRIX.md` (needs standing trust infrastructure).

@@ -18,4 +18,5 @@ export class WalletAttestationDto {
 export class KeyAttestationDto {
   attestedKeys!: JWK[];
   nonce?: string;
+  keyAttestations?: string[]; // base64 android-keystore-x5c chains (one per key) → verified to assert the storage level
 }
