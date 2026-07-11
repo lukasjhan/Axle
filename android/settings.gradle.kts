@@ -21,3 +21,4 @@ rootProject.name = "eudi-wallet-android"
 include(":core")
 include(":proximity")
 include(":dcapi")
+include(":attestation")
