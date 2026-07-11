@@ -33,14 +33,20 @@ class ProximityReaderService internal constructor(
         transport: ProximityTransport,
         engagement: ByteArray,
         documents: List<RequestedDocument>,
-        /** The NFC Handover Select message when the engagement was delivered by NFC static handover (else null = QR). */
+        /** The NFC Handover Select message when the engagement was delivered by NFC handover (else null = QR). */
         handoverNdef: ByteArray? = null,
+        /**
+         * The NFC Handover Request the reader sent for **negotiated** handover (§8.2.2.1); binds the
+         * SessionTranscript as `[Hs, Hr]` (§9.1.5.1). Null = static handover (`[Hs, null]`). The host performs
+         * the NFC exchange and supplies both messages; the SDK only binds them.
+         */
+        handoverRequestNdef: ByteArray? = null,
     ): List<VerifiedDocument> {
         // Session setup runs before the try: if it throws there is no session yet to terminate.
         val eDeviceKey = DeviceEngagement.parseEDeviceKey(engagement)
         // §9.1.5.2: the reader's ephemeral key must be on the same curve as the mdoc's EDeviceKey.
         val eReader = EphemeralKeyPair.generate(eDeviceKey.curve)
-        val handover = if (handoverNdef != null) ProximitySessionTranscript.nfcHandover(handoverNdef) else Cbor.Null
+        val handover = if (handoverNdef != null) ProximitySessionTranscript.nfcHandover(handoverNdef, handoverRequestNdef) else Cbor.Null
         val transcript = ProximitySessionTranscript.build(engagement, eReader.publicKey, handover)
         val transcriptBytes = ProximitySessionTranscript.encode(transcript)
         val enc = SessionEncryption.forReader(eReader, eDeviceKey, transcriptBytes)

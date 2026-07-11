@@ -18,28 +18,33 @@ public struct ProximityReaderService: Sendable {
     /// Requests `documents` from a wallet over `transport` (the reader is the BLE central) and verifies the
     /// response against `engagement` (the scanned QR). Fully verified when issuer trust + holder binding
     /// check out (`deviceAuthenticated == true`); otherwise the disclosed elements are still returned, unverified.
-    /// - Parameter handoverNdef: the NFC Handover Select message when the engagement was delivered by NFC static
+    /// - Parameter handoverNdef: the NFC Handover Select message when the engagement was delivered by NFC
     ///   handover (else nil = QR); it's bound into the SessionTranscript so both sides agree.
+    /// - Parameter handoverRequestNdef: the NFC Handover Request the reader sent for **negotiated** handover
+    ///   (§8.2.2.1); binds the SessionTranscript as `[Hs, Hr]` (§9.1.5.1). Nil = static handover (`[Hs, null]`).
+    ///   The host performs the NFC exchange and supplies both messages; the SDK only binds them.
     public func read(
         transport: any ProximityTransport,
         engagement: [UInt8],
         documents: [RequestedDocument],
-        handoverNdef: [UInt8]? = nil
+        handoverNdef: [UInt8]? = nil,
+        handoverRequestNdef: [UInt8]? = nil
     ) async throws -> [VerifiedDocument] {
-        try await exchange(transport, engagement, documents, handoverNdef)
+        try await exchange(transport, engagement, documents, handoverNdef, handoverRequestNdef)
     }
 
     private func exchange(
         _ transport: any ProximityTransport,
         _ engagement: [UInt8],
         _ documents: [RequestedDocument],
-        _ handoverNdef: [UInt8]?
+        _ handoverNdef: [UInt8]?,
+        _ handoverRequestNdef: [UInt8]?
     ) async throws -> [VerifiedDocument] {
         // Session setup runs before the session begins: if it throws there is nothing to terminate.
         let eDeviceKey = try DeviceEngagement.parseEDeviceKey(engagement)
         // §9.1.5.2: the reader's ephemeral key must be on the same curve as the mdoc's EDeviceKey.
         let eReader = EphemeralKeyPair(curve: eDeviceKey.curve)
-        let handover: Cbor = handoverNdef != nil ? ProximitySessionTranscript.nfcHandover(handoverNdef!) : .null
+        let handover: Cbor = handoverNdef != nil ? ProximitySessionTranscript.nfcHandover(handoverNdef!, handoverRequestMessage: handoverRequestNdef) : .null
         let transcript = try ProximitySessionTranscript.build(deviceEngagement: engagement, eReaderKey: eReader.publicKey, handover: handover)
         let transcriptBytes = try ProximitySessionTranscript.encode(transcript)
         let enc = try SessionEncryption.forReader(ephemeral: eReader, devicePublicKey: eDeviceKey, sessionTranscriptBytes: transcriptBytes)

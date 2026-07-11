@@ -14,6 +14,7 @@ import com.hopae.eudi.wallet.mdoc.ReaderAuthSigner
 import com.hopae.eudi.wallet.mdoc.RequestedDocument
 import com.hopae.eudi.wallet.proximity.DeviceEngagement
 import com.hopae.eudi.wallet.proximity.EphemeralKeyPair
+import com.hopae.eudi.wallet.proximity.MdocNfcEngagement
 import com.hopae.eudi.wallet.proximity.ProximitySessionTranscript
 import com.hopae.eudi.wallet.proximity.SessionEncryption
 import com.hopae.eudi.wallet.proximity.SessionMessages
@@ -24,6 +25,7 @@ import com.hopae.eudi.wallet.spi.HttpRequest
 import com.hopae.eudi.wallet.spi.HttpResponse
 import com.hopae.eudi.wallet.spi.HttpTransport
 import com.hopae.eudi.wallet.spi.KeySpec
+import com.hopae.eudi.wallet.spi.NfcCarrier
 import com.hopae.eudi.wallet.spi.ProximityTransport
 import com.hopae.eudi.wallet.spi.SigningAlgorithm
 import com.hopae.eudi.wallet.store.CredentialEnvelope
@@ -56,13 +58,14 @@ class WalletProximityTest {
     }
 
     /** In-memory duplex channel: the wallet drives [deviceSide]; the test plays the reader. */
-    private class TransportPair {
+    private class TransportPair(private val carrier: NfcCarrier? = null) {
         private val toDevice = Channel<ByteArray>(Channel.UNLIMITED)
         private val toReader = Channel<ByteArray>(Channel.UNLIMITED)
         val deviceSide = object : ProximityTransport {
             override suspend fun send(message: ByteArray) { toReader.send(message) }
             override suspend fun receive(): ByteArray = toDevice.receive()
             override suspend fun close() {}
+            override fun nfcCarrier(): NfcCarrier? = carrier
         }
         suspend fun readerSend(message: ByteArray) { toDevice.send(message) }
         suspend fun readerReceive(): ByteArray = toReader.receive()
@@ -140,6 +143,74 @@ class WalletProximityTest {
         val terminal = withTimeout(15_000) { session.state.first { it.isTerminal } }
         assertTrue(terminal is ProximityState.Completed, "terminal: $terminal")
         assertEquals(TransactionStatus.SUCCESS, logStore.all().single().status)
+    }
+
+    /**
+     * §8.2.2.1 negotiated NFC handover end-to-end: the reader's Handover Request is bound into the transcript
+     * as `[Hs, Hr]` on both sides. If the holder failed to bind `Hr`, its transcript (and thus session keys)
+     * would differ from the reader's and the encrypted exchange would fail — so a clean round-trip proves the
+     * wiring on the holder side.
+     */
+    @Test
+    fun proximityNegotiatedNfcHandoverRoundTrip() = runBlocking {
+        val docType = "org.iso.18013.5.1.mDL"
+        val namespace = "org.iso.18013.5.1"
+        val area = SoftwareSecureArea()
+        val storage = InMemoryStorageDriver()
+        val issuerKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val deviceKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val mdocBytes = MdocTestIssuer.issue(
+            area = area, issuerKey = issuerKey, deviceKey = deviceKey.publicKey, docType = docType, namespace = namespace,
+            elements = listOf("family_name" to Cbor.Text("Han"), "given_name" to Cbor.Text("Jongho")),
+            x5chain = listOf(byteArrayOf(0x30, 0x01)),
+            signed = now, validFrom = now, validUntil = now.plusSeconds(31_536_000),
+        )
+        CredentialStore(storage).save(
+            CredentialEnvelope(
+                CredentialId("mdl-1"), CredentialFormat.MsoMdoc(docType), now,
+                EnvelopeLifecycle.Issued(CredentialPolicy(), listOf(CredentialInstance(deviceKey.handle, mdocBytes))),
+            ),
+        )
+
+        val uuid = ByteArray(16) { (it + 1).toByte() }
+        val hr = MdocNfcEngagement.buildHandoverRequest(uuid, collisionResolution = byteArrayOf(0x12, 0x34), readerEngagement = MdocNfcEngagement.readerEngagement())
+        val wallet = Wallet.create(WalletConfig(), WalletPorts(listOf(area), storage, noHttp))
+        val transport = TransportPair(NfcCarrier(uuid, peripheralServerMode = true))
+        // Negotiated handover: hand the reader's Handover Request to the holder.
+        val session = wallet.proximity.present(transport.deviceSide, nfc = true, handoverRequestNdef = hr)
+
+        val engagementState = withTimeout(15_000) { session.state.first { it is ProximityState.EngagementReady || it is ProximityState.Failed } }
+        assertTrue(engagementState is ProximityState.EngagementReady, "engagement: $engagementState")
+        val engagement = engagementState.deviceEngagement
+        val hs = engagementState.handoverNdef ?: error("NFC engagement must carry a Handover Select")
+
+        // reader: bind the SAME [Hs, Hr] negotiated handover into its transcript.
+        val eReader = EphemeralKeyPair.generate()
+        val eDeviceKey = DeviceEngagement.parseEDeviceKey(engagement)
+        val transcript = ProximitySessionTranscript.build(engagement, eReader.publicKey, ProximitySessionTranscript.nfcHandover(hs, hr))
+        val readerSession = SessionEncryption.forReader(eReader, eDeviceKey, ProximitySessionTranscript.encode(transcript))
+        val deviceRequest = MdocReader().buildDeviceRequest(
+            listOf(RequestedDocument(docType, mapOf(namespace to listOf("family_name")))),
+            transcript,
+        )
+        transport.readerSend(SessionMessages.encodeEstablishment(eReader.publicKey, readerSession.encrypt(deviceRequest)))
+
+        val requestState = withTimeout(15_000) { session.state.first { it is ProximityState.RequestReceived || it is ProximityState.Failed } }
+        assertTrue(requestState is ProximityState.RequestReceived, "request: $requestState")
+        session.respond(ProximitySelection.auto(requestState.request))
+
+        // A decryptable DeviceResponse + a device signature over the negotiated transcript proves both sides
+        // derived the same session from `[Hs, Hr]`.
+        val deviceResponse = readerSession.decrypt(SessionMessages.decodeData(transport.readerReceive()))
+        val document = (field(CborDecoder.decode(deviceResponse), "documents") as Cbor.Array).items.single()
+        val deviceSignature = CoseSign1.fromCbor(field(field(document, "deviceSigned"), "deviceAuth").let { field(it, "deviceSignature") })
+        val deviceNsBytes = Cbor.Tagged(24uL, Cbor.Bytes(CborEncoder.encode(Cbor.CborMap(emptyList()))))
+        val deviceAuth = Cbor.Array(listOf(Cbor.Text("DeviceAuthentication"), transcript, Cbor.Text(docType), deviceNsBytes))
+        val deviceAuthBytes = CborEncoder.encode(Cbor.Tagged(24uL, Cbor.Bytes(CborEncoder.encode(deviceAuth))))
+        assertTrue(deviceSignature.verify(deviceKey.publicKey, detachedPayload = deviceAuthBytes), "device signature over the negotiated transcript")
+
+        val terminal = withTimeout(15_000) { session.state.first { it.isTerminal } }
+        assertTrue(terminal is ProximityState.Completed, "terminal: $terminal")
     }
 
     private fun readerCoseSigner(priv: PrivateKey): CoseSigner = object : CoseSigner {

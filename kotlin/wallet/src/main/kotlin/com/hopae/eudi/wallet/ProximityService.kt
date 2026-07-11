@@ -58,10 +58,15 @@ class ProximityService internal constructor(
 ) {
     /**
      * Starts a proximity session over [transport]: engage → session → reader request → consent → reply.
-     * With [nfc] = true the engagement is delivered via ISO 18013-5 NFC static handover (the app serves the
-     * Handover Select message from [ProximityState.EngagementReady.handoverNdef]); otherwise it's a QR code.
+     * With [nfc] = true the engagement is delivered via ISO 18013-5 NFC handover (the app serves the Handover
+     * Select message from [ProximityState.EngagementReady.handoverNdef]); otherwise it's a QR code.
+     *
+     * [handoverRequestNdef] switches NFC engagement from static to **negotiated** handover (§8.2.2.1): when the
+     * host received a Handover Request from the reader over NFC, pass it here so it is bound into the
+     * SessionTranscript as `[Hs, Hr]` (§9.1.5.1). Null keeps static handover (`[Hs, null]`). The NFC exchange
+     * itself is the host's; the SDK only binds the messages.
      */
-    fun present(transport: ProximityTransport, nfc: Boolean = false): ProximitySession {
+    fun present(transport: ProximityTransport, nfc: Boolean = false, handoverRequestNdef: ByteArray? = null): ProximitySession {
         val session = ProximitySession(scope) {
             emit(ProximityState.GeneratingEngagement)
             val eDevice = EphemeralKeyPair.generate(sessionCurve)
@@ -75,7 +80,7 @@ class ProximityService internal constructor(
                 val carrier = transport.nfcCarrier() ?: throw WalletError.Proximity.SessionFailed("transport offers no NFC carrier")
                 engagement = DeviceEngagement.qr(eDevice.publicKey)
                 handoverNdef = MdocNfcEngagement.buildHandoverSelect(engagement, carrier.serviceUuid, carrier.peripheralServerMode)
-                handover = ProximitySessionTranscript.nfcHandover(handoverNdef)
+                handover = ProximitySessionTranscript.nfcHandover(handoverNdef, handoverRequestNdef)
             } else {
                 engagement = DeviceEngagement.qr(eDevice.publicKey, transport.retrievalMethods())
                 handover = Cbor.Null

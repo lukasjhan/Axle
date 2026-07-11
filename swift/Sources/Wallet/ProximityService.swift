@@ -23,9 +23,14 @@ public struct ProximityService {
     var sessionCurve: EcCurve = .p256
 
     /// Starts a proximity session over `transport`: engage → session → reader request → consent → reply.
-    /// With `nfc` = true the engagement is delivered via ISO 18013-5 NFC static handover (the app serves the
-    /// Handover Select message from `engagementReady`'s `handoverNdef`); otherwise it's a QR code.
-    public func present(_ transport: any ProximityTransport, nfc: Bool = false) -> ProximitySession {
+    /// With `nfc` = true the engagement is delivered via ISO 18013-5 NFC handover (the app serves the Handover
+    /// Select message from `engagementReady`'s `handoverNdef`); otherwise it's a QR code.
+    ///
+    /// `handoverRequestNdef` switches NFC engagement from static to **negotiated** handover (§8.2.2.1): when the
+    /// host received a Handover Request from the reader over NFC, pass it here so it is bound into the
+    /// SessionTranscript as `[Hs, Hr]` (§9.1.5.1). Nil keeps static handover (`[Hs, null]`). The NFC exchange
+    /// itself is the host's; the SDK only binds the messages.
+    public func present(_ transport: any ProximityTransport, nfc: Bool = false, handoverRequestNdef: [UInt8]? = nil) -> ProximitySession {
         let session = ProximitySession { s in
             s.emit(.generatingEngagement)
             let eDevice = EphemeralKeyPair(curve: sessionCurve)
@@ -36,7 +41,7 @@ public struct ProximityService {
                 guard let carrier = transport.nfcCarrier() else { throw ProximityError.sessionFailed("transport offers no NFC carrier") }
                 engagement = try DeviceEngagement.qr(eDeviceKey: eDevice.publicKey)
                 handoverNdef = MdocNfcEngagement.buildHandoverSelect(deviceEngagement: engagement, serviceUuid: carrier.serviceUuid, peripheralServerMode: carrier.peripheralServerMode)
-                handover = ProximitySessionTranscript.nfcHandover(handoverNdef!)
+                handover = ProximitySessionTranscript.nfcHandover(handoverNdef!, handoverRequestMessage: handoverRequestNdef)
             } else {
                 engagement = try DeviceEngagement.qr(eDeviceKey: eDevice.publicKey, retrievalMethods: transport.retrievalMethods())
                 handover = .null

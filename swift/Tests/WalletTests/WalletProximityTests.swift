@@ -31,9 +31,11 @@ final class WalletProximityTests: XCTestCase {
     private struct DeviceTransport: ProximityTransport {
         let inbound: Mailbox   // reader → device
         let outbound: Mailbox  // device → reader
+        var carrier: NfcCarrier? = nil
         func send(_ message: [UInt8]) async throws { await outbound.send(message) }
         func receive() async throws -> [UInt8] { await inbound.receive() }
         func close() async {}
+        func nfcCarrier() -> NfcCarrier? { carrier }
     }
 
     private func field(_ c: Cbor, _ key: String) -> Cbor? {
@@ -113,6 +115,74 @@ final class WalletProximityTests: XCTestCase {
 
         let entries = await logStore.all()
         XCTAssertEqual(.success, entries.first?.status)
+    }
+
+    /// §8.2.2.1 negotiated NFC handover end-to-end: the reader's Handover Request is bound as `[Hs, Hr]` on
+    /// both sides. If the holder failed to bind `Hr`, its transcript (and session keys) would differ from the
+    /// reader's and the encrypted exchange would fail — so a clean round-trip proves the holder-side wiring.
+    func testProximityNegotiatedNfcHandoverRoundTrip() async throws {
+        let docType = "org.iso.18013.5.1.mDL"
+        let namespace = "org.iso.18013.5.1"
+        let area = SoftwareSecureArea()
+        let storage = InMemoryStorageDriver()
+        let issuerKey = try await area.createKey(spec: KeySpec(secureArea: area.id, algorithm: .es256))
+        let deviceKey = try await area.createKey(spec: KeySpec(secureArea: area.id, algorithm: .es256))
+        let mdocBytes = try await MdocTestIssuer.issue(
+            area: area, issuerKey: issuerKey, deviceKey: deviceKey.publicKey, docType: docType, namespace: namespace,
+            elements: [("family_name", .text("Han")), ("given_name", .text("Jongho"))],
+            x5chain: [[0x30, 0x01]],
+            signed: now, validFrom: now, validUntil: now.addingTimeInterval(31_536_000))
+        try await DefaultCredentialStore(driver: storage).save(CredentialEnvelope(
+            id: CredentialId("mdl-1"), format: .msoMdoc(docType: docType), createdAt: now,
+            lifecycle: .issued(policy: CredentialPolicy(), instances: [CredentialInstance(key: deviceKey.handle, payload: mdocBytes)])))
+
+        let wallet = Wallet.create(config: WalletConfig(), ports: WalletPorts(secureAreas: [area], storage: storage, http: NoHttp()))
+
+        let uuid = (1...16).map { UInt8($0) }
+        let hr = MdocNfcEngagement.buildHandoverRequest(serviceUuid: uuid, collisionResolution: [0x12, 0x34], readerEngagement: MdocNfcEngagement.readerEngagement())
+        let toDevice = Mailbox(), toReader = Mailbox()
+        let transport = DeviceTransport(inbound: toDevice, outbound: toReader, carrier: NfcCarrier(serviceUuid: uuid, peripheralServerMode: true))
+        // Negotiated handover: hand the reader's Handover Request to the holder.
+        let session = wallet.proximity.present(transport, nfc: true, handoverRequestNdef: hr)
+
+        var readerSession: SessionEncryption?
+        var transcript: Cbor?
+        var terminal: ProximityState?
+        for await state in session.states {
+            switch state {
+            case let .engagementReady(engagement, handoverNdef):
+                guard let hs = handoverNdef else { return XCTFail("NFC engagement must carry a Handover Select") }
+                let eReader = EphemeralKeyPair()
+                let eDeviceKey = try DeviceEngagement.parseEDeviceKey(engagement)
+                // reader: bind the SAME [Hs, Hr] negotiated handover into its transcript.
+                let t = try ProximitySessionTranscript.build(deviceEngagement: engagement, eReaderKey: eReader.publicKey,
+                                                             handover: ProximitySessionTranscript.nfcHandover(hs, handoverRequestMessage: hr))
+                transcript = t
+                let rs = try SessionEncryption.forReader(ephemeral: eReader, devicePublicKey: eDeviceKey,
+                                                         sessionTranscriptBytes: try ProximitySessionTranscript.encode(t))
+                readerSession = rs
+                let deviceRequest = try await MdocReader().buildDeviceRequest(
+                    [RequestedDocument(docType: docType, elements: [(namespace, ["family_name"])])], sessionTranscript: t)
+                await toDevice.send(try SessionMessages.encodeEstablishment(eReaderKey: eReader.publicKey, encryptedDeviceRequest: try rs.encrypt(deviceRequest)))
+            case let .requestReceived(request):
+                session.respond(ProximitySelection.auto(request))
+            default:
+                break
+            }
+            if state.isTerminal { terminal = state; break }
+        }
+        guard case .completed = terminal else { return XCTFail("terminal: \(String(describing: terminal))") }
+
+        // A decryptable DeviceResponse + a device signature over the negotiated transcript proves both sides
+        // derived the same session from `[Hs, Hr]`.
+        let deviceResponse = try readerSession!.decrypt(SessionMessages.decodeData(await toReader.receive()))
+        guard case let .array(docs)? = field(try CborDecoder.decode(deviceResponse), "documents") else { return XCTFail("no documents") }
+        let deviceSigned = field(docs[0], "deviceSigned")!
+        let deviceSignature = try CoseSign1.fromCbor(field(field(deviceSigned, "deviceAuth")!, "deviceSignature")!)
+        let deviceNsBytes = Cbor.tagged(24, .bytes(try CborEncoder.encode(.map([]))))
+        let deviceAuth = Cbor.array([.text("DeviceAuthentication"), transcript!, .text(docType), deviceNsBytes])
+        let deviceAuthBytes = try CborEncoder.encode(.tagged(24, .bytes(try CborEncoder.encode(deviceAuth))))
+        XCTAssertTrue(deviceSignature.verify(publicKey: deviceKey.publicKey, detachedPayload: deviceAuthBytes), "device signature over the negotiated transcript")
     }
 
     private struct ReaderCoseSigner: CoseSigner {
