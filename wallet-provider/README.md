@@ -33,8 +33,8 @@ WUA/key attestation 헤더의 `x5c` = `[signer 인증서, WP CA]`. 이슈어(또
 ## 실행
 
 ```bash
-npm install
-npm run build && PORT=3200 node dist/main.js   # 또는 npm run start:dev
+pnpm install                                     # pnpm (packageManager 고정); better-sqlite3 등 네이티브 빌드 허용됨
+pnpm build && PORT=3200 node dist/main.js        # 또는 pnpm start:dev
 node test/wp-flow.mjs                            # 전체 플로우 e2e (서버 실행 중일 때)
 ```
 

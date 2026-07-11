@@ -59,7 +59,7 @@ Pass `fallback = null` in production so a failed integrity check surfaces instea
 cd wallet-provider
 PLAY_INTEGRITY_PACKAGE_NAME=com.hopae.axle.wallet \
 GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json \
-npm run start
+pnpm start
 ```
 
 It calls Google `decodeIntegrityToken`, checks the nonce (anti-replay) and the app/device verdicts. Without
