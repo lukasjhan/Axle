@@ -84,9 +84,13 @@ are not lost; each deserves its own triage.
       (HAIP wallet-attestation batch) — a later refinement (approach C).
     - **Remaining in Phase 1:** demo on-device wiring (inject the adapter; WP URL reachable from the device;
       avoid breaking issuance when the WP is down) + **Swift parity**.
-  - [ ] **Phase 2 — Android Key Attestation (real):** `AndroidKeystoreSecureArea.createKey` sets an attestation
-    challenge; `attestation()` returns the real keystore X.509 chain (today a `null` stub asserting nothing).
-    Wire the OpenID4VCI `key_attestation` proof (`KeyAttestationSource` → backend `/key-attestation`).
+  - [x] **Phase 2 — Android Key Attestation (real):** `AndroidKeystoreSecureArea.createKey` bakes
+    `KeySpec.attestationChallenge`; `attestation()` returns the real Keystore X.509 chain (`android-keystore-x5c`,
+    concatenated DER leaf→root), or null when no challenge was set (was a `null` stub). **Device-verified**
+    (instrumented test on SM-F731N): a challenged key yields a full chain with the Android Key Attestation
+    extension (OID 1.3.6.1.4.1.11129.2.1.17) and the leaf key matches; a challenge-less key attests nothing.
+    **Still open:** wire the OpenID4VCI `key_attestation` proof (`KeyAttestationSource` → backend
+    `/key-attestation`) and have the WP verify the hardware chain before asserting `iso_18045_high`.
   - [ ] **Phase 3 — Play Integrity (real) / App Attest:** `PlayIntegrityTokenProvider` (demo: attempt real →
     log → dev fallback; production: no fallback) + backend Play Integrity verification (replaces the dev stub).
 - **Trust cluster** (audit #16–#20): DCQL `trusted_authorities` (`aki` → `etsi_tl` → `openid_federation`),

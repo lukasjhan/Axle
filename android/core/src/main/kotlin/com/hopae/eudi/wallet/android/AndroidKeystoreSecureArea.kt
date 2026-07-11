@@ -59,6 +59,10 @@ class AndroidKeystoreSecureArea(
         val paramSpec = KeyGenParameterSpec.Builder(alias, purposes)
             .setAlgorithmParameterSpec(ECGenParameterSpec(spec.algorithm.curve.jcaName))
             .setDigests(digest)
+            // Android Key Attestation is bound at key creation: with a challenge the Keystore emits a
+            // certificate chain (leaf → … → Google hardware-attestation root) that proves the key's storage
+            // and the challenge. Without one, only a self-signed leaf exists (no attestation). See attestation().
+            .apply { spec.attestationChallenge?.let { setAttestationChallenge(it) } }
             .build()
         KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore")
             .apply { initialize(paramSpec) }.generateKeyPair()
@@ -90,7 +94,21 @@ class AndroidKeystoreSecureArea(
         generateSecret()
     }
 
-    override suspend fun attestation(key: KeyHandle, challenge: ByteArray): KeyAttestation? = null
+    /**
+     * The Android Key Attestation certificate chain for [key], as concatenated DER (leaf → root; each cert
+     * is a self-delimiting DER `SEQUENCE`, so a verifier reads them in order). Format `android-keystore-x5c`.
+     *
+     * The chain — and the challenge it binds — are fixed when the key is generated, so the key must have been
+     * created with `KeySpec.attestationChallenge` set (Android has no way to re-attest an existing key with a
+     * new challenge); [challenge] is accepted for port symmetry but not re-bound here. Returns null when the
+     * key carries no attestation chain (only a self-signed leaf), i.e. it was created without a challenge.
+     */
+    override suspend fun attestation(key: KeyHandle, challenge: ByteArray): KeyAttestation? {
+        require(key.secureArea == id) { "key belongs to ${key.secureArea}, not $id" }
+        val chain = keystore.getCertificateChain(key.alias) ?: return null
+        if (chain.size <= 1) return null // self-signed leaf only — no hardware attestation was requested at creation
+        return KeyAttestation("android-keystore-x5c", chain.fold(ByteArray(0)) { acc, cert -> acc + cert.encoded })
+    }
 
     override suspend fun deleteKey(key: KeyHandle) {
         keystore.deleteEntry(key.alias)
