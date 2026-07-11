@@ -101,9 +101,11 @@ are not lost; each deserves its own triage.
     (`fallback = null` in production so a failed check surfaces). Backend `IntegrityService` gains a real
     `verifyPlayIntegrity` path (Google `decodeIntegrityToken`, checks app/device verdicts + nonce) gated on
     `PLAY_INTEGRITY_PACKAGE_NAME` + Application Default Credentials; the `dev-integrity:<nonce>` stub stays the
-    default. Client compiles with the Play Integrity SDK; backend compiles and the dev WUA loop still passes
-    against the restarted backend. **Not exercisable here** (needs a Google Cloud project + service account) —
-    the real path is coded and documented, dev fallback is operative.
+    default. **Device-verified end-to-end** against a real Google Cloud project (`hopae-wallet`, project number
+    1048824403731) + a service account: the app (`com.hopae.axle.wallet`) requested a real token, and
+    `decodeIntegrityToken` returned the expected verdict — **`deviceIntegrity: MEETS_DEVICE_INTEGRITY`** (genuine
+    device) and **`appIntegrity: UNRECOGNIZED_VERSION`** (side-loaded debug build, not on Play; would be
+    `PLAY_RECOGNIZED` after an internal-testing upload). Decode helper: `wallet-provider/tools/decode-integrity.mjs`.
   - [x] **Swift parity — platform-agnostic layer.** `ClientAuthProvider` protocol (`WalletClientAuth`
     conforms), vci `clientAuth` takes it; `AttestationClientAuth` (Wallet — persistent instance key,
     fresh WUA per issuer, §4.4.1) wired in `Wallet.swift`; new `WalletProvider` SPM target with the reference

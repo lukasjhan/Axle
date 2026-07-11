@@ -30,6 +30,7 @@
     "@peculiar/x509": "^2.0.0",
     "better-sqlite3": "^12.11.1",
     "drizzle-orm": "^0.45.2",
+    "google-auth-library": "^10.9.0",
     "jose": "^6.2.3",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"
