@@ -1,6 +1,15 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
+}
+
+// Release (upload) signing — read from demo/keystore.properties (gitignored); absent on machines that only
+// build debug. See wallet-provider/PLAY-INTEGRITY.md for why a Play-signed release build is needed.
+val keystoreProps = rootProject.file("keystore.properties").takeIf { it.exists() }?.let {
+    Properties().apply { load(FileInputStream(it)) }
 }
 
 android {
@@ -22,8 +31,23 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    signingConfigs {
+        if (keystoreProps != null) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         getByName("debug") { isMinifyEnabled = false }
+        getByName("release") {
+            isMinifyEnabled = false // wallet uses reflection (CBOR/JOSE); keep R8 off for this test build
+            if (keystoreProps != null) signingConfig = signingConfigs.getByName("release")
+        }
     }
 }
 

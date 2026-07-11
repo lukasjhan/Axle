@@ -3,3 +3,7 @@ build/
 local.properties
 *.apk
 .idea/
+
+# Release signing (upload key) — never commit
+upload-keystore.jks
+keystore.properties
