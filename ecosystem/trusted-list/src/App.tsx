@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Check, Copy, Download } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -7,45 +7,33 @@ import { cn } from '@/lib/utils';
 
 // Canonical production origin the curl commands point at (the site itself may be served from a preview URL).
 // Set VITE_SITE_URL at build time (e.g. Vercel env); falls back to the sandbox's production domain.
-const SITE = import.meta.env.VITE_SITE_URL ?? 'https://trust.hopae.dev';
+const SITE = import.meta.env.VITE_SITE_URL ?? 'https://trusted-list.vercel.app';
 
-const FORMATS = [
-  { key: 'jws', label: 'Compact JWS', hint: 'protected.payload.signature' },
-  { key: 'jades.json', label: 'JAdES (JSON)', hint: 'Flattened JWS JSON serialization' },
-] as const;
-
+interface Format {
+  key: string;
+  label: string;
+  hint: string;
+  file: string;
+}
+interface Entity {
+  name: string;
+  services: string[];
+}
 interface TrustList {
   slug: string;
-  name: string;
+  title: string;
   standard: string;
   description: string;
-  available: boolean;
+  sequenceNumber: number;
+  issued: string;
+  nextUpdate: string;
+  entities: Entity[];
+  formats: Format[];
 }
-
-// The sandbox's trust services. Wallet Providers is live; the others are placeholders for the ecosystem to come.
-const LISTS: TrustList[] = [
-  {
-    slug: 'wallet-providers',
-    name: 'Wallet Providers',
-    standard: 'ETSI TS 119 602 · Annex E',
-    description: 'Trusted wallet solution providers. Wallet-unit attestations (WUAs) chain to the certificates on this list.',
-    available: true,
-  },
-  {
-    slug: 'pid-issuers',
-    name: 'PID Issuers',
-    standard: 'ETSI TS 119 602',
-    description: 'Issuers of Person Identification Data (PID) credentials.',
-    available: false,
-  },
-  {
-    slug: 'registrar',
-    name: 'Registrar',
-    standard: 'ETSI TS 119 602',
-    description: 'Registered relying parties and their trust anchors.',
-    available: false,
-  },
-];
+interface Manifest {
+  generatedAt: string;
+  lists: TrustList[];
+}
 
 function CopyButton({ text, className }: { text: string; className?: string }) {
   const [copied, setCopied] = useState(false);
@@ -67,6 +55,19 @@ function CopyButton({ text, className }: { text: string; className?: string }) {
 }
 
 export default function App() {
+  const [manifest, setManifest] = useState<Manifest | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch('/tl/lists.json', { cache: 'no-store' })
+      .then((r) => {
+        if (!r.ok) throw new Error(`${r.status} loading lists.json`);
+        return r.json();
+      })
+      .then(setManifest)
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, []);
+
   return (
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-3xl px-6 py-16">
@@ -79,52 +80,51 @@ export default function App() {
           </p>
         </header>
 
+        {error && <p className="text-sm text-red-600">Could not load the lists: {error}</p>}
+        {!manifest && !error && <p className="text-sm text-muted-foreground">Loading…</p>}
+
         <div className="space-y-4">
-          {LISTS.map((list) => (
-            <Card key={list.slug} className={cn(!list.available && 'opacity-60')}>
+          {manifest?.lists.map((list) => (
+            <Card key={list.slug}>
               <CardHeader>
-                <div className="flex items-center gap-3">
-                  <CardTitle className="text-xl">{list.name}</CardTitle>
-                  {list.available ? (
-                    <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">Available</span>
-                  ) : (
-                    <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">Coming soon</span>
-                  )}
-                </div>
-                <CardDescription className="flex flex-col gap-1 pt-1">
+                <CardTitle className="text-xl">{list.title}</CardTitle>
+                <CardDescription className="flex flex-col gap-1.5 pt-1">
                   <span className="font-mono text-xs">{list.standard}</span>
                   <span>{list.description}</span>
+                  {list.entities.map((e) => (
+                    <span key={e.name} className="text-xs">
+                      <span className="font-medium text-foreground">{e.name}</span>
+                      <span className="text-muted-foreground"> — {e.services.join(' · ')}</span>
+                    </span>
+                  ))}
                 </CardDescription>
               </CardHeader>
 
-              {list.available && (
-                <CardContent className="space-y-3">
-                  {FORMATS.map((f) => {
-                    const file = `${list.slug}.${f.key}`;
-                    const curl = `curl -O ${SITE}/tl/${file}`;
-                    return (
-                      <div key={f.key} className="rounded-lg border bg-muted/30 p-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <div className="text-sm font-medium">{f.label}</div>
-                            <div className="text-xs text-muted-foreground">{f.hint}</div>
-                          </div>
-                          <Button asChild size="sm" variant="outline" className="shrink-0">
-                            <a href={`/tl/${file}`} download={file}>
-                              <Download />
-                              Download
-                            </a>
-                          </Button>
+              <CardContent className="space-y-3">
+                {list.formats.map((f) => {
+                  const curl = `curl -O ${SITE}/tl/${f.file}`;
+                  return (
+                    <div key={f.key} className="rounded-lg border bg-muted/30 p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-medium">{f.label}</div>
+                          <div className="text-xs text-muted-foreground">{f.hint}</div>
                         </div>
-                        <div className="relative mt-3">
-                          <pre className="whitespace-pre-wrap break-all rounded-md bg-slate-900 py-2 pl-3 pr-10 font-mono text-xs leading-relaxed text-slate-50">{curl}</pre>
-                          <CopyButton text={curl} className="absolute right-1 top-1" />
-                        </div>
+                        <Button asChild size="sm" variant="outline" className="shrink-0">
+                          <a href={`/tl/${f.file}`} download={f.file}>
+                            <Download />
+                            Download
+                          </a>
+                        </Button>
                       </div>
-                    );
-                  })}
-                </CardContent>
-              )}
+                      <div className="relative mt-3">
+                        <pre className="whitespace-pre-wrap break-all rounded-md bg-slate-900 py-2 pl-3 pr-10 font-mono text-xs leading-relaxed text-slate-50">{curl}</pre>
+                        <CopyButton text={curl} className="absolute right-1 top-1" />
+                      </div>
+                    </div>
+                  );
+                })}
+              </CardContent>
             </Card>
           ))}
         </div>

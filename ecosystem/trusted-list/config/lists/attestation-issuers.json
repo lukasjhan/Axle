@@ -1,0 +1,29 @@
+{
+  "_note": "List of (Q)EAA / Attestation Providers (EUDI ARF §Attestation Providers, shaped as an ETSI TS 119 602 LoTE). The mDL (ISO/IEC 18013-5) is an electronic attestation of attributes issued under the Attestation Issuer CA listed here.",
+  "slug": "attestation-issuers",
+  "title": "Attestation Issuers",
+  "standard": "ETSI TS 119 602 · EUDI ARF ((Q)EAA Providers)",
+  "description": "Providers of (Qualified) Electronic Attestations of Attributes. The mDL (ISO/IEC 18013-5) issued here chains to the certificate on this list.",
+  "loteType": "http://uri.etsi.org/19602/LoTEType/EUAttestationProvidersList",
+  "schemeName": "Hopae EUDI Sandbox — List of Attestation (QEAA) Providers",
+  "loteVersionIdentifier": "1",
+  "loteSequenceNumber": 1,
+  "entities": [
+    {
+      "teName": "Hopae S.A.",
+      "teTradeName": "NTRLU-B000000",
+      "teAddress": {
+        "postal": { "country": "LU", "locality": "Luxembourg" },
+        "electronic": ["mailto:trust@hopae.dev"]
+      },
+      "teInformationUri": ["https://issuer.hopae.dev/mdl/policy"],
+      "services": [
+        {
+          "serviceTypeIdentifier": "http://uri.etsi.org/19602/SvcType/EAA/Issuance/mDL",
+          "serviceName": "mDL — mdoc (ISO/IEC 18013-5)",
+          "certFile": "config/certs/attestation-ca.pem"
+        }
+      ]
+    }
+  ]
+}

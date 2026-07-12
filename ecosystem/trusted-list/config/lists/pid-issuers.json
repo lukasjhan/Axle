@@ -1,0 +1,34 @@
+{
+  "_note": "List of PID Providers (EUDI ARF §PID Providers, shaped as an ETSI TS 119 602 LoTE). Both PID formats — SD-JWT VC and mdoc — are issued under the same PID Issuer CA, which is the trust anchor listed here.",
+  "slug": "pid-issuers",
+  "title": "PID Issuers",
+  "standard": "ETSI TS 119 602 · EUDI ARF (PID Providers)",
+  "description": "Providers of Person Identification Data (PID). Issued PIDs — SD-JWT VC and mdoc — chain to the certificate on this list.",
+  "loteType": "http://uri.etsi.org/19602/LoTEType/EUPIDProvidersList",
+  "schemeName": "Hopae EUDI Sandbox — List of PID Providers",
+  "loteVersionIdentifier": "1",
+  "loteSequenceNumber": 1,
+  "entities": [
+    {
+      "teName": "Hopae S.A.",
+      "teTradeName": "NTRLU-B000000",
+      "teAddress": {
+        "postal": { "country": "LU", "locality": "Luxembourg" },
+        "electronic": ["mailto:trust@hopae.dev"]
+      },
+      "teInformationUri": ["https://issuer.hopae.dev/pid/policy"],
+      "services": [
+        {
+          "serviceTypeIdentifier": "http://uri.etsi.org/19602/SvcType/PID/Issuance/SD-JWT-VC",
+          "serviceName": "PID — SD-JWT VC",
+          "certFile": "config/certs/pid-issuer-ca.pem"
+        },
+        {
+          "serviceTypeIdentifier": "http://uri.etsi.org/19602/SvcType/PID/Issuance/mdoc",
+          "serviceName": "PID — mdoc (ISO/IEC 18013-5)",
+          "certFile": "config/certs/pid-issuer-ca.pem"
+        }
+      ]
+    }
+  ]
+}

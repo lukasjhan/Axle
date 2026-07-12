@@ -1,0 +1,130 @@
+{
+  "generatedAt": "2026-07-12T09:11:04.512Z",
+  "lists": [
+    {
+      "slug": "wallet-providers",
+      "title": "Wallet Providers",
+      "standard": "ETSI TS 119 602 · Annex E",
+      "description": "Trusted wallet solution providers. Wallet-unit attestations (WUAs) chain to the certificate on this list.",
+      "sequenceNumber": 1,
+      "issued": "2026-07-12T09:11:04.512Z",
+      "nextUpdate": "2027-01-12T09:11:04.512Z",
+      "entities": [
+        {
+          "name": "Hopae S.A.",
+          "services": [
+            "Axle Wallet"
+          ]
+        }
+      ],
+      "formats": [
+        {
+          "key": "jws",
+          "label": "Compact JWS",
+          "hint": "protected.payload.signature",
+          "file": "wallet-providers.jws"
+        },
+        {
+          "key": "jades.json",
+          "label": "JAdES (JSON)",
+          "hint": "Flattened JWS JSON serialization",
+          "file": "wallet-providers.jades.json"
+        }
+      ]
+    },
+    {
+      "slug": "pid-issuers",
+      "title": "PID Issuers",
+      "standard": "ETSI TS 119 602 · EUDI ARF (PID Providers)",
+      "description": "Providers of Person Identification Data (PID). Issued PIDs — SD-JWT VC and mdoc — chain to the certificate on this list.",
+      "sequenceNumber": 1,
+      "issued": "2026-07-12T09:11:04.512Z",
+      "nextUpdate": "2027-01-12T09:11:04.512Z",
+      "entities": [
+        {
+          "name": "Hopae S.A.",
+          "services": [
+            "PID — SD-JWT VC",
+            "PID — mdoc (ISO/IEC 18013-5)"
+          ]
+        }
+      ],
+      "formats": [
+        {
+          "key": "jws",
+          "label": "Compact JWS",
+          "hint": "protected.payload.signature",
+          "file": "pid-issuers.jws"
+        },
+        {
+          "key": "jades.json",
+          "label": "JAdES (JSON)",
+          "hint": "Flattened JWS JSON serialization",
+          "file": "pid-issuers.jades.json"
+        }
+      ]
+    },
+    {
+      "slug": "attestation-issuers",
+      "title": "Attestation Issuers",
+      "standard": "ETSI TS 119 602 · EUDI ARF ((Q)EAA Providers)",
+      "description": "Providers of (Qualified) Electronic Attestations of Attributes. The mDL (ISO/IEC 18013-5) issued here chains to the certificate on this list.",
+      "sequenceNumber": 1,
+      "issued": "2026-07-12T09:11:04.512Z",
+      "nextUpdate": "2027-01-12T09:11:04.512Z",
+      "entities": [
+        {
+          "name": "Hopae S.A.",
+          "services": [
+            "mDL — mdoc (ISO/IEC 18013-5)"
+          ]
+        }
+      ],
+      "formats": [
+        {
+          "key": "jws",
+          "label": "Compact JWS",
+          "hint": "protected.payload.signature",
+          "file": "attestation-issuers.jws"
+        },
+        {
+          "key": "jades.json",
+          "label": "JAdES (JSON)",
+          "hint": "Flattened JWS JSON serialization",
+          "file": "attestation-issuers.jades.json"
+        }
+      ]
+    },
+    {
+      "slug": "registrar",
+      "title": "Registrar",
+      "standard": "ETSI TS 119 602 · EUDI ARF (Registration)",
+      "description": "Registrar of relying parties. Relying-party access certificates chain to the Registrar CA on this list.",
+      "sequenceNumber": 1,
+      "issued": "2026-07-12T09:11:04.512Z",
+      "nextUpdate": "2027-01-12T09:11:04.512Z",
+      "entities": [
+        {
+          "name": "Hopae Registrar",
+          "services": [
+            "Relying Party Access CA"
+          ]
+        }
+      ],
+      "formats": [
+        {
+          "key": "jws",
+          "label": "Compact JWS",
+          "hint": "protected.payload.signature",
+          "file": "registrar.jws"
+        },
+        {
+          "key": "jades.json",
+          "label": "JAdES (JSON)",
+          "hint": "Flattened JWS JSON serialization",
+          "file": "registrar.jades.json"
+        }
+      ]
+    }
+  ]
+}

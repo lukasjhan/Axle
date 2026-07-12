@@ -1,18 +1,9 @@
 {
-  "_note": "ETSI TS 119 602 Annex E — List of Wallet Providers scheme information (Table E.1). URIs are the normative registered values; bump loteSequenceNumber on every re-issue.",
-  "loteVersionIdentifier": "1",
-  "loteSequenceNumber": 1,
-  "loteType": "http://uri.etsi.org/19602/LoTEType/EUWalletProvidersList",
+  "_note": "Shared Scheme Operator information common to every Trusted List. Per-list specifics (loteType, scheme name, entities) live in config/lists/*.json. URIs mirror the ETSI TS 119 602 registered value patterns; siteUrl is the canonical hosting origin the distribution points resolve to.",
   "schemeOperatorName": "Hopae",
-  "schemeName": "Hopae EUDI Sandbox — List of Wallet Providers",
-  "schemeInformationUri": [
-    "https://trust.hopae.dev/",
-    "https://trust.hopae.dev/tl/wallet-providers/archive/"
-  ],
-  "statusDeterminationApproach": "http://uri.etsi.org/19602/WalletProvidersList/StatusDetn/EU",
-  "schemeTypeCommunityRules": "http://uri.etsi.org/19602/WalletProvidersList/schemerules/EU",
   "schemeTerritory": "EU",
-  "distributionPoints": ["https://trust.hopae.dev/tl/wallet-providers.jws"],
-  "selfPointerUri": "https://trust.hopae.dev/tl/wallet-providers.jws",
-  "nextUpdateMonths": 6
+  "statusDeterminationApproach": "http://uri.etsi.org/19602/StatusDetn/EU",
+  "schemeTypeCommunityRules": "http://uri.etsi.org/19602/schemerules/EU",
+  "nextUpdateMonths": 6,
+  "siteUrl": "https://trusted-list.vercel.app"
 }

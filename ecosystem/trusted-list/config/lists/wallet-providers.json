@@ -1,0 +1,32 @@
+{
+  "_note": "ETSI TS 119 602 Annex E — List of Wallet Providers. teTradeName carries the EN 319 412-1 registration identifier; the service digital identity is the WP CA that wallet-unit artifacts (WUAs) chain to.",
+  "slug": "wallet-providers",
+  "title": "Wallet Providers",
+  "standard": "ETSI TS 119 602 · Annex E",
+  "description": "Trusted wallet solution providers. Wallet-unit attestations (WUAs) chain to the certificate on this list.",
+  "loteType": "http://uri.etsi.org/19602/LoTEType/EUWalletProvidersList",
+  "schemeName": "Hopae EUDI Sandbox — List of Wallet Providers",
+  "loteVersionIdentifier": "1",
+  "loteSequenceNumber": 1,
+  "entities": [
+    {
+      "teName": "Hopae S.A.",
+      "teTradeName": "NTRLU-B000000",
+      "teAddress": {
+        "postal": { "country": "LU", "locality": "Luxembourg" },
+        "electronic": ["mailto:trust@hopae.dev"]
+      },
+      "teInformationUri": [
+        "https://wallet.hopae.dev/policy",
+        "http://uri.etsi.org/19602/ListOfTrustedEntities/WalletProvider/LU"
+      ],
+      "services": [
+        {
+          "serviceTypeIdentifier": "http://uri.etsi.org/19602/SvcType/WalletSolution/Issuance",
+          "serviceName": "Axle Wallet",
+          "certFile": "config/certs/wp-ca.pem"
+        }
+      ]
+    }
+  ]
+}

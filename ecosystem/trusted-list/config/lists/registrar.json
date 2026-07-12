@@ -1,0 +1,29 @@
+{
+  "_note": "Registrar list (EUDI ARF §Registration, shaped as an ETSI TS 119 602 LoTE). The trust anchor is the Registrar CA (reused from registrar-be); relying-party access certificates chain to it.",
+  "slug": "registrar",
+  "title": "Registrar",
+  "standard": "ETSI TS 119 602 · EUDI ARF (Registration)",
+  "description": "Registrar of relying parties. Relying-party access certificates chain to the Registrar CA on this list.",
+  "loteType": "http://uri.etsi.org/19602/LoTEType/EURegistrarList",
+  "schemeName": "Hopae EUDI Sandbox — Registrar (Relying Party Access CAs)",
+  "loteVersionIdentifier": "1",
+  "loteSequenceNumber": 1,
+  "entities": [
+    {
+      "teName": "Hopae Registrar",
+      "teTradeName": "NTRLU-B000000",
+      "teAddress": {
+        "postal": { "country": "LU", "locality": "Luxembourg" },
+        "electronic": ["mailto:trust@hopae.dev"]
+      },
+      "teInformationUri": ["https://registrar.hopae.dev/"],
+      "services": [
+        {
+          "serviceTypeIdentifier": "http://uri.etsi.org/19602/SvcType/RP/Registration",
+          "serviceName": "Relying Party Access CA",
+          "certFile": "config/certs/registrar-ca.pem"
+        }
+      ]
+    }
+  ]
+}
