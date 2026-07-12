@@ -15,6 +15,7 @@ import com.hopae.eudi.wallet.testkit.SoftwareSecureArea
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /** HAIP attestation-based client authentication: PAR + token requests carry the client attestation. */
@@ -75,6 +76,42 @@ class ClientAttestationTest {
             assertEquals("wallet-instance-1", (payload["iss"] as JsonValue.Str).value, "PoP iss on $path")
             assertEquals("https://issuer.example", (payload["aud"] as JsonValue.Str).value, "PoP aud on $path")
             assertTrue(jws.verify(instanceKey.publicKey, SigningAlgorithm.ES256), "PoP signature on $path")
+        }
+    }
+
+    /** Prefer `public`: when the AS offers it, the WUA is not asserted even though client auth is configured. */
+    @Test
+    fun walletAttestationSkippedWhenPublicOffered() = runBlocking {
+        val area = SoftwareSecureArea()
+        val issuerKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val mock = MockIssuer(area, issuerKey, now).apply {
+            clientAuthMethods = listOf("public", "attest_jwt_client_auth") // both offered → prefer public
+        }
+        val capturing = Capturing(mock)
+
+        val proofKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val dpopKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val instanceKey = area.createKey(KeySpec(secureArea = area.id, algorithm = SigningAlgorithm.ES256))
+        val keys = IssuanceKeys(
+            SecureAreaJwsSigner(area, proofKey.handle, SigningAlgorithm.ES256), proofKey.publicKey,
+            SecureAreaJwsSigner(area, dpopKey.handle, SigningAlgorithm.ES256), dpopKey.publicKey,
+        )
+        val clientAuth = WalletClientAuth.create(
+            fakeProvider(), instanceKey, SecureAreaJwsSigner(area, instanceKey.handle, SigningAlgorithm.ES256),
+            clientId = "wallet-instance-1", rng = rng(), clock = { now },
+        )
+        val client = Openid4VciClient(capturing, rng(), clock = { now }, clientAuth = clientAuth)
+
+        val prepared = client.prepareAuthorizationCodeIssuance("https://issuer.example", "eu.europa.ec.eudi.pid.1", "wallet://cb")
+        val redirect = mock.execute(HttpRequest(com.hopae.eudi.wallet.spi.HttpMethod.GET, prepared.authorizationUrl))
+        val code = redirect.headers.first { it.first == "Location" }.second.substringAfter("code=").substringBefore('&')
+        client.finishAuthorizationCodeIssuance(prepared, code, keys)
+
+        // public is offered, so neither PAR nor token may carry the attestation headers.
+        for (path in listOf("/par", "/token")) {
+            val req = capturing.requests.last { it.url.endsWith(path) }
+            assertNull(header(req, "OAuth-Client-Attestation"), "no attestation on $path when public is offered")
+            assertNull(header(req, "OAuth-Client-Attestation-PoP"), "no PoP on $path when public is offered")
         }
     }
 

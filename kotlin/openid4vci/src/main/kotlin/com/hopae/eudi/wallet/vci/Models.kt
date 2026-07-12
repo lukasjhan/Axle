@@ -195,6 +195,8 @@ class AuthorizationServerMetadata(
     val pushedAuthorizationRequestEndpoint: String?,
     val authorizationEndpoint: String?,
     val dpopSigningAlgValuesSupported: List<String>,
+    /** RFC 8414 `token_endpoint_auth_methods_supported` — e.g. `public`, `attest_jwt_client_auth`. Empty when the AS omits it. */
+    val tokenEndpointAuthMethodsSupported: List<String>,
 ) {
     companion object {
         fun fromObj(o: JsonValue.Obj): AuthorizationServerMetadata = AuthorizationServerMetadata(
@@ -203,6 +205,7 @@ class AuthorizationServerMetadata(
             pushedAuthorizationRequestEndpoint = o.str("pushed_authorization_request_endpoint"),
             authorizationEndpoint = o.str("authorization_endpoint"),
             dpopSigningAlgValuesSupported = o.arrStr("dpop_signing_alg_values_supported") ?: emptyList(),
+            tokenEndpointAuthMethodsSupported = o.arrStr("token_endpoint_auth_methods_supported") ?: emptyList(),
         )
     }
 }

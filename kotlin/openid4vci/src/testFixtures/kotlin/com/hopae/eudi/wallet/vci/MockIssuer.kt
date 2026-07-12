@@ -218,6 +218,13 @@ class MockIssuer(
     /** When true, /credential defers (returns a transaction_id); the credential comes from /deferred_credential. */
     var deferMode: Boolean = false
 
+    /**
+     * `token_endpoint_auth_methods_supported` this AS advertises. Defaults to attestation-only (a HAIP-style
+     * issuer) so a configured WUA is asserted; set to include `public` to model an issuer where the client
+     * should prefer public and skip the WUA.
+     */
+    var clientAuthMethods: List<String> = listOf("attest_jwt_client_auth")
+
     private var deferredHolderKey: EcPublicKey? = null
     private var deferredPollCount = 0
     /** Test-observable: (notification_id, event) of the last notification received. */
@@ -395,6 +402,7 @@ class MockIssuer(
          "authorization_endpoint":"$issuer/authorize",
          "pushed_authorization_request_endpoint":"$issuer/par",
          "code_challenge_methods_supported":["S256"],
+         "token_endpoint_auth_methods_supported":[${clientAuthMethods.joinToString(",") { "\"$it\"" }}],
          "dpop_signing_alg_values_supported":["ES256"]}
     """.trimIndent()
 

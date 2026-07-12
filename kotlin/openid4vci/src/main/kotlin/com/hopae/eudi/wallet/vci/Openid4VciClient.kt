@@ -86,9 +86,22 @@ class Openid4VciClient(
     /** With attestation-based client auth the client_id is the wallet instance's attestation subject. */
     private val clientId: String = clientAuth?.clientId ?: clientId
 
-    /** Client-attestation headers bound to the authorization server (empty when not configured). */
-    private suspend fun clientAuthHeaders(asMeta: AuthorizationServerMetadata): List<Pair<String, String>> =
-        clientAuth?.headers(asMeta.issuer) ?: emptyList()
+    /**
+     * Client-attestation (WUA) headers for a PAR/token request — empty unless attestation-based client auth
+     * is both configured and the right method for this AS.
+     *
+     * Selection follows the AS's `token_endpoint_auth_methods_supported`: **`public` is preferred wherever it
+     * is offered**, so the WUA is asserted only when the AS supports `attest_jwt_client_auth` and does *not*
+     * also offer `public`. A WUA the AS can't validate (e.g. no trusted `x5c` chain) is rejected, so sending
+     * one where `public` would do only breaks issuance. When the AS advertises no methods, default to public
+     * (send nothing) — the safe choice, since asserting an unvalidatable WUA is what fails.
+     */
+    private suspend fun clientAuthHeaders(asMeta: AuthorizationServerMetadata): List<Pair<String, String>> {
+        val auth = clientAuth ?: return emptyList()
+        val methods = asMeta.tokenEndpointAuthMethodsSupported
+        val useAttestation = methods.contains("attest_jwt_client_auth") && !methods.contains("public")
+        return if (useAttestation) auth.headers(asMeta.issuer) else emptyList()
+    }
     /**
      * Resolves a credential offer from a wallet deep link / QR payload (OpenID4VCI §4.1):
      * accepts `<scheme>://…?credential_offer=<url-encoded-json>`, a `credential_offer_uri`
