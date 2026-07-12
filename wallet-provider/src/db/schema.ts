@@ -1,13 +1,17 @@
-import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { pgTable, uuid, varchar, timestamp, boolean, jsonb } from 'drizzle-orm/pg-core';
+import { randomUUID } from 'node:crypto';
+import type { JWK } from 'jose';
 
-/** Registered wallet instances. `public_jwk` is the instance key JSON; revocation is a soft flag. */
-export const walletInstances = sqliteTable('wallet_instances', {
-  instanceId: text('instance_id').primaryKey(),
-  publicJwk: text('public_jwk').notNull(), // JSON-encoded JWK
-  platform: text('platform').notNull(),
-  createdAt: integer('created_at').notNull(), // epoch ms
-  revoked: integer('revoked', { mode: 'boolean' }).notNull().default(false),
-  revokedAt: integer('revoked_at'), // epoch ms | null
+/** Registered wallet instances. `public_jwk` is the instance key; revocation is a soft flag. */
+export const walletInstances = pgTable('wallet_instances', {
+  instanceId: uuid('instance_id')
+    .primaryKey()
+    .$defaultFn(() => randomUUID()),
+  publicJwk: jsonb('public_jwk').$type<JWK>().notNull(),
+  platform: varchar('platform', { length: 20 }).notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  revoked: boolean('revoked').notNull().default(false),
+  revokedAt: timestamp('revoked_at'),
 });
 
 export type WalletInstanceRow = typeof walletInstances.$inferSelect;

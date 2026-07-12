@@ -11,6 +11,8 @@ SDK의 `WalletAttestationProvider` 포트가 이 백엔드에 붙어 HAIP attest
 
 ## 엔드포인트
 
+> 모든 경로에 글로벌 prefix **`/wp`**가 붙는다 (예: `GET /wp/nonce`). health는 `/wp/health`(liveness alias)·`/wp/live`·`/wp/ready`(DB 체크).
+
 | 메서드 | 경로 | 역할 |
 |---|---|---|
 | GET | `/nonce` | 단일사용 challenge nonce |
@@ -30,13 +32,34 @@ WUA/key attestation 헤더의 `x5c` = `[signer 인증서, WP CA]`. 이슈어(또
 
 `integrity.service.ts`는 pluggable. 실제 Android Play Integrity / iOS App Attest는 Google/Apple 클라우드 크레덴셜 필요 → 기본은 **dev stub**(`dev-integrity:<nonce>` 수용). 프로덕션 verifier를 DI로 교체.
 
-## 실행
+## 설정 (config-less / 전부 환경변수)
+
+설정은 전부 환경변수로 주입한다(이미지에 config 파일 없음). `.env.example`를 복사해 채운다:
 
 ```bash
-pnpm install                                     # pnpm (packageManager 고정); better-sqlite3 등 네이티브 빌드 허용됨
-pnpm build && PORT=3200 node dist/main.js        # 또는 pnpm start:dev
+cp .env.example .env      # PORT, STAGE, DATABASE_URL, WP_ISSUER (+ Play Integrity 옵션)
+```
+
+기동 시 `env.validation.ts`(class-validator)가 필수 변수를 검증하고, 누락되면 부팅을 거부한다.
+
+## 실행
+
+Postgres(Drizzle ORM)가 필요하다. `DATABASE_URL`을 `.env`에 설정한 뒤:
+
+```bash
+pnpm install                                     # pnpm (packageManager 고정)
+pnpm db:generate                                 # 스키마 변경 시 SQL 마이그레이션 생성 (drizzle/)
+pnpm build && pnpm migrate                       # 마이그레이션 적용 (node dist/migrate)
+pnpm start                                        # .env 로드해 기동 (또는 pnpm start:dev)
 node test/wp-flow.mjs                            # 전체 플로우 e2e (서버 실행 중일 때)
 ```
+
+로컬 Postgres 예시: `docker run -d --name wp-pg -p 5432:5432 -e POSTGRES_USER=wp -e POSTGRES_PASSWORD=wp -e POSTGRES_DB=wallet_provider postgres:16`
+
+## 컨테이너 / 배포
+
+- **Dockerfile** — x64(amd64), node:24-alpine 멀티스테이지, non-root(`wp`), config 없음(런타임 env 주입). `docker build -t wp-api .`
+- **k8s** — `k8s/dev/`에 Deployment/Service/Ingress/ExternalSecret 템플릿. `DATABASE_URL`은 AWS Secrets Manager → External Secrets Operator로 주입, 마이그레이션은 initContainer(`node dist/migrate`)가 부팅 전 실행. (infra 레포 `k8s-manifests/…/dev/` 스타일 미러링 — 실제 배치는 그쪽으로 복사.)
 
 ## 영속 (Drizzle + SQLite)
 

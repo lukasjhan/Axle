@@ -1,7 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import type { JWK } from 'jose';
-import { randomUUID } from 'node:crypto';
 import { DRIZZLE, type DrizzleDb } from '../db/drizzle.module';
 import { walletInstances, type WalletInstanceRow } from '../db/schema';
 
@@ -9,27 +8,19 @@ export interface WalletInstance {
   instanceId: string;
   publicJwk: JWK; // the wallet instance key (bound into the WUA cnf)
   platform: string;
-  createdAt: number;
+  createdAt: number; // epoch ms
   revoked: boolean;
-  revokedAt: number | null;
+  revokedAt: number | null; // epoch ms | null
 }
 
-/** Registry of wallet instances, persisted in SQLite via Drizzle. */
+/** Registry of wallet instances, persisted in Postgres via Drizzle. */
 @Injectable()
 export class InstanceRepository {
   constructor(@Inject(DRIZZLE) private readonly db: DrizzleDb) {}
 
   async create(publicJwk: JWK, platform: string): Promise<WalletInstance> {
-    const row = {
-      instanceId: randomUUID(),
-      publicJwk: JSON.stringify(publicJwk),
-      platform,
-      createdAt: Date.now(),
-      revoked: false,
-      revokedAt: null,
-    };
-    await this.db.insert(walletInstances).values(row);
-    return this.toModel(row as WalletInstanceRow);
+    const [row] = await this.db.insert(walletInstances).values({ publicJwk, platform }).returning();
+    return this.toModel(row);
   }
 
   async get(instanceId: string): Promise<WalletInstance | null> {
@@ -42,7 +33,7 @@ export class InstanceRepository {
     if (!(await this.get(instanceId))) return false;
     await this.db
       .update(walletInstances)
-      .set({ revoked: true, revokedAt: Date.now() })
+      .set({ revoked: true, revokedAt: new Date() })
       .where(eq(walletInstances.instanceId, instanceId));
     return true;
   }
@@ -50,11 +41,11 @@ export class InstanceRepository {
   private toModel(row: WalletInstanceRow): WalletInstance {
     return {
       instanceId: row.instanceId,
-      publicJwk: JSON.parse(row.publicJwk) as JWK,
+      publicJwk: row.publicJwk,
       platform: row.platform,
-      createdAt: Number(row.createdAt),
-      revoked: Boolean(row.revoked),
-      revokedAt: row.revokedAt == null ? null : Number(row.revokedAt),
+      createdAt: row.createdAt.getTime(),
+      revoked: row.revoked,
+      revokedAt: row.revokedAt ? row.revokedAt.getTime() : null,
     };
   }
 }

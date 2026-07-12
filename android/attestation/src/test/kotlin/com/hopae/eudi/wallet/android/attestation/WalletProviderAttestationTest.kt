@@ -21,14 +21,16 @@ import java.net.http.HttpResponse.BodyHandlers
  * Integration test against a locally-running `wallet-provider/` backend — proves the reference adapter
  * fetches a real WUA and a key attestation. Gated on `EUDI_WP_LIVE` so it never runs in normal CI:
  *
- *   cd wallet-provider && PORT=3200 WP_ISSUER=http://localhost:3200 npm run start
+ *   cd wallet-provider && cp .env.example .env && pnpm install && pnpm build && pnpm migrate && pnpm start
  *   cd demo && EUDI_WP_LIVE=1 ./gradlew :android:attestation:testDebugUnitTest
+ *
+ * The backend serves under the `/wp` global prefix; override with EUDI_WP_URL if you host it elsewhere.
  */
 class WalletProviderAttestationTest {
     @Test
     fun fetchesRealWuaFromLocalBackend() {
         assumeTrue("set EUDI_WP_LIVE to run against a local wallet-provider", System.getenv("EUDI_WP_LIVE") != null)
-        val baseUrl = System.getenv("EUDI_WP_URL") ?: "http://localhost:3200"
+        val baseUrl = System.getenv("EUDI_WP_URL") ?: "http://localhost:3200/wp"
         runBlocking {
             val area = SoftwareSecureArea()
             val instanceKey = area.createKey(KeySpec(secureArea = area.id))

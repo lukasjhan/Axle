@@ -1,10 +1,10 @@
-import type { Config } from 'drizzle-kit';
+import { defineConfig } from 'drizzle-kit';
 
-// Production migration path: `npx drizzle-kit generate` then apply.
-// Dev boot uses CREATE TABLE IF NOT EXISTS (db/drizzle.module.ts).
-export default {
+export default defineConfig({
   schema: './src/db/schema.ts',
   out: './drizzle',
-  dialect: 'sqlite',
-  dbCredentials: { url: process.env.DB_PATH ?? 'wallet-provider.db' },
-} satisfies Config;
+  dialect: 'postgresql',
+  dbCredentials: {
+    url: process.env.DATABASE_URL!,
+  },
+});

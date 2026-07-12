@@ -1,8 +1,8 @@
 // End-to-end exercise of the Wallet Provider: nonce -> register -> PoP -> WUA -> verify -> key attestation.
 import * as jose from 'jose';
 
-const BASE = process.env.BASE ?? 'http://localhost:3200';
-const ISS = 'https://wallet-provider.hopae.dev';
+const BASE = process.env.BASE ?? 'http://localhost:3200/wp';
+const ISS = process.env.WP_ISSUER ?? BASE; // the instance-PoP audience = the backend's WP_ISSUER
 const post = (path, body) =>
   fetch(`${BASE}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 const assert = (cond, msg) => { if (!cond) throw new Error(`assertion failed: ${msg}`); };
@@ -35,7 +35,9 @@ async function main() {
   assert(Array.isArray(header.x5c) && header.x5c.length === 2, 'x5c = [signer, CA]');
   const signerPub = await jose.importX509(`-----BEGIN CERTIFICATE-----\n${header.x5c[0]}\n-----END CERTIFICATE-----`, 'ES256');
   const { payload } = await jose.jwtVerify(wua, signerPub, { issuer: ISS });
-  assert(JSON.stringify(payload.cnf.jwk) === JSON.stringify(instanceJwk), 'cnf.jwk binds the instance key');
+  // JWK key order is insignificant (jsonb round-trips do not preserve it), so compare canonically.
+  const canon = (o) => JSON.stringify(Object.keys(o).sort().reduce((a, k) => ((a[k] = o[k]), a), {}));
+  assert(canon(payload.cnf.jwk) === canon(instanceJwk), 'cnf.jwk binds the instance key');
   console.log(`WUA verified: iss=${payload.iss} sub=${payload.sub} aal=${payload.aal}`);
 
   // 6) PoP replay must fail (nonce single-use)

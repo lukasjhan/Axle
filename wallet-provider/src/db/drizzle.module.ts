@@ -1,36 +1,35 @@
-import { Global, Module } from '@nestjs/common';
-import Database from 'better-sqlite3';
-import { drizzle, type BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
+import { Module, Global, Inject, OnModuleDestroy } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
 import * as schema from './schema';
 
 export const DRIZZLE = Symbol('DRIZZLE');
-export type DrizzleDb = BetterSQLite3Database<typeof schema>;
+export type DrizzleDb = PostgresJsDatabase<typeof schema>;
 
 /**
- * SQLite (better-sqlite3) via Drizzle. Dev: the schema is materialized on boot with a
- * `CREATE TABLE IF NOT EXISTS`. Production: swap the driver for Postgres and run drizzle-kit
- * migrations (`drizzle.config.ts`).
+ * Postgres (postgres.js) via Drizzle, configured from `DATABASE_URL`. The schema is applied with
+ * drizzle-kit migrations (`drizzle.config.ts` → `drizzle/`, run by `src/migrate.ts` / `pnpm migrate`),
+ * so a fresh deployment migrates before serving (e.g. an init container in k8s).
  */
 @Global()
 @Module({
   providers: [
     {
       provide: DRIZZLE,
-      useFactory: (): DrizzleDb => {
-        const sqlite = new Database(process.env.DB_PATH ?? 'wallet-provider.db');
-        sqlite.pragma('journal_mode = WAL');
-        sqlite.exec(`CREATE TABLE IF NOT EXISTS wallet_instances (
-          instance_id TEXT PRIMARY KEY,
-          public_jwk  TEXT NOT NULL,
-          platform    TEXT NOT NULL,
-          created_at  INTEGER NOT NULL,
-          revoked     INTEGER NOT NULL DEFAULT 0,
-          revoked_at  INTEGER
-        )`);
-        return drizzle(sqlite, { schema });
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => {
+        const client = postgres(config.getOrThrow<string>('DATABASE_URL'));
+        return Object.assign(drizzle(client, { schema }), { $client: client });
       },
     },
   ],
   exports: [DRIZZLE],
 })
-export class DrizzleModule {}
+export class DrizzleModule implements OnModuleDestroy {
+  constructor(@Inject(DRIZZLE) private readonly db: DrizzleDb & { $client: postgres.Sql }) {}
+
+  async onModuleDestroy() {
+    await this.db.$client.end();
+  }
+}
