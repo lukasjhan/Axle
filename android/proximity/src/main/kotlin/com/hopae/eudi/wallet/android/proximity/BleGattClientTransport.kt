@@ -152,7 +152,8 @@ class BleGattClientTransport(
 
     private suspend fun scan(): BluetoothDevice {
         val found = CompletableDeferred<BluetoothDevice>()
-        val scanner = manager.adapter.bluetoothLeScanner ?: error("BLE scanner unavailable (Bluetooth off?)")
+        val adapter = manager.adapter ?: error("Bluetooth unavailable on this device")
+        val scanner = adapter.bluetoothLeScanner ?: error("BLE scanner unavailable (Bluetooth off?)")
         val cb = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 if (!found.isCompleted) found.complete(result.device)

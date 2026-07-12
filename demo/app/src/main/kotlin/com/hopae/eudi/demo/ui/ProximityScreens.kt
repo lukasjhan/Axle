@@ -1,6 +1,9 @@
 package com.hopae.eudi.demo.ui
 
 import android.Manifest
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.Build
@@ -98,11 +101,24 @@ fun ProximityHolderDialog(wallet: Wallet, onClose: () -> Unit) {
     var pending by remember { mutableStateOf<ProximityRequest?>(null) } // reader's request, awaiting the user's consent
     var granted by remember { mutableStateOf(BLE_PERMISSIONS.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }) }
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { r -> granted = r.values.all { it } }
+    val btAdapter = remember { context.getSystemService(BluetoothManager::class.java)?.adapter }
+    var btOn by remember { mutableStateOf(btAdapter?.isEnabled == true) }
+    // Presenting starts a GATT server, which needs Bluetooth actually on — not just permission granted.
+    val enableBtLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { btOn = btAdapter?.isEnabled == true }
 
-    DisposableEffect(granted, mode) {
+    DisposableEffect(granted, btOn, mode) {
         if (!granted) {
             status = "Grant Bluetooth permission to present"
             permLauncher.launch(BLE_PERMISSIONS)
+            return@DisposableEffect onDispose {}
+        }
+        if (btAdapter == null) {
+            status = "Bluetooth unavailable on this device"
+            return@DisposableEffect onDispose {}
+        }
+        if (!btOn) {
+            status = "Turn on Bluetooth to present"
+            enableBtLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
             return@DisposableEffect onDispose {}
         }
         qr = null
@@ -120,7 +136,21 @@ fun ProximityHolderDialog(wallet: Wallet, onClose: () -> Unit) {
         val server = if (central) null else BleGattServerTransport(context, uuid, Ble.PERIPHERAL_SERVER, if (nfc) emptyList() else listOf(DeviceEngagement.bleRetrievalMethod(peripheralServerUuid = uuidBytes)), logger = LogWalletLogger())
         val client = if (central) BleGattClientTransport(context, uuid, Ble.CENTRAL_CLIENT, listOf(DeviceEngagement.bleRetrievalMethod(centralClientUuid = uuidBytes)), logger = LogWalletLogger()) else null
         val transport: ProximityTransport = server ?: client!!
-        server?.start()
+        // Shared teardown — used on a start() failure and on normal dispose.
+        val cleanup = {
+            NfcEngagementService.processor = null
+            if (nfc) (context as? android.app.Activity)?.let { NfcEngagementService.releaseForeground(it) }
+            scope.cancel(); server?.stop(); client?.stop()
+        }
+        // Starting the GATT server can throw if Bluetooth flips off between the check and here — catch it
+        // instead of letting it crash the app from this DisposableEffect body (runs on the main thread).
+        try {
+            server?.start()
+        } catch (e: Throwable) {
+            status = "❌ ${e.message}"
+            LogStore.log("❌ Proximity holder: ${e.message}")
+            return@DisposableEffect onDispose { cleanup() }
+        }
         if (client != null) scope.launch { runCatching { client.connect() } }
 
         // Drive one presentation session's state → engagement display, consent, and completion UI.
@@ -177,11 +207,7 @@ fun ProximityHolderDialog(wallet: Wallet, onClose: () -> Unit) {
                 }
             }
         }
-        onDispose {
-            NfcEngagementService.processor = null
-            if (nfc) (context as? android.app.Activity)?.let { NfcEngagementService.releaseForeground(it) }
-            scope.cancel(); server?.stop(); client?.stop()
-        }
+        onDispose { cleanup() }
     }
 
     Dialog(onDismissRequest = onClose) {

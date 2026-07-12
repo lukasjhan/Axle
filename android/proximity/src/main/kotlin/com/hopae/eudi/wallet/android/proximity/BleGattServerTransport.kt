@@ -58,8 +58,16 @@ class BleGattServerTransport(
     private var notifySent: CompletableDeferred<Boolean>? = null
     private val connected = CompletableDeferred<Unit>() // a peer subscribed + wrote STATE_START
 
-    /** Starts the GATT server + advertising. Call before driving the session. */
+    /**
+     * Starts the GATT server + advertising. Call before driving the session.
+     *
+     * Throws (rather than NPE-ing) when BLE is unusable — no adapter, or Bluetooth turned off: with Bluetooth
+     * off [BluetoothManager.openGattServer] returns null. Callers should catch this and surface a message.
+     */
     fun start() {
+        val adapter = manager.adapter ?: error("Bluetooth unavailable on this device")
+        check(adapter.isEnabled) { "Bluetooth is off" }
+
         val service = BluetoothGattService(serviceUuid, BluetoothGattService.SERVICE_TYPE_PRIMARY)
         stateChar = char(uuids.state, BluetoothGattCharacteristic.PROPERTY_NOTIFY or BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE)
         val c2s = char(uuids.client2Server, BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE)
@@ -70,7 +78,7 @@ class BleGattServerTransport(
         // §8.3.3.1.1.4: the reader (central client mode) exposes Ident so the mdoc can confirm the connection.
         if (identKey != null) service.addCharacteristic(char(Ble.IDENT, BluetoothGattCharacteristic.PROPERTY_READ))
 
-        gattServer = manager.openGattServer(context, callback)
+        gattServer = manager.openGattServer(context, callback) ?: error("could not open BLE GATT server (Bluetooth off?)")
         gattServer!!.addService(service)
 
         val settings = AdvertiseSettings.Builder()
@@ -79,7 +87,7 @@ class BleGattServerTransport(
             .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM).build()
         val data = AdvertiseData.Builder().setIncludeTxPowerLevel(false)
             .addServiceUuid(ParcelUuid(serviceUuid)).build()
-        manager.adapter.bluetoothLeAdvertiser?.startAdvertising(settings, data, advertiseCallback)
+        adapter.bluetoothLeAdvertiser?.startAdvertising(settings, data, advertiseCallback)
         logger?.log(WalletLogger.Level.Debug,"BLE server advertising · service=$serviceUuid")
     }
 
