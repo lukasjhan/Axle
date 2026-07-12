@@ -3,11 +3,51 @@
 // one replica/boot verify against another — see KeystoreService.
 //   cd wallet-provider && node tools/gen-keystore.mjs
 import 'reflect-metadata'; // @peculiar/x509 (via tsyringe) needs the reflect polyfill loaded first
+import { AsnConvert } from '@peculiar/asn1-schema';
+import {
+  AccessDescription,
+  AuthorityInfoAccessSyntax,
+  GeneralName,
+  id_ad_caIssuers,
+  id_pe_authorityInfoAccess,
+} from '@peculiar/asn1-x509';
 import { Crypto } from '@peculiar/webcrypto';
 import * as x509 from '@peculiar/x509';
 
 const webcrypto = new Crypto();
 x509.cryptoProvider.set(webcrypto);
+
+// ETSI TS 119 412-6 §5.2 (WAL-5.2-01) + Annex A — Wallet Provider sign/seal marker: a QCStatements extension
+// carrying QcType `id-etsi-qct-wal`. Hand-encoded (asn1-x509-qualified isn't installed).
+// NOTE: keep in sync with src/attestation/keystore.service.ts (the ephemeral dev path uses the same encoding).
+const ID_QC_STATEMENTS = '1.3.6.1.5.5.7.1.3'; // id-pe-qcStatements
+const ID_ETSI_QCS_QCTYPE = '0.4.0.1862.1.6'; // id-etsi-qcs-QcType (EN 319 412-5)
+const ID_ETSI_QCT_WAL = '0.4.0.194126.1.2'; // id-etsi-qct-wal (119 412-6 Annex A)
+const derLen = (len) => (len < 0x80 ? [len] : (() => { const o = []; for (let n = len; n > 0; n = Math.floor(n / 256)) o.unshift(n & 0xff); return [0x80 | o.length, ...o]; })());
+const derTlv = (tag, body) => [tag, ...derLen(body.length), ...body];
+const derOid = (dotted) => {
+  const p = dotted.split('.').map(Number);
+  const body = [40 * p[0] + p[1]];
+  for (let i = 2; i < p.length; i++) {
+    const stack = [p[i] & 0x7f];
+    for (let v = Math.floor(p[i] / 128); v > 0; v = Math.floor(v / 128)) stack.unshift((v & 0x7f) | 0x80);
+    body.push(...stack);
+  }
+  return derTlv(0x06, body);
+};
+const derSeq = (...items) => derTlv(0x30, items.flat());
+const walletQcStatementsExtension = () =>
+  new x509.Extension(ID_QC_STATEMENTS, false, Uint8Array.from(derSeq(derSeq(derOid(ID_ETSI_QCS_QCTYPE), derSeq(derOid(ID_ETSI_QCT_WAL))))));
+const authorityInfoAccessExtension = (caIssuerUrl) =>
+  new x509.Extension(
+    id_pe_authorityInfoAccess,
+    false,
+    AsnConvert.serialize(
+      new AuthorityInfoAccessSyntax([
+        new AccessDescription({ accessMethod: id_ad_caIssuers, accessLocation: new GeneralName({ uniformResourceIdentifier: caIssuerUrl }) }),
+      ]),
+    ),
+  );
 
 const alg = { name: 'ECDSA', namedCurve: 'P-256' };
 const sigAlg = { name: 'ECDSA', hash: 'SHA-256' };
@@ -28,6 +68,7 @@ const org = process.env.WP_ORG_NAME || 'Hopae S.A.';
 const orgId = process.env.WP_ORG_ID || 'NTRLU-B000000'; // placeholder — set to the real RCS Luxembourg number
 const country = process.env.WP_COUNTRY || 'LU';
 const dn = (cn) => `CN=${cn}, 2.5.4.97=${orgId}, O=${org}, C=${country}`; // 2.5.4.97 = organizationIdentifier
+const issuerBase = process.env.WP_ISSUER || 'https://wallet-provider.hopae.dev'; // for the AIA caIssuers URL
 
 const caCert = await x509.X509CertificateGenerator.createSelfSigned({
   serialNumber: '01',
@@ -51,9 +92,11 @@ const signerCert = await x509.X509CertificateGenerator.create({
   signingAlgorithm: sigAlg,
   extensions: [
     new x509.BasicConstraintsExtension(false),
-    new x509.KeyUsagesExtension(x509.KeyUsageFlags.digitalSignature, true),
-    await x509.SubjectKeyIdentifierExtension.create(signKeys.publicKey),
-    await x509.AuthorityKeyIdentifierExtension.create(caKeys.publicKey),
+    new x509.KeyUsagesExtension(x509.KeyUsageFlags.digitalSignature, true), // §4.4.1 (EN 319 412-2 Table 1)
+    await x509.SubjectKeyIdentifierExtension.create(signKeys.publicKey), // §4.4.2
+    await x509.AuthorityKeyIdentifierExtension.create(caKeys.publicKey), // RFC 5280 (chain building)
+    authorityInfoAccessExtension(`${issuerBase}/wp/.well-known/wallet-provider-ca.pem`), // §4.4.3
+    walletQcStatementsExtension(), // §5.2 WAL-5.2-01 (id-etsi-qct-wal)
   ],
   ...signerValidity,
 });
