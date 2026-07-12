@@ -42,16 +42,21 @@ the Scheme Operator → then checking the credential's certificate chains to a C
 ## Components
 
 - [`trusted-list/`](./trusted-list) — the Scheme Operator: builds + JAdES-signs the Trusted Lists and serves
-  them as a static site (Vite + shadcn/ui, deployed to Vercel). See its README for how to add a list, mint a
-  CA, regenerate and deploy.
+  them as a static site (Vite + shadcn/ui, deployed to Vercel). Also mints the ecosystem CAs and Document
+  Signers (`tools/gen-issuer-ca.mjs`, `tools/gen-signer.mjs`).
+- [`issuer-be/`](./issuer-be) — the credential Issuer: OpenID4VCI 1.0 + HAIP backend issuing PID (SD-JWT VC +
+  mdoc, authorization-code flow) and mDL (mdoc, pre-authorized-code flow). NestJS + Fastify + Postgres, DPoP,
+  Wallet/Key Attestation (WUA verified against the Trusted List), Token Status List.
+- [`issuer-fe/`](./issuer-fe) — the issuance consent screen for the authorization-code flow (Vite + React,
+  European eID styling, "issue this PID to your wallet").
 
 ## Roadmap
 
 - [x] **P1** Scheme Operator + Trusted Lists (wallet providers, PID issuers, attestation issuers, registrar)
-- [ ] **P2** PID Issuer backend (SD-JWT VC + mdoc), issuing under the PID Issuer CA
-- [ ] **P3** Attestation / mDL issuer (IACA → document signers), under the Attestation CA
-- [ ] **P4** Verifier (relying party) that consumes these lists
-- [ ] **P5** Registrar backend
+- [x] **P2** Issuer — OpenID4VCI 1.0 + HAIP: PID (SD-JWT VC + mdoc) via authorization-code, mDL (mdoc) via
+  pre-authorized-code; DPoP, Wallet/Key Attestation, Token Status List (`issuer-be` + `issuer-fe`)
+- [ ] **P3** Verifier (relying party) that consumes these lists
+- [ ] **P4** Registrar backend
 
 ## Security
 
