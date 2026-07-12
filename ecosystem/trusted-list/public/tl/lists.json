@@ -107,8 +107,8 @@
       "standard": "ETSI TS 119 602 · EUDI ARF (Registration)",
       "description": "Registrar of relying parties. Relying-party access certificates chain to the Registrar CA on this list.",
       "sequenceNumber": 1,
-      "issued": "2026-07-12T11:02:35.291Z",
-      "nextUpdate": "2027-01-12T11:02:35.291Z",
+      "issued": "2026-07-12T13:21:40.268Z",
+      "nextUpdate": "2027-01-12T13:21:40.268Z",
       "entities": [
         {
           "name": "Hopae Registrar",
