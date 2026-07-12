@@ -38,17 +38,20 @@ public actor WalletProviderAttestation: WalletAttestationProvider {
     private let integrity: any IntegrityTokenProvider
     private let clientId: String
     private let clock: @Sendable () -> Int64
+    private let storage: (any StorageDriver)?
     private var instanceId: String?
 
     public init(baseUrl: String, http: any HttpTransport, secureArea: any SecureArea,
                 integrity: any IntegrityTokenProvider, clientId: String,
-                clock: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970) }) {
+                clock: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970) },
+                storage: (any StorageDriver)? = nil) {
         self.issuer = baseUrl.hasSuffix("/") ? String(baseUrl.dropLast()) : baseUrl
         self.http = http
         self.secureArea = secureArea
         self.integrity = integrity
         self.clientId = clientId
         self.clock = clock
+        self.storage = storage
     }
 
     public func walletAttestation(keyInfo: KeyInfo) async throws -> String {
@@ -67,9 +70,18 @@ public actor WalletProviderAttestation: WalletAttestationProvider {
         return try string(await postJson("\(issuer)/key-attestation", .obj(entries)), "key_attestation")
     }
 
-    /// Registers the instance once (nonce → integrity token → `POST /wallet-instances`), caching its id.
+    /// Registers the instance once (nonce → integrity token → `POST /wallet-instances`), caching its id in
+    /// memory and, if a `storage` is provided, persisting it bound to the instance key alias — so a restart
+    /// reuses the same instance (a fresh integrity token / new instance is only minted when the key changes)
+    /// instead of re-registering and leaving orphaned instances behind.
     private func registeredInstance(_ keyInfo: KeyInfo) async throws -> String {
         if let instanceId { return instanceId }
+        let storageKey = "\(Self.instanceIdKey):\(keyInfo.handle.alias)"
+        if let storage, let stored = try await storage.get(collection: Self.collection, key: storageKey) {
+            let id = String(decoding: stored, as: UTF8.self)
+            instanceId = id
+            return id
+        }
         let nonce = try await fetchNonce()
         let body = JsonValue.obj([
             ("instanceKey", JwkEc.toJson(keyInfo.publicKey)),
@@ -78,6 +90,7 @@ public actor WalletProviderAttestation: WalletAttestationProvider {
         ])
         let id = try string(await postJson("\(issuer)/wallet-instances", body), "instanceId")
         instanceId = id
+        try await storage?.put(collection: Self.collection, key: storageKey, value: [UInt8](id.utf8))
         return id
     }
 
@@ -118,4 +131,7 @@ public actor WalletProviderAttestation: WalletAttestationProvider {
         case .es512: return "ES512"
         }
     }
+
+    private static let collection = "wallet-provider"
+    private static let instanceIdKey = "instance-id"
 }

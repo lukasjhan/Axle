@@ -11,6 +11,7 @@ import com.hopae.eudi.wallet.spi.HttpTransport
 import com.hopae.eudi.wallet.spi.KeyInfo
 import com.hopae.eudi.wallet.spi.SecureArea
 import com.hopae.eudi.wallet.spi.SigningAlgorithm
+import com.hopae.eudi.wallet.spi.StorageDriver
 import com.hopae.eudi.wallet.spi.WalletAttestationProvider
 import com.hopae.eudi.wallet.spi.WalletClock
 
@@ -33,6 +34,7 @@ class WalletProviderAttestation(
     private val integrity: IntegrityTokenProvider,
     private val clientId: String,
     private val clock: WalletClock = WalletClock.System,
+    private val storage: StorageDriver? = null,
 ) : WalletAttestationProvider {
 
     /** The wallet-provider issuer/base URL; also the `aud` of the instance-key PoP the backend verifies. */
@@ -59,16 +61,26 @@ class WalletProviderAttestation(
         return postJson("$issuer/key-attestation", JsonValue.Obj(entries)).str("key_attestation")
     }
 
-    /** Registers the instance once (nonce → integrity token → `POST /wallet-instances`), caching its id. */
+    /**
+     * Registers the instance once (nonce → integrity token → `POST /wallet-instances`), caching its id in
+     * memory and, if a [storage] is provided, persisting it bound to the instance key alias — so a restart
+     * reuses the same instance (a fresh integrity token / new instance is only minted when the key changes)
+     * instead of re-registering and leaving orphaned instances behind.
+     */
     private suspend fun registeredInstance(keyInfo: KeyInfo): String {
         instanceId?.let { return it }
+        val storageKey = "$INSTANCE_ID_KEY:${keyInfo.handle.alias}"
+        storage?.get(COLLECTION, storageKey)?.let { return it.decodeToString().also { id -> instanceId = id } }
         val nonce = fetchNonce()
         val body = obj(
             "instanceKey" to JwkEc.toJson(keyInfo.publicKey),
             "integrityToken" to JsonValue.Str(integrity.integrityToken(nonce)),
             "nonce" to JsonValue.Str(nonce),
         )
-        return postJson("$issuer/wallet-instances", body).str("instanceId").also { instanceId = it }
+        return postJson("$issuer/wallet-instances", body).str("instanceId").also {
+            instanceId = it
+            storage?.put(COLLECTION, storageKey, it.encodeToByteArray())
+        }
     }
 
     private suspend fun fetchNonce(): String =
@@ -116,5 +128,10 @@ class WalletProviderAttestation(
         SigningAlgorithm.ES256 -> "ES256"
         SigningAlgorithm.ES384 -> "ES384"
         SigningAlgorithm.ES512 -> "ES512"
+    }
+
+    private companion object {
+        const val COLLECTION = "wallet-provider"
+        const val INSTANCE_ID_KEY = "instance-id"
     }
 }

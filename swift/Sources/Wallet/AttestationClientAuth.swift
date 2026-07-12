@@ -21,7 +21,7 @@ final class AttestationClientAuth: ClientAuthProvider {
     private let clock: () -> Int64
 
     private var instance: KeyInfo?
-    private var wuaByAudience: [String: String] = [:]
+    private let wuaStore: WuaStore
 
     init(clientId: String, provider: any WalletAttestationProvider, secureArea: any SecureArea,
          storage: any StorageDriver, rng: any Rng, clock: @escaping () -> Int64) {
@@ -31,6 +31,7 @@ final class AttestationClientAuth: ClientAuthProvider {
         self.storage = storage
         self.rng = rng
         self.clock = clock
+        self.wuaStore = WuaStore(clock: clock)
     }
 
     func headers(audience: String) async throws -> [(String, String)] {
@@ -58,11 +59,10 @@ final class AttestationClientAuth: ClientAuthProvider {
         return info
     }
 
+    /// The WUA for `audience`, reused via `wuaStore` until it nears expiry. HAIP §4.4.1 still fetches fresh
+    /// per issuer; the store only avoids re-fetching a still-valid WUA for the same issuer.
     private func walletAttestation(audience: String, key: KeyInfo) async throws -> String {
-        if let cached = wuaByAudience[audience] { return cached }
-        let wua = try await provider.walletAttestation(keyInfo: key)
-        wuaByAudience[audience] = wua
-        return wua
+        try await wuaStore.getOrRefresh(audience) { try await self.provider.walletAttestation(keyInfo: key) }
     }
 
     private static let storeCollection = "wallet-provider"

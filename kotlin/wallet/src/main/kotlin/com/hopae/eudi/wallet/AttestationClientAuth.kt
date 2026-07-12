@@ -38,9 +38,8 @@ internal class AttestationClientAuth(
 ) : ClientAuthProvider {
 
     private val keyMutex = Mutex()
-    private val wuaMutex = Mutex()
     private var instance: KeyInfo? = null
-    private val wuaByAudience = mutableMapOf<String, String>()
+    private val wuaStore = WuaStore(clock)
 
     override suspend fun headers(audience: String): List<Pair<String, String>> {
         val key = instanceKey()
@@ -65,9 +64,12 @@ internal class AttestationClientAuth(
         info
     }
 
-    private suspend fun walletAttestation(audience: String, key: KeyInfo): String = wuaMutex.withLock {
-        wuaByAudience[audience] ?: provider.walletAttestation(key).also { wuaByAudience[audience] = it }
-    }
+    /**
+     * The WUA for an [audience], reused via [wuaStore] until it nears expiry. HAIP §4.4.1 still fetches fresh
+     * per issuer; the store only avoids re-fetching a *still-valid* WUA for the same issuer.
+     */
+    private suspend fun walletAttestation(audience: String, key: KeyInfo): String =
+        wuaStore.getOrRefresh(audience) { provider.walletAttestation(key) }
 
     private companion object {
         const val COLLECTION = "wallet-provider"
