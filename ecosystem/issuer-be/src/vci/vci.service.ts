@@ -146,23 +146,28 @@ export class VciService {
     return { redirect: url.toString() };
   }
 
-  // ---- Credential Offer (pre-authorized_code, mDL) ----------------------------------------------------
+  // ---- Credential Offer (issuer-initiated) — pre-authorized_code (mDL) or authorization_code (PID) -----
   async createCredentialOffer(configId: string): Promise<{ credential_offer: unknown; credential_offer_uri: string; deep_link: string }> {
     const c = getConfig(configId);
-    if (!c || c.flow !== 'pre-authorized_code') throw new OAuthError('invalid_request', 'not a pre-authorized credential');
-    const preAuthCode = rand();
-    await this.store.set(`pre-auth:${preAuthCode}`, { configIds: [configId] }, 600);
-    const offer = {
-      credential_issuer: this.issuer,
-      credential_configuration_ids: [configId],
-      grants: {
-        'urn:ietf:params:oauth:grant-type:pre-authorized_code': { 'pre-authorized_code': preAuthCode },
-      },
-    };
+    if (!c) throw new OAuthError('invalid_request', 'unknown credential_configuration_id');
+
+    let grants: Record<string, unknown>;
+    if (c.flow === 'pre-authorized_code') {
+      const preAuthCode = rand();
+      await this.store.set(`pre-auth:${preAuthCode}`, { configIds: [configId] }, 600);
+      grants = { 'urn:ietf:params:oauth:grant-type:pre-authorized_code': { 'pre-authorized_code': preAuthCode } };
+    } else {
+      const issuerState = rand();
+      await this.store.set(`offer-state:${issuerState}`, { configIds: [configId] }, 600);
+      grants = { authorization_code: { issuer_state: issuerState } };
+    }
+
+    const offer = { credential_issuer: this.issuer, credential_configuration_ids: [configId], grants };
     const offerId = rand(16);
     await this.store.set(`offer:${offerId}`, offer, 600);
     const credential_offer_uri = `${this.issuer}/credential-offer/${offerId}`;
-    return { credential_offer: offer, credential_offer_uri, deep_link: `haip-vci://?credential_offer_uri=${encodeURIComponent(credential_offer_uri)}` };
+    // Standard OpenID4VCI invocation scheme (EUDI wallets register it); credential_offer_uri keeps the QR small.
+    return { credential_offer: offer, credential_offer_uri, deep_link: `openid-credential-offer://?credential_offer_uri=${encodeURIComponent(credential_offer_uri)}` };
   }
 
   async getCredentialOffer(offerId: string) {

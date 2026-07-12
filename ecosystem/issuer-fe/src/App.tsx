@@ -1,33 +1,18 @@
 import { useEffect, useState } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
 
 const BE = import.meta.env.VITE_ISSUER_BE_URL ?? 'http://localhost:3400';
-
-interface Field {
-  label: string;
-  value: string;
-}
-interface Credential {
-  id: string;
-  name: string;
-  format: string;
-  fields: Field[];
-}
-interface Interaction {
-  demo: boolean;
-  client_id: string;
-  credentials: Credential[];
-}
-
-type State =
-  | { s: 'loading' }
-  | { s: 'error'; msg: string }
-  | { s: 'ready'; data: Interaction }
-  | { s: 'submitting' }
-  | { s: 'done' };
 
 const FORMAT_LABEL: Record<string, string> = {
   'dc+sd-jwt': 'SD-JWT VC',
   mso_mdoc: 'ISO mdoc',
+};
+
+const DESCRIPTIONS: Record<string, string> = {
+  'eu.europa.ec.eudi.pid.sd_jwt_vc':
+    'Person Identification Data as an IETF SD-JWT VC — selective disclosure, cryptographically holder-bound.',
+  'eu.europa.ec.eudi.pid.mdoc': 'Person Identification Data as an ISO/IEC 18013-5 mdoc.',
+  'org.iso.18013.5.1.mDL': 'Mobile Driving Licence (ISO/IEC 18013-5 mdoc).',
 };
 
 // A stylised ring — evokes an EU-official identity document without reproducing the actual EU emblem.
@@ -45,55 +30,20 @@ function Emblem() {
 }
 
 export default function App() {
-  const [state, setState] = useState<State>({ s: 'loading' });
   const session = new URLSearchParams(window.location.search).get('session');
-
-  useEffect(() => {
-    if (!session) {
-      setState({ s: 'error', msg: 'Missing issuance session. Open this page from your wallet.' });
-      return;
-    }
-    fetch(`${BE}/eudi-issuer/interaction/${session}`)
-      .then((r) => {
-        if (!r.ok) throw new Error(`This issuance session is invalid or has expired.`);
-        return r.json();
-      })
-      .then((data: Interaction) => setState({ s: 'ready', data }))
-      .catch((e) => setState({ s: 'error', msg: e.message }));
-  }, [session]);
-
-  async function decide(approve: boolean) {
-    setState({ s: 'submitting' });
-    try {
-      const r = await fetch(`${BE}/eudi-issuer/interaction/${session}/decide`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ approve }),
-      });
-      const { redirect } = await r.json();
-      setState({ s: 'done' });
-      window.location.href = redirect; // back to the wallet
-    } catch {
-      setState({ s: 'error', msg: 'Could not complete the request. Please try again from your wallet.' });
-    }
-  }
-
   return (
     <div className="min-h-screen bg-slate-100 font-sans text-slate-900">
-      {/* Demo flow banner */}
       <div className="bg-amber-400 text-amber-950">
         <div className="mx-auto max-w-2xl px-4 py-1.5 text-center text-xs font-semibold tracking-wide">
           DEMO FLOW · Sandbox — no real authentication, no real personal data
         </div>
       </div>
-
-      {/* Official-style header */}
       <header className="bg-eu-blue text-white">
         <div className="mx-auto flex max-w-2xl items-center gap-3 px-4 py-4">
           <Emblem />
           <div className="leading-tight">
             <div className="text-[13px] font-semibold uppercase tracking-wider text-eu-gold">EUDI Wallet</div>
-            <div className="text-lg font-semibold">Personal ID — Issuance</div>
+            <div className="text-lg font-semibold">Credential Issuer</div>
           </div>
           <div className="ml-auto text-right text-[11px] text-white/70">
             Hopae EUDI Sandbox
@@ -102,37 +52,206 @@ export default function App() {
           </div>
         </div>
       </header>
-
-      <main className="mx-auto max-w-2xl px-4 py-8">
-        {state.s === 'loading' && <Centered>Loading your issuance request…</Centered>}
-        {state.s === 'done' && <Centered>Returning to your wallet…</Centered>}
-        {state.s === 'error' && (
-          <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-red-800">
-            <p className="font-semibold">Unable to continue</p>
-            <p className="mt-1 text-sm">{state.msg}</p>
-          </div>
-        )}
-
-        {(state.s === 'ready' || state.s === 'submitting') && (
-          <Ready
-            data={(state.s === 'ready' ? state.data : lastData(state)) as Interaction}
-            busy={state.s === 'submitting'}
-            onDecide={decide}
-          />
-        )}
-      </main>
+      <main className="mx-auto max-w-2xl px-4 py-8">{session ? <ConsentView session={session} /> : <LandingView />}</main>
     </div>
   );
 }
 
-// Keep the last-rendered data available while submitting (avoids a flash).
-let cached: Interaction | null = null;
-function lastData(_: State): Interaction | null {
-  return cached;
+// ---------------------------------------------------------------------------------------------------------
+// Landing: list the offered credentials, hand out a credential offer (QR + deep link) for the wallet.
+// ---------------------------------------------------------------------------------------------------------
+interface OfferConfig {
+  id: string;
+  name: string;
+  format: string;
+  description: string;
+}
+interface Offer {
+  name: string;
+  deepLink: string;
+  uri: string;
 }
 
-function Ready({ data, busy, onDecide }: { data: Interaction; busy: boolean; onDecide: (a: boolean) => void }) {
-  cached = data;
+function LandingView() {
+  const [configs, setConfigs] = useState<OfferConfig[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [offer, setOffer] = useState<Offer | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(`${BE}/.well-known/openid-credential-issuer/eudi-issuer`)
+      .then((r) => {
+        if (!r.ok) throw new Error('metadata');
+        return r.json();
+      })
+      .then((m) => {
+        const cfgs = m.credential_configurations_supported as Record<string, { format: string; display?: { name: string }[] }>;
+        setConfigs(
+          Object.entries(cfgs).map(([id, c]) => ({
+            id,
+            name: c.display?.[0]?.name ?? id,
+            format: c.format,
+            description: DESCRIPTIONS[id] ?? '',
+          })),
+        );
+      })
+      .catch(() => setErr('Could not reach the issuer. Please try again later.'));
+  }, []);
+
+  async function getOffer(c: OfferConfig) {
+    setBusy(c.id);
+    try {
+      const r = await fetch(`${BE}/eudi-issuer/credential-offer/create`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ credential_configuration_id: c.id }),
+      });
+      const { deep_link, credential_offer_uri } = await r.json();
+      setOffer({ name: c.name, deepLink: deep_link, uri: credential_offer_uri });
+    } catch {
+      setErr('Could not create the credential offer.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (err) return <ErrorBox msg={err} />;
+  if (!configs) return <Centered>Loading credentials…</Centered>;
+
+  return (
+    <div>
+      <h1 className="text-xl font-semibold tracking-tight">Available credentials</h1>
+      <p className="mt-1 text-sm text-slate-600">
+        Pick a credential, then scan the QR code with your EUDI wallet (or open it on this device) to add it to
+        your wallet.
+      </p>
+
+      <div className="mt-6 space-y-3">
+        {configs.map((c) => (
+          <section key={c.id} className="flex items-center gap-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <h2 className="font-semibold text-eu-deep">{c.name}</h2>
+                <span className="rounded-full bg-eu-blue/10 px-2.5 py-0.5 text-xs font-medium text-eu-blue">
+                  {FORMAT_LABEL[c.format] ?? c.format}
+                </span>
+              </div>
+              <p className="mt-1 text-sm text-slate-600">{c.description}</p>
+            </div>
+            <button
+              onClick={() => getOffer(c)}
+              disabled={busy === c.id}
+              className="shrink-0 rounded-lg bg-eu-blue px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-eu-deep disabled:opacity-60"
+            >
+              {busy === c.id ? '…' : 'Get credential'}
+            </button>
+          </section>
+        ))}
+      </div>
+
+      {offer && <OfferModal offer={offer} onClose={() => setOffer(null)} />}
+
+      <footer className="mt-10 border-t border-slate-200 pt-4 text-center text-[11px] text-slate-400">
+        OpenID4VCI 1.0 · HAIP · ETSI SD-JWT VC / ISO 18013-5 mdoc — Hopae EUDI Sandbox (not a production service)
+      </footer>
+    </div>
+  );
+}
+
+function OfferModal({ offer, onClose }: { offer: Offer; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="fixed inset-0 z-10 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-lg font-semibold">{offer.name}</h3>
+        <p className="mt-1 text-sm text-slate-600">Scan with your EUDI wallet</p>
+        <div className="mx-auto mt-4 w-fit rounded-xl border border-slate-200 bg-white p-3">
+          <QRCodeSVG value={offer.deepLink} size={216} level="M" />
+        </div>
+        <a
+          href={offer.deepLink}
+          className="mt-4 block rounded-lg bg-eu-blue px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-eu-deep"
+        >
+          Open in wallet
+        </a>
+        <button
+          onClick={() => {
+            navigator.clipboard?.writeText(offer.deepLink);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          }}
+          className="mt-2 text-xs font-medium text-eu-blue hover:underline"
+        >
+          {copied ? 'Copied ✓' : 'Copy offer link'}
+        </button>
+        <button onClick={onClose} className="mt-4 block w-full text-xs text-slate-400 hover:text-slate-600">
+          Close
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Consent: shown when the authorization-code flow redirects here with ?session=… — review + issue the PID.
+// ---------------------------------------------------------------------------------------------------------
+interface Field {
+  label: string;
+  value: string;
+}
+interface Credential {
+  id: string;
+  name: string;
+  format: string;
+  fields: Field[];
+}
+interface Interaction {
+  demo: boolean;
+  client_id: string;
+  credentials: Credential[];
+}
+type CState =
+  | { s: 'loading' }
+  | { s: 'error'; msg: string }
+  | { s: 'ready'; data: Interaction }
+  | { s: 'submitting'; data: Interaction }
+  | { s: 'done' };
+
+function ConsentView({ session }: { session: string }) {
+  const [state, setState] = useState<CState>({ s: 'loading' });
+
+  useEffect(() => {
+    fetch(`${BE}/eudi-issuer/interaction/${session}`)
+      .then((r) => {
+        if (!r.ok) throw new Error('This issuance session is invalid or has expired.');
+        return r.json();
+      })
+      .then((data: Interaction) => setState({ s: 'ready', data }))
+      .catch((e) => setState({ s: 'error', msg: e.message }));
+  }, [session]);
+
+  async function decide(approve: boolean, data: Interaction) {
+    setState({ s: 'submitting', data });
+    try {
+      const r = await fetch(`${BE}/eudi-issuer/interaction/${session}/decide`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ approve }),
+      });
+      const { redirect } = await r.json();
+      setState({ s: 'done' });
+      window.location.href = redirect;
+    } catch {
+      setState({ s: 'error', msg: 'Could not complete the request. Please try again from your wallet.' });
+    }
+  }
+
+  if (state.s === 'loading') return <Centered>Loading your issuance request…</Centered>;
+  if (state.s === 'done') return <Centered>Returning to your wallet…</Centered>;
+  if (state.s === 'error') return <ErrorBox msg={state.msg} />;
+
+  const data = state.data;
+  const busy = state.s === 'submitting';
   return (
     <div>
       <h1 className="text-xl font-semibold tracking-tight">Review your credential</h1>
@@ -169,14 +288,14 @@ function Ready({ data, busy, onDecide }: { data: Interaction; busy: boolean; onD
 
       <div className="mt-6 flex flex-col gap-3 sm:flex-row-reverse">
         <button
-          onClick={() => onDecide(true)}
+          onClick={() => decide(true, data)}
           disabled={busy}
           className="inline-flex items-center justify-center rounded-lg bg-eu-blue px-6 py-3 font-semibold text-white shadow-sm transition hover:bg-eu-deep disabled:opacity-60"
         >
           {busy ? 'Issuing…' : 'Issue to wallet'}
         </button>
         <button
-          onClick={() => onDecide(false)}
+          onClick={() => decide(false, data)}
           disabled={busy}
           className="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-6 py-3 font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
         >
@@ -193,4 +312,12 @@ function Ready({ data, busy, onDecide }: { data: Interaction; busy: boolean; onD
 
 function Centered({ children }: { children: React.ReactNode }) {
   return <div className="py-20 text-center text-slate-500">{children}</div>;
+}
+function ErrorBox({ msg }: { msg: string }) {
+  return (
+    <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-red-800">
+      <p className="font-semibold">Unable to continue</p>
+      <p className="mt-1 text-sm">{msg}</p>
+    </div>
+  );
 }
