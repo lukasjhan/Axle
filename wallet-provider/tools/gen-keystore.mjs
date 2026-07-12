@@ -11,26 +11,40 @@ x509.cryptoProvider.set(webcrypto);
 
 const alg = { name: 'ECDSA', namedCurve: 'P-256' };
 const sigAlg = { name: 'ECDSA', hash: 'SHA-256' };
-const validity = { notBefore: new Date('2025-01-01'), notAfter: new Date('2035-01-01') };
+// Issued from now: CA valid 10y, signer 3y (signing certs are rotated more often). Backdate 1 day for skew.
+const now = new Date();
+const inYears = (y) => { const d = new Date(now); d.setUTCFullYear(d.getUTCFullYear() + y); return d; };
+const notBefore = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+const caValidity = { notBefore, notAfter: inYears(10) };
+const signerValidity = { notBefore, notAfter: inYears(3) };
 
 const caKeys = await webcrypto.subtle.generateKey(alg, true, ['sign', 'verify']);
 const signKeys = await webcrypto.subtle.generateKey(alg, true, ['sign', 'verify']);
 
+// ETSI TS 119 602 Annex E: the listed WP cert must carry the provider's name (organizationName = TE name)
+// and, where applicable, its registration number (organizationIdentifier 2.5.4.97, EN 319 412-1 format:
+// <3-char scheme><2-char country>-<id>, e.g. VATSE-556677889900). Adjust to your real registration.
+const org = process.env.WP_ORG_NAME || 'Hopae S.A.';
+const orgId = process.env.WP_ORG_ID || 'NTRLU-B000000'; // placeholder — set to the real RCS Luxembourg number
+const country = process.env.WP_COUNTRY || 'LU';
+const dn = (cn) => `CN=${cn}, 2.5.4.97=${orgId}, O=${org}, C=${country}`; // 2.5.4.97 = organizationIdentifier
+
 const caCert = await x509.X509CertificateGenerator.createSelfSigned({
   serialNumber: '01',
-  name: 'CN=EUDI Wallet Provider CA, O=Hopae, C=KR',
+  name: dn(`${org} EUDI Wallet Provider CA`),
   keys: caKeys,
   signingAlgorithm: sigAlg,
   extensions: [
     new x509.BasicConstraintsExtension(true, 1, true),
     new x509.KeyUsagesExtension(x509.KeyUsageFlags.keyCertSign | x509.KeyUsageFlags.cRLSign, true),
+    await x509.SubjectKeyIdentifierExtension.create(caKeys.publicKey),
   ],
-  ...validity,
+  ...caValidity,
 });
 
 const signerCert = await x509.X509CertificateGenerator.create({
   serialNumber: '02',
-  subject: 'CN=EUDI Wallet Provider Signer, O=Hopae, C=KR',
+  subject: dn(`${org} Wallet Unit Attestation Signer`),
   issuer: caCert.subject,
   publicKey: signKeys.publicKey,
   signingKey: caKeys.privateKey,
@@ -38,8 +52,10 @@ const signerCert = await x509.X509CertificateGenerator.create({
   extensions: [
     new x509.BasicConstraintsExtension(false),
     new x509.KeyUsagesExtension(x509.KeyUsageFlags.digitalSignature, true),
+    await x509.SubjectKeyIdentifierExtension.create(signKeys.publicKey),
+    await x509.AuthorityKeyIdentifierExtension.create(caKeys.publicKey),
   ],
-  ...validity,
+  ...signerValidity,
 });
 
 const pkcs8 = Buffer.from(await webcrypto.subtle.exportKey('pkcs8', signKeys.privateKey)).toString('base64');

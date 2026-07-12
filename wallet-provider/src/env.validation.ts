@@ -42,7 +42,12 @@ class EnvironmentVariables {
   @IsString()
   ADMIN_API_KEY?: string;
 
-  /** Android app package for real Play Integrity verification (else the dev-integrity stub is used). */
+  /** Set to `true` to accept the `dev-integrity:<nonce>` bypass. OFF by default; never set in production. */
+  @IsOptional()
+  @IsString()
+  DEV_INTEGRITY_BYPASS?: string;
+
+  /** Android app package for real Play Integrity verification (else registration needs the dev bypass). */
   @IsOptional()
   @IsString()
   PLAY_INTEGRITY_PACKAGE_NAME?: string;

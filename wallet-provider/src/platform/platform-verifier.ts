@@ -27,13 +27,16 @@ export interface PlatformVerifier {
 
 /**
  * Dev bypass: the reference wallet emits `dev-integrity:<nonce>` when a real Play Integrity / App Attest
- * verdict is unavailable (local dev, demo fallback). Accepted by every platform so those flows work.
+ * verdict is unavailable (local dev, demo fallback). Gated on the explicit `DEV_INTEGRITY_BYPASS=true` flag
+ * (not the stage) and OFF by default — a production deployment simply doesn't set it, so this bypass is
+ * closed and only real attestation is accepted.
  */
 export function devIntegrity(
   token: string | undefined,
   challenge: string,
   platform: WalletPlatform,
 ): IntegrityResult | null {
+  if (process.env.DEV_INTEGRITY_BYPASS !== 'true') return null;
   return token === `dev-integrity:${challenge}` ? { trusted: true, platform } : null;
 }
 
