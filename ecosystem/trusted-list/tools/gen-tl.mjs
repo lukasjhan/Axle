@@ -22,12 +22,17 @@ const lote = buildLote(root, at);
 const jades = signJades(lote, soKeystore, at);
 const jadesStr = JSON.stringify(jades, null, 2);
 
-writeFileSync(join(root, 'public/tl/wallet-providers.json'), JSON.stringify(lote, null, 2) + '\n'); // human-readable LoTE
-writeFileSync(join(root, 'public/tl/wallet-providers.jades.json'), jadesStr + '\n'); // authoritative JAdES
+// Two artifacts are published, both signed: the JAdES JSON serialization and its compact form.
+writeFileSync(join(root, 'public/tl/wallet-providers.jades.json'), jadesStr + '\n'); // JAdES JSON serialization
+
+// Compact JWS (protected.payload.signature) — the machine distribution point referenced by the scheme's
+// distributionPoints / selfPointerUri. Valid here because the JAdES has no (populated) unprotected header.
+const jws = `${jades.protected}.${jades.payload}.${jades.signature}`;
+writeFileSync(join(root, 'public/tl/wallet-providers.jws'), jws + '\n');
 
 const info = lote.listAndSchemeInformation;
 console.log('Trusted List generated → public/tl/');
 console.log(`  ${info.schemeName}`);
 console.log(`  seq #${info.loteSequenceNumber} · issued ${info.listIssueDateTime.slice(0, 10)} · next update ${info.nextUpdate.slice(0, 10)}`);
 console.log(`  entities: ${lote.trustedEntitiesList.map((e) => e.trustedEntityInformation.teName).join(', ')}`);
-console.log(`  wallet-providers.jades.json (${jadesStr.length} bytes) + wallet-providers.json`);
+console.log(`  wallet-providers.jades.json (${jadesStr.length} bytes) + .jws (compact)`);

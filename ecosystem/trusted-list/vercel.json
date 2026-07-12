@@ -1,0 +1,22 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "buildCommand": "pnpm build",
+  "outputDirectory": "dist",
+  "headers": [
+    {
+      "source": "/tl/wallet-providers.jws",
+      "headers": [
+        { "key": "Content-Type", "value": "application/jose; charset=utf-8" },
+        { "key": "Cache-Control", "value": "public, max-age=300, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/tl/(.*)\\.json",
+      "headers": [
+        { "key": "Content-Type", "value": "application/json; charset=utf-8" },
+        { "key": "Cache-Control", "value": "public, max-age=300, must-revalidate" }
+      ]
+    }
+  ]
+}
