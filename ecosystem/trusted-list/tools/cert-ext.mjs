@@ -38,7 +38,7 @@ export const OID = {
   etsiQcType: '0.4.0.1862.1.6', // id-etsi-qcs-QcType (EN 319 412-5)
   qctPid: '0.4.0.194126.1.1', // id-etsi-qct-pid  (ETSI TS 119 412-6 §4)
   qctWal: '0.4.0.194126.1.2', // id-etsi-qct-wal  (§5.2)
-  qctEaa: '0.4.0.194126.1.3', // id-etsi-qct-eaa  (§6) — attestation/(Q)EAA provider
+  qcsPsb: '0.4.0.194126.1.3', // id-etsi-qcs-QcPSB (412-6 Annex A / §8.3) — Public Sector Body EAA only; NOT for mDL/generic EAA (§6 = no QcType)
   mdlDS: '1.0.18013.5.1.2', // id-mdl-kp-mdlDS (ISO/IEC 18013-5 Annex B) — EKU for the mDL Document Signer
 };
 

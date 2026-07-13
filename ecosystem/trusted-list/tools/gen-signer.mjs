@@ -52,7 +52,7 @@ else notAfter.setUTCFullYear(notAfter.getUTCFullYear() + 3); // PID (412-6): 3y
 // Family-specific extensions.
 const familyExts =
   profile === 'mdl'
-    ? [new x509.ExtendedKeyUsageExtension([OID.mdlDS], true), qcStatementsExtension(OID.qctEaa)]
+    ? [new x509.ExtendedKeyUsageExtension([OID.mdlDS], true)] // §6 EAA defers to EN 319 412-2/-3 — NO QcType
     : [qcStatementsExtension(OID.qctPid)];
 
 const keys = await webcrypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
