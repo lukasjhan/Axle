@@ -102,11 +102,21 @@ class RequestEncryptionMetadata(
 ) {
     companion object {
         fun fromObj(o: JsonValue.Obj) = RequestEncryptionMetadata(
-            jwks = ((o["jwks"] as? JsonValue.Obj)?.get("keys") as? JsonValue.Arr)?.items?.filterIsInstance<JsonValue.Obj>()
-                ?: emptyList(),
+            jwks = jwksOf(o["jwks"]),
             encValuesSupported = o.arrStr("enc_values_supported") ?: emptyList(),
             encryptionRequired = (o["encryption_required"] as? JsonValue.Bool)?.value ?: false,
         )
+
+        /**
+         * OpenID4VCI §12.2 `credential_request_encryption.jwks`. The prose calls this "A JSON Web Key Set"
+         * (RFC 7517: an object with a `keys` array), but the spec's own metadata example encodes it as a bare
+         * array of JWKs. Real issuers ship both shapes, so accept either — bare array or `{ "keys": [...] }`.
+         */
+        private fun jwksOf(v: JsonValue?): List<JsonValue.Obj> = when (v) {
+            is JsonValue.Arr -> v.items.filterIsInstance<JsonValue.Obj>()
+            is JsonValue.Obj -> (v["keys"] as? JsonValue.Arr)?.items?.filterIsInstance<JsonValue.Obj>() ?: emptyList()
+            else -> emptyList()
+        }
     }
 }
 
