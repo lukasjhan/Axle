@@ -90,6 +90,14 @@ class FullEcosystemE2eTest {
         println("[e2e] resolved verifier=${request.verifier.clientId} trusted=${request.verifier.trusted} registration=${request.verifier.registration?.subject}")
         assertTrue(request.satisfiable, "verifier's mDL query not satisfiable by the held credential")
 
+        // The live verifier carries a WRPRC + registrar_dataset in verifier_info: the registration is
+        // registrar-attested (Trust 2A), surfaces the registry URI, and every requested mDL claim is within
+        // the RP's registration (RPRC_21 scope check finds nothing over-asked).
+        val reg = request.verifier.registration!!
+        assertTrue(reg.attested, "live verifier presents a WRPRC → attested registration")
+        assertEquals("https://dev.api.hopae.com/registrar/registry", reg.registryURI)
+        assertTrue(reg.unregisteredClaims.isEmpty(), "verifier requests only registered attributes: ${reg.unregisteredClaims}")
+
         session.respond(PresentationSelection.auto(request))
         val terminal = withTimeout(45_000) { session.state.first { it.isTerminal } }
         assertTrue(terminal is PresentationState.Completed, "presentation failed: $terminal")
