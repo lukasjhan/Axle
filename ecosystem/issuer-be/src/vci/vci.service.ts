@@ -297,7 +297,12 @@ export class VciService {
    */
   async credential(body: Record<string, unknown>, accessToken: Record<string, unknown>): Promise<IssuerResponse> {
     const authorized = (accessToken.authorized_configs as string[] | undefined) ?? [];
-    const configId = (body.credential_configuration_id as string | undefined) ?? (authorized.length === 1 ? authorized[0] : undefined);
+    // OID4VCI: when the token response returned `credential_identifiers`, the wallet sends `credential_identifier`
+    // (our identifiers == the config ids). Accept either that or `credential_configuration_id`.
+    const configId =
+      (body.credential_identifier as string | undefined) ??
+      (body.credential_configuration_id as string | undefined) ??
+      (authorized.length === 1 ? authorized[0] : undefined);
     if (!configId || !authorized.includes(configId)) throw new OAuthError('invalid_credential_request', 'credential_configuration_id not authorized');
     const c = getConfig(configId)!;
 
@@ -405,18 +410,22 @@ export class VciService {
 
   /**
    * Credential Response Encryption (OID4VCI §8.3 / ETSI TS 119 472-3 CRYPTO-5-01). When the request carries
-   * `credential_response_encryption` {jwk, alg, enc}, the JSON response is returned as a compact JWE (ECDH-ES to
-   * the wallet's key, A128GCM/A256GCM content encryption); otherwise it is returned as JSON.
+   * `credential_response_encryption` = { jwk, enc } (the key-management `alg` lives in the JWK, not a top-level
+   * member), the JSON response is returned as a compact JWE (ECDH-ES to the wallet's key, A128GCM/A256GCM);
+   * otherwise it is returned as JSON.
    */
   private async maybeEncrypt(resp: unknown, body: Record<string, unknown>): Promise<IssuerResponse> {
-    const enc = body.credential_response_encryption as { jwk?: JWK; alg?: string; enc?: string } | undefined;
+    const enc = body.credential_response_encryption as { jwk?: JWK & { alg?: string }; enc?: string } | undefined;
     if (!enc) return { contentType: 'application/json', payload: resp };
-    if (!enc.jwk || enc.alg !== 'ECDH-ES' || !['A128GCM', 'A256GCM'].includes(enc.enc ?? '')) {
-      throw new OAuthError('invalid_encryption_parameters', 'credential_response_encryption requires jwk + alg=ECDH-ES + enc A128GCM/A256GCM');
+    // OID4VCI 1.0: the request object is { jwk, enc } — the key-management `alg` is a member of the JWK. We
+    // only support ECDH-ES.
+    const alg = enc.jwk?.alg ?? 'ECDH-ES';
+    if (!enc.jwk || alg !== 'ECDH-ES' || !['A128GCM', 'A256GCM'].includes(enc.enc ?? '')) {
+      throw new OAuthError('invalid_encryption_parameters', 'credential_response_encryption requires a jwk (ECDH-ES) + enc A128GCM/A256GCM');
     }
     const jwe = await new CompactEncrypt(new TextEncoder().encode(JSON.stringify(resp)))
       .setProtectedHeader({ alg: 'ECDH-ES', enc: enc.enc!, ...(enc.jwk.kid ? { kid: enc.jwk.kid as string } : {}) })
-      .encrypt(await importJWK(enc.jwk, enc.alg));
+      .encrypt(await importJWK(enc.jwk, 'ECDH-ES'));
     return { contentType: 'application/jwt', payload: jwe };
   }
 

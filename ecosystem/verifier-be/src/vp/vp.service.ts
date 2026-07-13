@@ -82,7 +82,8 @@ export class VpService {
           }
         : {
             // For the Digital Credentials API: the frontend passes this to navigator.credentials.get.
-            dc_api_request: { protocol: 'openid4vp', request: { request: session.requestJwt } },
+            // OID4VP 1.0: a signed (JWS) request uses the `openid4vp-v1-signed` protocol identifier.
+            dc_api_request: { protocol: 'openid4vp-v1-signed', request: { request: session.requestJwt } },
           }),
     };
   }

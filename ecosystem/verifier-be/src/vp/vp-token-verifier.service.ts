@@ -105,10 +105,12 @@ export class VpTokenVerifierService {
     const sdjwt = new SDJwtInstance({ saltGenerator: generateSalt, hashAlg: 'sha-256', hasher: digest, verifier, kbVerifier });
     const result = await sdjwt.verify(presentation, { keyBindingNonce: binding.nonce, requiredClaimKeys: cred.claimNames });
 
-    // Audience binding: the key-binding JWT MUST be addressed to this verifier (client_id).
+    // Audience binding: the key-binding JWT MUST be addressed to this verifier. Over the DC API the audience
+    // is the calling origin prefixed with `origin:` (OpenID4VP §... Appendix A.2); otherwise it is the client_id.
+    const expectedAud = binding.mode === 'dc_api' ? `origin:${binding.origin ?? ''}` : binding.clientId;
     const aud = (result.kb?.payload as { aud?: unknown } | undefined)?.aud;
-    if (aud !== binding.clientId) {
-      throw new Error(`SD-JWT VC key-binding aud '${String(aud)}' != client_id '${binding.clientId}'`);
+    if (aud !== expectedAud) {
+      throw new Error(`SD-JWT VC key-binding aud '${String(aud)}' != expected '${expectedAud}'`);
     }
 
     // Revocation: refuse a credential whose Token Status List entry is not valid (IETF TSL).

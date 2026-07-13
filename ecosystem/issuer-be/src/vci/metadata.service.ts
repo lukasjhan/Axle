@@ -114,7 +114,9 @@ export class MetadataService {
       nonce_endpoint: `${iss}/nonce`,
       deferred_credential_endpoint: `${iss}/deferred_credential`,
       notification_endpoint: `${iss}/notification`,
-      batch_credential_issuance: { batch_size: profile.batch },
+      // OID4VCI: batch_size MUST be >= 2, so advertise batch_credential_issuance only on the batch profiles;
+      // a batch_size of 1 (single issuance) is the default and is expressed by omitting the member.
+      ...(profile.batch >= 2 ? { batch_credential_issuance: { batch_size: profile.batch } } : {}),
       // Credential Response Encryption (OID4VCI §8.3 / ETSI TS 119 472-3 CRYPTO-5-01). `encryption_required`
       // is the standard lever the wallet obeys — true on the `enc` profiles forces an encrypted response.
       credential_response_encryption: {

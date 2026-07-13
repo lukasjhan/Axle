@@ -220,7 +220,8 @@ function buildRegistrarDataset(rp) {
     registryURI: rp.registryURI,
     intendedUseIdentifier: iu.intendedUseIdentifier,
     purpose: iu.purpose,
-    policyURI: (iu.privacyPolicy ?? []).map((p) => ({ type: p.type, policyURI: p.uri })),
+    // 472-2 §5.3.2 CDDL: `policyURI` is a bare URI string (tstr), not an object array.
+    policyURI: iu.privacyPolicy?.[0]?.uri,
     credential: iu.credential,
   };
 }

@@ -46,7 +46,8 @@ export class RequestBuilderService {
           registryURI: `${this.baseUrl}`,
           intendedUseIdentifier: 'age-verification',
           purpose: [{ lang: 'en', content: 'Age verification' }],
-          policyURI: [{ type: 'http://data.europa.eu/eudi/policy/privacy-policy', policyURI: `${this.baseUrl}/privacy` }],
+          // 472-2 §5.3.2 CDDL: `policyURI` is a bare string (tstr), not an object array.
+          policyURI: `${this.baseUrl}/privacy`,
         };
   }
 
@@ -94,7 +95,8 @@ export class RequestBuilderService {
   private clientMetadata(enc: EncKeyInput): Record<string, unknown> {
     return {
       jwks: { keys: [encClientMetadataJwk(enc.publicJwk, enc.kid)] },
-      encrypted_response_enc_values_supported: ['A256GCM'],
+      // HAIP: verifiers MUST list BOTH A128GCM and A256GCM (the wallet picks; it SHOULD use A256GCM).
+      encrypted_response_enc_values_supported: ['A128GCM', 'A256GCM'],
     };
   }
 
