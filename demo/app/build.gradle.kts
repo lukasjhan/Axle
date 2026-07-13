@@ -61,6 +61,8 @@ dependencies {
     implementation("com.hopae.eudi.android:core:0.0.1-SNAPSHOT")
     implementation("com.hopae.eudi.android:proximity:0.0.1-SNAPSHOT")
     implementation("com.hopae.eudi.android:dcapi:0.0.1-SNAPSHOT")
+    // Wallet Provider backend client: client-auth WUA + per-issuance key attestation (HAIP §4.4.1 / §4.5.1).
+    implementation("com.hopae.eudi.android:attestation:0.0.1-SNAPSHOT")
     // debug-grade software SecureArea + in-memory helpers
     implementation("com.hopae.eudi:testkit:0.0.1-SNAPSHOT")
 

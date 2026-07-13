@@ -7,6 +7,9 @@ import com.hopae.eudi.wallet.android.AndroidKeystoreSecureArea
 import com.hopae.eudi.wallet.android.FileStorageDriver
 import com.hopae.eudi.wallet.android.FileTransactionLogStore
 import com.hopae.eudi.wallet.android.OkHttpTransport
+import com.hopae.eudi.wallet.android.attestation.DevIntegrityTokenProvider
+import com.hopae.eudi.wallet.android.attestation.PlayIntegrityTokenProvider
+import com.hopae.eudi.wallet.android.attestation.WalletProviderAttestation
 import com.hopae.eudi.wallet.IssuanceConfig
 import com.hopae.eudi.wallet.TransactionLogConfig
 import com.hopae.eudi.wallet.TrustConfig
@@ -40,6 +43,15 @@ object DemoWallet {
     /** Base of the sandbox JAdES trusted lists (our Scheme Operator). */
     private const val TL_BASE = "https://trusted-list.vercel.app/tl"
 
+    /** Our Wallet Provider backend (client-auth WUA + key attestation). */
+    private const val WP_BASE = "https://dev.api.hopae.com/wp"
+
+    /** Google Cloud project number for Play Integrity (sideloaded debug falls back to the dev token). */
+    private const val PLAY_INTEGRITY_PROJECT = 1_048_824_403_731L
+
+    /** Wallet client_id — must equal [IssuanceConfig.clientId] so the WUA `sub` matches at the issuer. */
+    private const val CLIENT_ID = "wallet-dev"
+
     @Volatile private var instance: Wallet? = null
     private val buildLock = Mutex()
 
@@ -64,23 +76,38 @@ object DemoWallet {
         transactionStore = FileTransactionLogStore(File(logsDir, "transactions.log"))
         val logger = LogWalletLogger() // routes SDK + adapter logs into the in-app LogStore
         val http = OkHttpTransport(logger = logger)
+        val secureArea = AndroidKeystoreSecureArea()
+        val storage = FileStorageDriver(File(filesDir, "wallet"))
 
         val trust = resolveTrust(http, File(filesDir, "trust"))
+
+        // Wallet Provider backend: gives the client-auth WUA (attest_jwt_client_auth) and the per-issuance
+        // key attestation the issuer requires for PID. Play Integrity attests the instance, falling back to the
+        // dev token when side-loaded. The instance registration id is persisted via [storage].
+        val walletAttestation = WalletProviderAttestation(
+            baseUrl = WP_BASE,
+            http = http,
+            secureArea = secureArea,
+            integrity = PlayIntegrityTokenProvider(context, PLAY_INTEGRITY_PROJECT, fallback = DevIntegrityTokenProvider(), logger = logger),
+            clientId = CLIENT_ID,
+            storage = storage,
+        )
 
         return Wallet.create(
             config = WalletConfig(
                 trust = trust,
                 // Authorization-code redirect — matches the EUDI reference wallet's scheme.
-                issuance = IssuanceConfig(redirectUri = "eu.europa.ec.euidi://authorization"),
+                issuance = IssuanceConfig(clientId = CLIENT_ID, redirectUri = "eu.europa.ec.euidi://authorization"),
                 // Debug wallet: also log presentations that fail at final submission (opt-in).
                 transactionLog = TransactionLogConfig(recordFailures = true),
             ),
             ports = WalletPorts(
-                secureAreas = listOf(AndroidKeystoreSecureArea()),
-                storage = FileStorageDriver(File(filesDir, "wallet")),
+                secureAreas = listOf(secureArea),
+                storage = storage,
                 http = http,
                 logger = logger,
                 transactionLogStore = transactionStore,
+                walletAttestation = walletAttestation,
             ),
         ).also {
             LogStore.log(
