@@ -366,11 +366,11 @@ export class VciService {
    * Resolves the holder keys to bind, honoring the two batch shapes (ETSI TS 119 472-3 §4.6 / OID4VCI §14.6):
    *
    *  • jwt proofs WITHOUT a key attestation → each `proofs.jwt[]` element binds its own signing key (PoP);
-   *    multiple allowed up to `maxBatch`. Rejected when the config mandates a WUA (`requireKeyAttestation`).
-   *  • jwt proof WITH a key attestation (WUA) → MUST be the only proof (ETSI CRED-REQ-4.6.1.2-01, blocks the
-   *    N×N shape); the bound keys come from the WUA's `attested_keys` (first `maxBatch`), and the proof must be
-   *    signed by the first attested key (CRED-REQ-PROC-4.6.2.1-02/-07).
-   *  • `attestation` proof (a WUA on its own, no PoP) → exactly one element; keys from `attested_keys`.
+   *    multiple allowed up to `maxBatch`. Rejected when the config mandates a key attestation (`requireKeyAttestation`).
+   *  • jwt proof WITH a key attestation → MUST be the only proof (ETSI CRED-REQ-4.6.1.2-01, blocks the N×N
+   *    shape); the bound keys come from the attestation's `attested_keys` (first `maxBatch`), and the proof
+   *    must be signed by the first attested key (CRED-REQ-PROC-4.6.2.1-02/-07).
+   *  • `attestation` proof (a key attestation on its own, no PoP) → exactly one element; keys from `attested_keys`.
    *
    * The Credential Issuer determines the credential count (OID4VCI §14.6): we cap `attested_keys` to `maxBatch`
    * and refuse duplicate keys (CRED-REQ-PROC-4.6.2.1-06).
@@ -384,7 +384,7 @@ export class VciService {
     const attProofs = proof?.proof_type === 'attestation' && proof.attestation ? [proof.attestation] : asStrings(proofs?.attestation);
     if (jwtProofs.length && attProofs.length) throw new OAuthError('invalid_proof', 'send either jwt or attestation proofs, not both');
 
-    // (A) `attestation` proof type: a WUA on its own (no PoP). Exactly one element; its nonce IS the c_nonce.
+    // (A) `attestation` proof type: a key attestation on its own (no PoP). Exactly one element; its nonce IS the c_nonce.
     if (attProofs.length) {
       if (attProofs.length !== 1) throw new OAuthError('invalid_proof', 'the attestation proof array must contain exactly one element');
       const { attestedKeys, nonce } = await this.keyAttestation.verifyAttestation(attProofs[0]);
@@ -399,9 +399,9 @@ export class VciService {
     if (new Set(verified.map((v) => v.nonce)).size !== 1) throw new OAuthError('invalid_proof', 'all proofs must share one c_nonce');
     await this.consumeNonce(verified[0].nonce);
 
-    const withWua = verified.some((v) => typeof v.header['key_attestation'] === 'string');
-    if (withWua) {
-      // A key attestation carries the batch in its attested_keys → forbid N proofs each with a WUA (N×N).
+    const withKeyAttestation = verified.some((v) => typeof v.header['key_attestation'] === 'string');
+    if (withKeyAttestation) {
+      // A key attestation carries the batch in its attested_keys → forbid N proofs each with a key attestation (N×N).
       if (jwtProofs.length !== 1) throw new OAuthError('invalid_proof', 'a jwt proof carrying a key_attestation must be the only proof (batch keys go in attested_keys)');
       const v = verified[0];
       const { attestedKeys } = await this.keyAttestation.verifyAttestation(v.header['key_attestation'] as string, v.nonce);
@@ -412,7 +412,7 @@ export class VciService {
       return this.capBatch(attestedKeys, maxBatch);
     }
 
-    // Bare jwt(s): each binds its own signing key. A WUA-required config refuses these.
+    // Bare jwt(s): each binds its own signing key. A key-attestation-required config refuses these.
     if (requireKeyAttestation) throw new OAuthError('invalid_proof', 'key attestation required');
     if (jwtProofs.length > maxBatch) throw new OAuthError('invalid_credential_request', `this issuer profile allows at most ${maxBatch} credential(s) per request`);
     return this.assertDistinct(verified.map((v) => v.holderJwk));

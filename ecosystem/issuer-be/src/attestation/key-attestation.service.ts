@@ -6,11 +6,15 @@ import { OAuthError } from '../vci/oauth-error';
 import { verifyX5cToAnchors } from './x5c-chain.util';
 
 /**
- * Verifies a Key Attestation (the WUA — OID4VCI Appendix D / HAIP §4.5.1), whether carried standalone (the
- * `attestation` proof type) or inside a jwt proof's `key_attestation` header. Confirms it chains to a trusted
- * Wallet Provider CA, is fresh, and — when an `expectedNonce` is given — echoes it; returns the `attested_keys`
- * (the WSCD-bound holder keys) and the attestation `nonce`. Trust + freshness checks are skipped by
- * `DEV_ATTESTATION_BYPASS=true` (attested_keys are still decoded so batch issuance keeps working).
+ * Verifies the credential-request Key Attestation (OID4VCI Appendix D / HAIP §4.5.1), whether carried
+ * standalone (the `attestation` proof type) or inside a jwt proof's `key_attestation` header. Confirms it
+ * chains to a trusted Wallet Provider CA, is fresh, and — when an `expectedNonce` is given — echoes it; returns
+ * the `attested_keys` (the WSCD-bound holder keys) and the attestation `nonce`. Trust + freshness checks are
+ * skipped by `DEV_ATTESTATION_BYPASS=true` (attested_keys are still decoded so batch issuance keeps working).
+ *
+ * NAMING: this is the *Key* Attestation (WP `/key-attestation` endpoint), NOT the Wallet Unit Attestation
+ * (WUA). ETSI TS 119 472-3 calls this slot "the WUA", but in our system the WUA is a separate wallet-level
+ * attestation used for token-endpoint client auth (see WalletAttestationGuard) — the two are distinct objects.
  */
 @Injectable()
 export class KeyAttestationService {

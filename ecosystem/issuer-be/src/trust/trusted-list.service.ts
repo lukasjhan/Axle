@@ -8,7 +8,8 @@ const CACHE_TTL_MS = 15 * 60 * 1000;
 
 /**
  * Resolves the Wallet Provider CA trust anchors from the JAdES-signed Wallet Providers Trusted List (ETSI TS
- * 119 602) — the anchors a Wallet Unit Attestation (WUA) must chain to. Fetches the list, verifies the Scheme
+ * 119 602) — the anchors a Wallet Provider's attestations (the WUA and the credential-request Key Attestation)
+ * must chain to. Fetches the list, verifies the Scheme
  * Operator's JAdES signature, extracts each listed service certificate, and caches the result.
  */
 @Injectable()

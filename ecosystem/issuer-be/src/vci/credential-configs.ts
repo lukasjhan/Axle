@@ -46,7 +46,7 @@ export interface CredentialConfig {
   /** Fields shown on the issuance consent screen. */
   displayFields: DisplayField[];
   /**
-   * Whether a valid Key Attestation (the WUA) is MANDATORY in the credential-request jwt proof. ETSI TS 119
+   * Whether a valid Key Attestation is MANDATORY in the credential-request jwt proof. ETSI TS 119
    * 472-3 CRED-REQ-4.6.1.2-03 makes the `key_attestation` parameter mandatory for PID/EAA, and the Provider
    * must verify it chains to the Wallet Provider Trusted List (CRED-REQ-PROC-4.6.2.1-01). Omitted ⇒ true
    * (secure default): the config advertises `key_attestations_required` and rejects a proof without a valid
@@ -151,8 +151,8 @@ export const CREDENTIAL_CONFIGS: CredentialConfig[] = [
   {
     id: 'org.iso.18013.5.1.mDL',
     // mDL is an EAA, not PID: ISO/IEC 18013-5 requires device-key binding (proven by the jwt proof's PoP) but
-    // not a WUA. We treat this sandbox mDL as lower-assurance and accept a bare jwt proof. Flip to true to
-    // enforce the WUA (strict ETSI TS 119 472-3 for a device-bound EAA).
+    // not a key attestation. We treat this sandbox mDL as lower-assurance and accept a bare jwt proof. Flip to
+    // true to enforce a key attestation (strict ETSI TS 119 472-3 for a device-bound EAA).
     keyAttestationRequired: false,
     format: 'mso_mdoc',
     scope: 'org.iso.18013.5.1.mDL',

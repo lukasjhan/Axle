@@ -6,7 +6,7 @@ import { RequestEncryptionService } from '../crypto/request-encryption.service';
 import { ISSUER_PROFILES, credentialIssuerId, type IssuerProfile } from './issuer-profiles';
 
 // The `jwt` proof type. `key_attestations_required` (HAIP §4.5.1 / ETSI TS 119 472-3 CRED-REQ-4.6.1.2-03)
-// is advertised PER credential config — only for those that mandate a Key Attestation (the WUA). See
+// is advertised PER credential config — only for those that mandate a Key Attestation. See
 // `CredentialConfig.keyAttestationRequired` (default true).
 const JWT_PROOF_SIGNING = { proof_signing_alg_values_supported: ['ES256'] };
 const KEY_ATTESTATIONS_REQUIRED = { key_storage: ['iso_18045_moderate', 'iso_18045_high'] };
@@ -139,7 +139,7 @@ export class MetadataService {
 
   private configMetadata(c: CredentialConfig) {
     // Advertise key_attestations_required — and the standalone `attestation` proof type — only when this config
-    // mandates a WUA (default: true). A non-WUA config (e.g. the demo mDL) offers just the bare `jwt` proof type.
+    // mandates a key attestation (default: true). A config that doesn't (e.g. the demo mDL) offers just the bare `jwt` proof type.
     const proof_types_supported =
       c.keyAttestationRequired === false
         ? { jwt: JWT_PROOF_SIGNING }
