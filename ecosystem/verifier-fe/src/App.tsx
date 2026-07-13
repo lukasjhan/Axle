@@ -21,6 +21,14 @@ import { cn } from '@/lib/utils';
 
 const BE = (import.meta.env.VITE_VERIFIER_BE_URL as string | undefined) ?? 'https://dev.api.hopae.com/trp';
 
+/**
+ * Mobile browser ⇒ same-device: the wallet is on this same phone, so use the deep link and ask the verifier
+ * for the redirect return. Desktop ⇒ cross-device: the QR is scanned by a separate phone, so poll instead.
+ */
+function isMobile(): boolean {
+  return /Android|iPhone|iPad|iPod|Windows Phone|Mobile/i.test(navigator.userAgent);
+}
+
 type CredKey = 'pid_sd_jwt' | 'pid_mdoc' | 'mdl';
 type RpMode = 'plain' | 'intermediary';
 
@@ -107,9 +115,9 @@ export default function App() {
         credentials: [...selected],
         mode,
         rp,
-        // QR offers a same-device "open in wallet" deep link, so ask for the same-device redirect return
-        // (cross-device scans are covered by polling). DC API is inline — no redirect.
-        ...(mode === 'dc_api' ? { origins: [window.location.origin] } : { same_device: true }),
+        // Mobile ⇒ same-device (redirect back via response_code); desktop ⇒ cross-device (poll).
+        // DC API is inline — no redirect either way.
+        ...(mode === 'dc_api' ? { origins: [window.location.origin] } : { same_device: isMobile() }),
       };
       const res = await fetch(`${BE}/presentations`, {
         method: 'POST',
@@ -448,7 +456,7 @@ function DebugPanel({ debug }: { debug: NonNullable<ResultBody['debug']> }) {
     <details className="group rounded-xl border bg-card">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-2 p-4 text-sm font-medium text-muted-foreground">
         <span className="flex items-center gap-2">
-          <Braces className="h-4 w-4" /> Debug — request · vp_token · DCQL (raw)
+          <Braces className="h-4 w-4" /> Debug
         </span>
         <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
       </summary>
