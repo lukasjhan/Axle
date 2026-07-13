@@ -22,6 +22,8 @@ export interface PresentationSession {
   /** Web origins the DC API response may come from (dc_api mode only). */
   expectedOrigins?: string[];
   createdAt: number;
+  /** The raw vp_token the wallet submitted (DCQL-keyed raw presentations), kept for the debug inspector. */
+  submittedVpToken?: Record<string, unknown>;
   /** Populated once the wallet responds and the vp_token is verified (or verification fails). */
   result?: PresentationResult;
 }

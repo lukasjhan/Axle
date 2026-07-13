@@ -11,6 +11,8 @@ import {
   XCircle,
   Building2,
   ArrowLeft,
+  Braces,
+  ChevronDown,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -53,6 +55,13 @@ interface ResultBody {
   status: 'pending' | 'verified' | 'failed';
   credentials?: VerifiedCred[];
   error?: string;
+  /** Raw inspector data: the decoded request object (client_id, dcql_query, verifier_info), the request JWS,
+   *  and the vp_token the wallet submitted (base64url per-credential presentations). */
+  debug?: {
+    request?: unknown;
+    request_jwt?: string;
+    vp_token?: unknown;
+  };
 }
 
 type Phase =
@@ -396,10 +405,41 @@ function ResultView({ result, onBack }: { result: ResultBody; onBack: () => void
           </Card>
         ))}
 
+      {result.debug && <DebugPanel debug={result.debug} />}
+
       <Button variant="outline" onClick={onBack}>
         <ArrowLeft className="h-4 w-4" /> Start a new verification
       </Button>
     </div>
+  );
+}
+
+/** Collapsible raw inspector: the full request object, DCQL, verifier_info, and the submitted vp_token. */
+function DebugPanel({ debug }: { debug: NonNullable<ResultBody['debug']> }) {
+  const sections: { label: string; value: unknown }[] = [
+    { label: 'request (decoded JAR — client_id, dcql_query, verifier_info)', value: debug.request },
+    { label: 'vp_token (raw base64url presentations)', value: debug.vp_token },
+    { label: 'request_jwt (signed request object)', value: debug.request_jwt },
+  ];
+  return (
+    <details className="group rounded-xl border bg-card">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 p-4 text-sm font-medium text-muted-foreground">
+        <span className="flex items-center gap-2">
+          <Braces className="h-4 w-4" /> Debug — request · vp_token · DCQL (raw)
+        </span>
+        <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="space-y-4 border-t p-4">
+        {sections.map((s) => (
+          <div key={s.label}>
+            <div className="mb-1 text-xs font-medium text-muted-foreground">{s.label}</div>
+            <pre className="max-h-80 overflow-auto rounded-lg bg-muted p-3 text-[11px] leading-relaxed">
+              {typeof s.value === 'string' ? s.value : JSON.stringify(s.value, null, 2)}
+            </pre>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 

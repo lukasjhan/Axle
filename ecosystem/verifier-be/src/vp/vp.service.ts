@@ -118,7 +118,23 @@ export class VpService {
       status: session.result ? session.result.status : 'pending',
       credentials: session.result?.credentials,
       error: session.result?.error,
+      // Raw debug info for the inspector: the full request object (decoded JAR), the compact request JWS,
+      // and the raw vp_token the wallet submitted (base64url per-credential presentations).
+      debug: {
+        request: this.decodeJwtPayload(session.requestJwt),
+        request_jwt: session.requestJwt,
+        vp_token: session.submittedVpToken ?? null,
+      },
     };
+  }
+
+  /** Decodes a compact JWS payload (the request object claims) to JSON for the debug inspector. */
+  private decodeJwtPayload(jwt: string): unknown {
+    try {
+      return JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url').toString());
+    } catch {
+      return null;
+    }
   }
 
   private async finish(
@@ -126,6 +142,7 @@ export class VpService {
     vpToken: VpToken,
     binding: { nonce: string; mode: 'qr' | 'dc_api'; clientId: string; responseUri?: string; origin?: string },
   ): Promise<void> {
+    session.submittedVpToken = vpToken;
     try {
       const credentials = await this.verifier.verify(vpToken, session.requested, binding);
       session.result = { status: 'verified', credentials, verifiedAt: Date.now() };
