@@ -87,13 +87,13 @@ export class RequestBuilderService {
   /**
    * `client_metadata` advertising the response-encryption key + parameters (HAIP mandates encrypted responses).
    * The wallet encrypts to the `alg=ECDH-ES` JWK (matching its `kid`); `encrypted_response_enc_values_supported`
-   * selects A256GCM; `deviceauth_alg_values` offers the P-256 mdoc `deviceMac` alg (OpenID4VP App. B.2.2).
+   * selects A256GCM. We do NOT advertise mdoc `deviceauth_alg_values` (deviceMac) — this verifier verifies
+   * `deviceSignature` only, so the wallet must not be steered to MAC-based device auth.
    */
   private clientMetadata(enc: EncKeyInput): Record<string, unknown> {
     return {
       jwks: { keys: [encClientMetadataJwk(enc.publicJwk, enc.kid)] },
       encrypted_response_enc_values_supported: ['A256GCM'],
-      vp_formats_supported: { mso_mdoc: { deviceauth_alg_values: [-65537] } },
     };
   }
 

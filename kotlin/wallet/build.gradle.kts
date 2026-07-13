@@ -27,6 +27,7 @@ dependencies {
 
     testImplementation(kotlin("test"))
     testImplementation(project(":testkit"))
+    testImplementation(project(":trustlist"))
     testImplementation(testFixtures(project(":mdoc")))
     testImplementation(testFixtures(project(":openid4vci")))
     testImplementation(testFixtures(project(":openid4vp")))
