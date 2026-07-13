@@ -14,7 +14,7 @@ public struct TrustError: Error, CustomStringConvertible {
 /// swift-certificates-backed X.509 helpers shared by the issuer and verifier trust paths.
 public enum X509Support {
 
-    static func parse(_ der: [UInt8]) throws -> Certificate {
+    public static func parse(_ der: [UInt8]) throws -> Certificate {
         do { return try Certificate(derEncoded: der) }
         catch { throw TrustError("invalid X.509 certificate: \(error)") }
     }
@@ -26,7 +26,7 @@ public enum X509Support {
     }
 
     /// EC public key (P-256/384/521) as raw coordinates.
-    static func ecPublicKey(_ cert: Certificate) throws -> EcPublicKey {
+    public static func ecPublicKey(_ cert: Certificate) throws -> EcPublicKey {
         if let p = P256.Signing.PublicKey(cert.publicKey) {
             let raw = p.rawRepresentation
             return EcPublicKey(curve: .p256, x: [UInt8](raw.prefix(32)), y: [UInt8](raw.suffix(32)))

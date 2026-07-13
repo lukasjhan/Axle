@@ -12,6 +12,7 @@ let package = Package(
         .library(name: "OpenID4VCI", targets: ["OpenID4VCI"]),
         .library(name: "OpenID4VP", targets: ["OpenID4VP"]),
         .library(name: "Trust", targets: ["Trust"]),
+        .library(name: "TrustList", targets: ["TrustList"]),
         .library(name: "MDoc", targets: ["MDoc"]),
         .library(name: "StatusList", targets: ["StatusList"]),
         .library(name: "TransactionLog", targets: ["TransactionLog"]),
@@ -65,6 +66,13 @@ let package = Package(
             dependencies: [
                 "OpenID4VCI", "OpenID4VP", "SdJwt", "CborCose", "MDoc",
                 .product(name: "Crypto", package: "swift-crypto"),
+                .product(name: "X509", package: "swift-certificates"),
+            ]
+        ),
+        .target(
+            name: "TrustList",
+            dependencies: [
+                "Trust", "SdJwt", "CborCose", "WalletAPI",
                 .product(name: "X509", package: "swift-certificates"),
             ]
         ),
