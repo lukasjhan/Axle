@@ -169,6 +169,12 @@ class CredentialConfiguration(
     val proofSigningAlgs: List<String>,
     /** The `proof_types_supported` keys the issuer advertises for this config (e.g. `jwt`, `attestation`). */
     val proofTypesSupported: Set<String>,
+    /**
+     * True when the issuer requires a key attestation for this config — i.e. `proof_types_supported.jwt`
+     * (or `.attestation`) advertises `key_attestations_required` (HAIP §4.5.1). The wallet must then carry a
+     * Key Attestation in its proof; a bare `jwt` proof is rejected.
+     */
+    val keyAttestationRequired: Boolean,
     val scope: String?,
     /** From the first `display` entry — for wallet UI. */
     val displayName: String? = null,
@@ -177,11 +183,15 @@ class CredentialConfiguration(
 ) {
     companion object {
         fun fromObj(o: JsonValue.Obj): CredentialConfiguration {
-            val proofTypes = (o["proof_types_supported"] as? JsonValue.Obj)?.entries?.map { it.first }?.toSet() ?: emptySet()
-            val proofAlgs = ((o["proof_types_supported"] as? JsonValue.Obj)
-                ?.get("jwt") as? JsonValue.Obj)
+            val proofTypesObj = o["proof_types_supported"] as? JsonValue.Obj
+            val proofTypes = proofTypesObj?.entries?.map { it.first }?.toSet() ?: emptySet()
+            val proofAlgs = (proofTypesObj?.get("jwt") as? JsonValue.Obj)
                 ?.let { (it["proof_signing_alg_values_supported"] as? JsonValue.Arr) }
                 ?.items?.mapNotNull { (it as? JsonValue.Str)?.value } ?: emptyList()
+            // `key_attestations_required` may sit under the `jwt` or the `attestation` proof type.
+            val keyAttReq = listOf("jwt", "attestation").any {
+                (proofTypesObj?.get(it) as? JsonValue.Obj)?.get("key_attestations_required") != null
+            }
             val display = (o["display"] as? JsonValue.Arr)?.items?.firstOrNull() as? JsonValue.Obj
             return CredentialConfiguration(
                 format = (o["format"] as? JsonValue.Str)?.value ?: "",
@@ -189,6 +199,7 @@ class CredentialConfiguration(
                 docType = (o["doctype"] as? JsonValue.Str)?.value,
                 proofSigningAlgs = proofAlgs,
                 proofTypesSupported = proofTypes,
+                keyAttestationRequired = keyAttReq,
                 scope = (o["scope"] as? JsonValue.Str)?.value,
                 displayName = (display?.get("name") as? JsonValue.Str)?.value,
                 logoUri = ((display?.get("logo") as? JsonValue.Obj)?.get("uri") as? JsonValue.Str)?.value,

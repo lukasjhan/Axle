@@ -67,7 +67,7 @@ class AttestationProofTest {
     }
 
     @Test
-    fun fallsBackToJwtProofWhenIssuerDoesNotSupportAttestation() = runBlocking {
+    fun fallsBackToJwtProofWhenIssuerDoesNotSupportAttestation(): Unit = runBlocking {
         // preferAttestationProof is set, but the issuer advertises only the jwt proof type → jwt is used,
         // carrying the attestation in the proof header instead.
         val area = SoftwareSecureArea()

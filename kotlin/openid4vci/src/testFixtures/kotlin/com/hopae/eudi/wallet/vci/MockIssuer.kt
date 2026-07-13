@@ -211,6 +211,8 @@ class MockIssuer(
 
     /** When true, the config advertises the `attestation` proof type (§8.2.1 Appendix F.3) in its metadata. */
     var supportsAttestationProof: Boolean = false
+    /** When true, the config advertises `key_attestations_required` (HAIP §4.5.1) — a bare jwt proof is refused. */
+    var requiresKeyAttestation: Boolean = false
     /** The `attestation`-proof Key Attestation JWT the last Credential Request carried (§8.2.1.3), if any. */
     var seenAttestationProof: String? = null
         private set
@@ -394,7 +396,7 @@ class MockIssuer(
          "credential_configurations_supported":{
            "eu.europa.ec.eudi.pid.1":{"format":"dc+sd-jwt","vct":"eu.europa.ec.eudi.pid.1",
              "display":[{"name":"Personal ID","logo":{"uri":"https://logo.example/pid.png"},"background_color":"#123456"}],
-             "proof_types_supported":{"jwt":{"proof_signing_alg_values_supported":["ES256"]}${if (supportsAttestationProof) ""","attestation":{"proof_signing_alg_values_supported":["ES256"]}""" else ""}}}}}
+             "proof_types_supported":{"jwt":{"proof_signing_alg_values_supported":["ES256"]${if (requiresKeyAttestation) ""","key_attestations_required":{"key_storage":["iso_18045_high"]}""" else ""}}${if (supportsAttestationProof) ""","attestation":{"proof_signing_alg_values_supported":["ES256"]${if (requiresKeyAttestation) ""","key_attestations_required":{"key_storage":["iso_18045_high"]}""" else ""}}""" else ""}}}}}
     """.trimIndent()
 
     private fun asMetadata(): String = """

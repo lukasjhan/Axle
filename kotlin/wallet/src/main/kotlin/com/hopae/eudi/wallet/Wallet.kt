@@ -72,7 +72,7 @@ class Wallet private constructor(
                 AttestationClientAuth(config.issuance.clientId, it, ports.defaultSecureArea, ports.storage, ports.rng, clockSeconds)
             }
             val vci = Openid4VciClient(ports.http, ports.rng, clockSeconds, config.issuance.clientId, clientAuth = clientAuth)
-            val issuance = IssuanceService(vci, store, ports.storage, ports.defaultSecureArea, scope, ports.rng, ports.clock, config.issuance.redirectUri, txlog)
+            val issuance = IssuanceService(vci, store, ports.storage, ports.defaultSecureArea, scope, ports.rng, ports.clock, config.issuance.redirectUri, txlog, ports.walletAttestation)
 
             // Reader trust: one validator over the configured reader anchors, shared by remote (signed OpenID4VP
             // request objects) and proximity (mdoc reader authentication). No anchors → readers stay untrusted.

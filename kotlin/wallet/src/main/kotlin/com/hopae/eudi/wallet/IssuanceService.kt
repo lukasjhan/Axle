@@ -17,6 +17,8 @@ import com.hopae.eudi.wallet.spi.Rng
 import com.hopae.eudi.wallet.spi.SecureArea
 import com.hopae.eudi.wallet.spi.SigningAlgorithm
 import com.hopae.eudi.wallet.spi.StorageDriver
+import com.hopae.eudi.wallet.spi.WalletAttestationProvider
+import com.hopae.eudi.wallet.vci.KeyAttestationSource
 import com.hopae.eudi.wallet.spi.WalletClock
 import com.hopae.eudi.wallet.store.CredentialEnvelope
 import com.hopae.eudi.wallet.store.CredentialInstance
@@ -47,6 +49,8 @@ class IssuanceService internal constructor(
     private val clock: WalletClock,
     private val redirectUri: String,
     private val txlog: TransactionLog,
+    /** Wallet Provider backend for Key Attestations over the proof keys; null when none is configured. */
+    private val walletAttestation: WalletAttestationProvider? = null,
 ) {
     private class BuiltKeys(val keys: IssuanceKeys, val proofKeys: List<KeyInfo>, val dpopKey: KeyInfo)
 
@@ -161,6 +165,9 @@ class IssuanceService internal constructor(
             signer(proofKeys[0]), proofKeys[0].publicKey,
             signer(dpop), dpop.publicKey,
             additionalProofKeys = proofKeys.drop(1).map { ProofKey(signer(it), it.publicKey) },
+            // When a Wallet Provider is configured, attach a Key Attestation over exactly these proof keys
+            // (bound to the c_nonce at request time). The VCI client uses it only when the issuer requires one.
+            keyAttestation = walletAttestation?.let { p -> KeyAttestationSource { cNonce -> p.keyAttestation(proofKeys, cNonce) } },
         )
         return BuiltKeys(keys, proofKeys, dpop)
     }
