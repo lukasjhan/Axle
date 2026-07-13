@@ -57,6 +57,7 @@ export class VciController {
       deferred?: boolean;
       encrypted?: boolean;
       batch_size?: number;
+      tx_code?: boolean;
     },
   ) {
     return this.vci.createCredentialOffer(body.credential_configuration_id, {
@@ -64,6 +65,7 @@ export class VciController {
       deferred: body.deferred === true,
       encrypted: body.encrypted === true,
       batchSize: Number(body.batch_size) === 3 ? 3 : 1,
+      txCode: body.tx_code === true,
     });
   }
 

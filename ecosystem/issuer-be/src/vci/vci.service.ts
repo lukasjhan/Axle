@@ -15,6 +15,8 @@ import { OAuthError } from './oauth-error';
 
 const rand = (n = 32) => randomBytes(n).toString('base64url');
 const s256 = (v: string) => createHash('sha256').update(v).digest('base64url');
+/** An `n`-digit numeric code (Transaction Code / PIN) from a CSPRNG. */
+const numericCode = (n: number) => Array.from(randomBytes(n), (b) => (b % 10).toString()).join('');
 
 interface AuthRequest {
   configIds: string[];
@@ -174,8 +176,8 @@ export class VciService {
   // ---- Credential Offer (issuer-initiated) — pre-authorized_code (mDL) or authorization_code (PID) -----
   async createCredentialOffer(
     configId: string,
-    opts: { flow?: Flow; deferred?: boolean; encrypted?: boolean; batchSize?: number } = {},
-  ): Promise<{ credential_offer: unknown; credential_offer_uri: string; deep_link: string }> {
+    opts: { flow?: Flow; deferred?: boolean; encrypted?: boolean; batchSize?: number; txCode?: boolean } = {},
+  ): Promise<{ credential_offer: unknown; credential_offer_uri: string; deep_link: string; tx_code?: string }> {
     const c = getConfig(configId);
     if (!c) throw new OAuthError('invalid_request', 'unknown credential_configuration_id');
     // The operator's options select a standard Credential Issuer profile: `flow`/`deferred` change issuer
@@ -184,16 +186,24 @@ export class VciService {
     const flow: Flow = opts.flow ?? c.flow;
     const deferred = opts.deferred === true;
     const profile = resolveProfile(opts.encrypted === true, opts.batchSize ?? 1);
-    const state = { configIds: [configId], deferred, enc: profile.enc, batch: profile.batch };
 
     let grants: Record<string, unknown>;
+    let txCode: string | undefined;
     if (flow === 'pre-authorized_code') {
       const preAuthCode = rand();
-      await this.store.set(`pre-auth:${preAuthCode}`, state, 600);
-      grants = { 'urn:ietf:params:oauth:grant-type:pre-authorized_code': { 'pre-authorized_code': preAuthCode } };
+      // Transaction Code (OID4VCI §4.1.1): a PIN the operator shows and the User types into the wallet; the
+      // wallet must send it at the token endpoint. Numeric, 5 digits.
+      txCode = opts.txCode === true ? numericCode(5) : undefined;
+      await this.store.set(`pre-auth:${preAuthCode}`, { configIds: [configId], deferred, enc: profile.enc, batch: profile.batch, txCode }, 600);
+      grants = {
+        'urn:ietf:params:oauth:grant-type:pre-authorized_code': {
+          'pre-authorized_code': preAuthCode,
+          ...(txCode ? { tx_code: { input_mode: 'numeric', length: 5, description: 'PIN shown on the issuer screen' } } : {}),
+        },
+      };
     } else {
       const issuerState = rand();
-      await this.store.set(`offer-state:${issuerState}`, state, 600);
+      await this.store.set(`offer-state:${issuerState}`, { configIds: [configId], deferred, enc: profile.enc, batch: profile.batch }, 600);
       grants = { authorization_code: { issuer_state: issuerState } };
     }
 
@@ -206,7 +216,8 @@ export class VciService {
     await this.store.set(`offer:${offerId}`, offer, 600);
     const credential_offer_uri = `${this.issuer}/credential-offer/${offerId}`;
     // Standard OpenID4VCI invocation scheme (EUDI wallets register it); credential_offer_uri keeps the QR small.
-    return { credential_offer: offer, credential_offer_uri, deep_link: `openid-credential-offer://?credential_offer_uri=${encodeURIComponent(credential_offer_uri)}` };
+    // `tx_code` (the PIN value) is returned to the issuer's own frontend to display — it is NOT in the offer.
+    return { credential_offer: offer, credential_offer_uri, deep_link: `openid-credential-offer://?credential_offer_uri=${encodeURIComponent(credential_offer_uri)}`, tx_code: txCode };
   }
 
   async getCredentialOffer(offerId: string) {
@@ -237,8 +248,10 @@ export class VciService {
       requireEncryption = session.enc === true;
       maxBatch = session.batch === 3 ? 3 : 1;
     } else if (grant === 'urn:ietf:params:oauth:grant-type:pre-authorized_code') {
-      const session = await this.store.getdel<AuthRequest>(`pre-auth:${body['pre-authorized_code']}`);
+      const session = await this.store.getdel<AuthRequest & { txCode?: string }>(`pre-auth:${body['pre-authorized_code']}`);
       if (!session) throw new OAuthError('invalid_grant', 'invalid or used pre-authorized_code');
+      // Transaction Code (OID4VCI §6.1): when the offer carried one, the wallet MUST send the matching tx_code.
+      if (session.txCode && body.tx_code !== session.txCode) throw new OAuthError('invalid_grant', 'invalid tx_code');
       configIds = session.configIds;
       deferred = session.deferred === true;
       requireEncryption = session.enc === true;

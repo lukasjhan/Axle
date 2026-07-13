@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { BadgeCheck, Check, Copy, Loader2, QrCode, ShieldAlert, Smartphone, X } from 'lucide-react';
+import { BadgeCheck, Check, ChevronDown, Copy, Loader2, QrCode, Settings2, ShieldAlert, Smartphone, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -58,10 +58,10 @@ function SiteHeader() {
 function Hero({ eyebrow, title, children }: { eyebrow: string; title: string; children: ReactNode }) {
   return (
     <section className="border-b border-border bg-muted/30">
-      <div className="mx-auto w-full max-w-2xl px-4 py-10 sm:py-12">
+      <div className="mx-auto w-full max-w-2xl px-4 py-6 sm:py-8">
         <Badge variant="secondary">{eyebrow}</Badge>
-        <h1 className="mt-4 text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1>
-        <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground">{children}</p>
+        <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1>
+        <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted-foreground">{children}</p>
       </div>
     </section>
   );
@@ -100,27 +100,35 @@ interface OfferConfig {
   description: string;
 }
 
-// Issuance options the operator picks; they are baked into the credential offer (the wallet SDK reads them).
-type FlowChoice = 'authorization_code' | 'pre-authorized_code';
-interface Options {
-  flow: FlowChoice;
+// Global issuance settings the operator picks once; applied to every credential offer. `flow: 'auto'` keeps
+// each credential's natural flow (PID → authorization_code, mDL → pre-authorized); the rest are forced.
+type FlowSetting = 'auto' | 'authorization_code' | 'pre-authorized_code';
+interface Settings {
+  flow: FlowSetting;
   deferred: boolean;
   encrypted: boolean;
   batchSize: 1 | 3;
+  txCode: boolean;
 }
-// PID's natural flow is authorization_code (with consent); mDL is pre-authorized. Either can be overridden.
-const defaultOptions = (id: string): Options => ({
-  flow: id.includes('pid') ? 'authorization_code' : 'pre-authorized_code',
-  deferred: false,
-  encrypted: false,
-  batchSize: 1,
-});
+const DEFAULT_SETTINGS: Settings = { flow: 'auto', deferred: false, encrypted: false, batchSize: 1, txCode: false };
+
+/** Short labels for the non-default settings, for the summary badges. */
+function activeSettingLabels(s: Settings): string[] {
+  const out: string[] = [];
+  if (s.flow !== 'auto') out.push(s.flow === 'authorization_code' ? 'Auth code' : 'Pre-auth');
+  if (s.batchSize === 3) out.push('Batch 3');
+  if (s.encrypted) out.push('Encrypted');
+  if (s.deferred) out.push('Deferred');
+  if (s.txCode) out.push('PIN');
+  return out;
+}
 
 interface Offer {
   name: string;
   deepLink: string;
   uri: string;
-  options: Options;
+  settings: Settings;
+  txCode?: string;
 }
 
 /** A compact segmented control for a small set of mutually-exclusive choices. */
@@ -183,10 +191,9 @@ function LandingView() {
   const [err, setErr] = useState<string | null>(null);
   const [offer, setOffer] = useState<Offer | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [options, setOptions] = useState<Record<string, Options>>({});
-  const optFor = (id: string) => options[id] ?? defaultOptions(id);
-  const setOpt = (id: string, patch: Partial<Options>) =>
-    setOptions((o) => ({ ...o, [id]: { ...optFor(id), ...patch } }));
+  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [showSettings, setShowSettings] = useState(false);
+  const setSetting = (patch: Partial<Settings>) => setSettings((s) => ({ ...s, ...patch }));
 
   useEffect(() => {
     fetch(`${BE}/.well-known/openid-credential-issuer/eudi-issuer`)
@@ -210,21 +217,22 @@ function LandingView() {
 
   async function getOffer(c: OfferConfig) {
     setBusy(c.id);
-    const o = optFor(c.id);
     try {
       const r = await fetch(`${BE}/eudi-issuer/credential-offer/create`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           credential_configuration_id: c.id,
-          flow: o.flow,
-          deferred: o.deferred,
-          encrypted: o.encrypted,
-          batch_size: o.batchSize,
+          // 'auto' → omit flow so the issuer uses the credential's natural flow.
+          ...(settings.flow !== 'auto' ? { flow: settings.flow } : {}),
+          deferred: settings.deferred,
+          encrypted: settings.encrypted,
+          batch_size: settings.batchSize,
+          tx_code: settings.txCode,
         }),
       });
-      const { deep_link, credential_offer_uri } = await r.json();
-      setOffer({ name: c.name, deepLink: deep_link, uri: credential_offer_uri, options: o });
+      const { deep_link, credential_offer_uri, tx_code } = await r.json();
+      setOffer({ name: c.name, deepLink: deep_link, uri: credential_offer_uri, settings, txCode: tx_code });
     } catch {
       setErr('Could not create the credential offer.');
     } finally {
@@ -248,58 +256,89 @@ function LandingView() {
             <span>Loading credentials…</span>
           </Centered>
         ) : (
-          <div className="space-y-3">
-            {configs.map((c) => (
-              <Card key={c.id}>
-                <CardHeader>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <CardTitle className="text-base">{c.name}</CardTitle>
-                    <Badge variant="secondary">{FORMAT_LABEL[c.format] ?? c.format}</Badge>
-                  </div>
-                  {c.description && <CardDescription>{c.description}</CardDescription>}
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {(() => {
-                    const o = optFor(c.id);
-                    return (
-                      <div className="grid gap-3 rounded-lg border border-border bg-muted/20 p-3 sm:grid-cols-2">
-                        <OptionField label="Flow">
-                          <Segmented
-                            value={o.flow}
-                            onChange={(v) => setOpt(c.id, { flow: v })}
-                            opts={[
-                              { v: 'authorization_code', label: 'Auth code' },
-                              { v: 'pre-authorized_code', label: 'Pre-auth' },
-                            ]}
-                          />
-                        </OptionField>
-                        <OptionField label="Batch size">
-                          <Segmented
-                            value={o.batchSize}
-                            onChange={(v) => setOpt(c.id, { batchSize: v })}
-                            opts={[
-                              { v: 1, label: '1' },
-                              { v: 3, label: '3' },
-                            ]}
-                          />
-                        </OptionField>
-                        <OptionField label="Response">
-                          <Toggle on={o.encrypted} onChange={(v) => setOpt(c.id, { encrypted: v })} label="Encrypted (JWE)" />
-                        </OptionField>
-                        <OptionField label="Issuance">
-                          <Toggle on={o.deferred} onChange={(v) => setOpt(c.id, { deferred: v })} label="Deferred" />
-                        </OptionField>
-                      </div>
-                    );
-                  })()}
-                  <Button onClick={() => getOffer(c)} disabled={busy === c.id} className="w-full sm:w-auto">
-                    {busy === c.id ? <Loader2 className="animate-spin" /> : <QrCode />}
-                    Get credential
-                  </Button>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+          <>
+            {/* Global issuance settings — one gear, applied to every offer. */}
+            <div className="mb-5 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowSettings((v) => !v)}
+                  className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  <Settings2 className="h-4 w-4" />
+                  Issuance settings
+                  <ChevronDown className={cn('h-4 w-4 transition-transform', showSettings && 'rotate-180')} />
+                </button>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {activeSettingLabels(settings).length === 0 ? (
+                    <span className="text-xs text-muted-foreground">Defaults</span>
+                  ) : (
+                    activeSettingLabels(settings).map((l) => (
+                      <Badge key={l} variant="secondary">
+                        {l}
+                      </Badge>
+                    ))
+                  )}
+                </div>
+              </div>
+              {showSettings && (
+                <Card>
+                  <CardContent className="grid gap-4 py-4 sm:grid-cols-2">
+                    <OptionField label="Flow">
+                      <Segmented
+                        value={settings.flow}
+                        onChange={(v) => setSetting({ flow: v })}
+                        opts={[
+                          { v: 'auto', label: 'Auto' },
+                          { v: 'authorization_code', label: 'Auth code' },
+                          { v: 'pre-authorized_code', label: 'Pre-auth' },
+                        ]}
+                      />
+                    </OptionField>
+                    <OptionField label="Batch size">
+                      <Segmented
+                        value={settings.batchSize}
+                        onChange={(v) => setSetting({ batchSize: v })}
+                        opts={[
+                          { v: 1, label: '1' },
+                          { v: 3, label: '3' },
+                        ]}
+                      />
+                    </OptionField>
+                    <OptionField label="Response">
+                      <Toggle on={settings.encrypted} onChange={(v) => setSetting({ encrypted: v })} label="Encrypted (JWE)" />
+                    </OptionField>
+                    <OptionField label="Issuance">
+                      <Toggle on={settings.deferred} onChange={(v) => setSetting({ deferred: v })} label="Deferred" />
+                    </OptionField>
+                    <OptionField label="Transaction code">
+                      <Toggle on={settings.txCode} onChange={(v) => setSetting({ txCode: v })} label="PIN (pre-auth)" />
+                    </OptionField>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+
+            <div className="space-y-3">
+              {configs.map((c) => (
+                <Card key={c.id}>
+                  <CardHeader>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <CardTitle className="text-base">{c.name}</CardTitle>
+                      <Badge variant="secondary">{FORMAT_LABEL[c.format] ?? c.format}</Badge>
+                    </div>
+                    {c.description && <CardDescription>{c.description}</CardDescription>}
+                  </CardHeader>
+                  <CardContent>
+                    <Button onClick={() => getOffer(c)} disabled={busy === c.id} className="w-full sm:w-auto">
+                      {busy === c.id ? <Loader2 className="animate-spin" /> : <QrCode />}
+                      Get credential
+                    </Button>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </>
         )}
       </div>
 
@@ -321,12 +360,22 @@ function OfferModal({ offer, onClose }: { offer: Offer; onClose: () => void }) {
           <div className="rounded-xl border bg-white p-3">
             <QRCodeSVG value={offer.deepLink} size={216} level="M" />
           </div>
-          <div className="flex w-full flex-wrap justify-center gap-1.5">
-            <Badge variant="secondary">{offer.options.flow === 'authorization_code' ? 'Auth code' : 'Pre-auth'}</Badge>
-            <Badge variant="secondary">Batch {offer.options.batchSize}</Badge>
-            {offer.options.encrypted && <Badge variant="secondary">Encrypted</Badge>}
-            {offer.options.deferred && <Badge variant="secondary">Deferred</Badge>}
-          </div>
+          {offer.txCode && (
+            <div className="w-full rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-center">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Transaction code</div>
+              <div className="mt-1 font-mono text-2xl font-bold tracking-[0.3em] text-foreground">{offer.txCode}</div>
+              <div className="mt-1 text-xs text-muted-foreground">Enter this PIN in your wallet</div>
+            </div>
+          )}
+          {activeSettingLabels(offer.settings).length > 0 && (
+            <div className="flex w-full flex-wrap justify-center gap-1.5">
+              {activeSettingLabels(offer.settings).map((l) => (
+                <Badge key={l} variant="secondary">
+                  {l}
+                </Badge>
+              ))}
+            </div>
+          )}
           <Button asChild className="w-full">
             <a href={offer.deepLink}>
               <Smartphone />
