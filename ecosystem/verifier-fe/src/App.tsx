@@ -150,13 +150,14 @@ export default function App() {
         credentials: { get: (o: unknown) => Promise<{ data?: unknown } | null> };
       };
       const supported = 'credentials' in navigator && typeof anyNav.credentials.get === 'function';
-      if (!supported) throw new Error('이 브라우저는 Digital Credentials API를 지원하지 않습니다. QR 방식을 사용하세요.');
-      setPhase({ name: 'dcapi', note: '지갑에서 자격증명을 선택하세요…' });
+      if (!supported)
+        throw new Error("This browser doesn't support the Digital Credentials API. Use the QR method instead.");
+      setPhase({ name: 'dcapi', note: 'Select a credential in your wallet…' });
 
       const resp = await anyNav.credentials.get({
         digital: { requests: [{ protocol: 'openid4vp', data: (created.dc_api_request as { request: unknown }).request }] },
       } as unknown);
-      if (!resp) throw new Error('지갑이 응답을 반환하지 않았습니다.');
+      if (!resp) throw new Error('The wallet returned no response.');
 
       // The wallet's OpenID4VP response (Authorization Response) — a JSON object or string carrying vp_token.
       const raw = (resp as { data?: unknown }).data;
@@ -230,8 +231,8 @@ function ConfigView(props: {
     <div className="flex flex-col gap-6">
       <Card>
         <CardHeader>
-          <CardTitle>요청할 자격증명</CardTitle>
-          <CardDescription>지갑에 제시를 요청할 크리덴셜을 선택하세요 (복수 선택 가능).</CardDescription>
+          <CardTitle>Requested credentials</CardTitle>
+          <CardDescription>Select the credentials to request from the wallet (multiple allowed).</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-3">
           {CREDENTIALS.map((c) => {
@@ -261,13 +262,13 @@ function ConfigView(props: {
       <Card>
         <CardHeader>
           <CardTitle>Relying Party</CardTitle>
-          <CardDescription>요청에 실을 등록 인증서(WRPRC)를 선택하세요.</CardDescription>
+          <CardDescription>Choose the registration certificate (WRPRC) to embed in the request.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-2">
           {(
             [
-              { key: 'plain', label: '일반 RP', desc: '직접 등록된 relying party' },
-              { key: 'intermediary', label: 'Intermediary 경유', desc: '중개자를 통해 등록된 RP (intermediary 필드 포함)' },
+              { key: 'plain', label: 'Direct RP', desc: 'A directly registered relying party' },
+              { key: 'intermediary', label: 'Via intermediary', desc: 'An RP registered through an intermediary (carries the intermediary field)' },
             ] as const
           ).map((o) => (
             <button
@@ -297,11 +298,11 @@ function ConfigView(props: {
       <div className="grid gap-3 sm:grid-cols-2">
         <Button size="lg" onClick={onQr} disabled={busy}>
           {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <QrCode className="h-5 w-5" />}
-          QR로 요청 (교차 기기)
+          Request via QR
         </Button>
         <Button size="lg" variant="secondary" onClick={onDcApi} disabled={busy}>
           <Smartphone className="h-5 w-5" />
-          DC API로 요청 (동일 기기)
+          Request via DC API
         </Button>
       </div>
     </div>
@@ -312,9 +313,10 @@ function QrView({ created, onBack }: { created: CreatedQr; onBack: () => void })
   return (
     <Card>
       <CardHeader>
-        <CardTitle>지갑으로 스캔</CardTitle>
+        <CardTitle>Scan with your wallet</CardTitle>
         <CardDescription>
-          {created.requested.map((r) => r.label).join(', ')} — QR을 지갑으로 스캔하거나, 같은 기기라면 버튼으로 여세요.
+          {created.requested.map((r) => r.label).join(', ')} — scan the QR with your wallet, or open it directly on
+          the same device.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col items-center gap-5">
@@ -324,18 +326,18 @@ function QrView({ created, onBack }: { created: CreatedQr; onBack: () => void })
         <a href={created.qr} className="w-full">
           <Button size="lg" className="w-full">
             <Smartphone className="h-5 w-5" />
-            지갑 앱으로 열기
+            Open in wallet app
           </Button>
         </a>
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
-          지갑의 응답을 기다리는 중…
+          Waiting for the wallet's response…
         </div>
         <code className="w-full break-all rounded bg-muted px-3 py-2 text-[11px] text-muted-foreground">
           {created.client_id}
         </code>
         <Button variant="ghost" size="sm" onClick={onBack}>
-          <ArrowLeft className="h-4 w-4" /> 취소
+          <ArrowLeft className="h-4 w-4" /> Cancel
         </Button>
       </CardContent>
     </Card>
@@ -364,7 +366,7 @@ function ResultView({ result, onBack }: { result: ResultBody; onBack: () => void
           ) : (
             <XCircle className="h-14 w-14 text-destructive" />
           )}
-          <div className="text-lg font-semibold">{ok ? '검증 완료' : '검증 실패'}</div>
+          <div className="text-lg font-semibold">{ok ? 'Verified' : 'Verification failed'}</div>
           {!ok && result.error && <div className="max-w-md text-sm text-muted-foreground">{result.error}</div>}
         </CardContent>
       </Card>
@@ -395,7 +397,7 @@ function ResultView({ result, onBack }: { result: ResultBody; onBack: () => void
         ))}
 
       <Button variant="outline" onClick={onBack}>
-        <ArrowLeft className="h-4 w-4" /> 새 검증 시작
+        <ArrowLeft className="h-4 w-4" /> Start a new verification
       </Button>
     </div>
   );
