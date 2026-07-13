@@ -30,7 +30,9 @@ async function bootstrap() {
   // with the issuer path segment appended) and the infra probes (health/live/ready) + metrics scrape.
   app.setGlobalPrefix('eudi-issuer', {
     exclude: [
-      { path: '.well-known/openid-credential-issuer/eudi-issuer', method: RequestMethod.GET },
+      // One param route serves every Credential Issuer profile (eudi-issuer, eudi-issuer-enc, …); exclude the
+      // PATTERN so all profiles stay at the root — a literal `eudi-issuer` here would 404 all of them.
+      { path: '.well-known/openid-credential-issuer/:issuerSeg', method: RequestMethod.GET },
       { path: '.well-known/oauth-authorization-server/eudi-issuer', method: RequestMethod.GET },
       { path: 'health', method: RequestMethod.GET },
       { path: 'live', method: RequestMethod.GET },
