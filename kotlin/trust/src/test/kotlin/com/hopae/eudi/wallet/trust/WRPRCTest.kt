@@ -41,15 +41,33 @@ class WRPRCTest {
         assertNull(result.intermediary, "a direct (non-intermediated) WRPRC has no intermediary")
     }
 
-    /** An intermediated WRPRC: `sub` is the final RP, and `intermediary` surfaces the intermediary. */
+    /**
+     * An intermediated WRPRC: the request is signed by the **intermediary's** WRPAC (organizationIdentifier
+     * `LEIXG-INTERMEDIARY01`), so the WRPRC binds to `intermediary.sub`/`act.sub` — not to `sub`, which stays
+     * the final RP (`VATLU-99998888`) for display (ETSI TS 119 475 RPRC_04 / GEN-5.2.4-09).
+     */
     @Test
     fun intermediatedWRPRC() = runBlocking<Unit> {
         val jwt = bytes("/wrprc_intermediated.jwt").decodeToString().trim()
-        val result = verifier().verify(jwt, bytes("/wrpac_leaf_mediated.der"))
+        val result = verifier().verify(jwt, bytes("/wrpac_leaf_intermediary.der"))
 
-        assertEquals("VATLU-99998888", result.subject)
+        assertEquals("VATLU-99998888", result.subject, "sub stays the final RP")
         assertEquals("LEIXG-INTERMEDIARY01", result.intermediary?.sub)
         assertEquals("Mediator", result.intermediary?.name)
+    }
+
+    /**
+     * An intermediated request MUST be signed by the intermediary's WRPAC. Presenting it with the final RP's
+     * own WRPAC (organizationIdentifier `VATLU-99998888`, i.e. == `sub`) must be rejected: the sender is not
+     * the registered intermediary, so the presented WRPAC does not bind to `intermediary.sub`.
+     */
+    @Test
+    fun intermediatedWRPRCRejectsFinalRpWrpac() = runBlocking<Unit> {
+        val jwt = bytes("/wrprc_intermediated.jwt").decodeToString().trim()
+        val ex = assertFailsWith<TrustException> {
+            verifier().verify(jwt, bytes("/wrpac_leaf_mediated.der"))
+        }
+        assertTrue(ex.message!!.contains("organizationIdentifier"), ex.message)
     }
 
     /** Linkability: binding against a cert lacking the matching organizationIdentifier (the CA) is rejected. */

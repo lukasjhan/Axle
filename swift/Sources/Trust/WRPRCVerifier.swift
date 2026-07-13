@@ -44,10 +44,12 @@ public struct VerifiedWRPRC: Sendable {
 }
 
 /// Validates a Wallet-Relying Party Registration Certificate (ETSI TS 119 475), a `rc-wrp+jwt` signed
-/// as a JAdES baseline (B-B) signature. It verifies the JAdES signature against the registrar CA, binds
-/// the WRPRC to the already-validated WRPAC (its `sub` must equal the WRPAC `organizationIdentifier`,
-/// GEN-5.1.1-02), and extracts the entitlements / intended-use for the consent screen. The caller is
-/// responsible for the Token Status List check using the returned `status` claim.
+/// as a JAdES baseline (B-B) signature. It verifies the JAdES signature against the registrar CA and binds
+/// the WRPRC to the already-validated WRPAC that signed the request: for a direct request the WRPAC
+/// `organizationIdentifier` must equal the WRPRC `sub` (GEN-5.1.1-02); for an intermediated request the
+/// request is signed by the intermediary, so the WRPAC must equal `intermediary.sub`/`act.sub` (RPRC_04)
+/// while `sub` remains the final RP. It also extracts the entitlements / intended-use for the consent
+/// screen. The caller is responsible for the Token Status List check using the returned `status` claim.
 // `@unchecked Sendable`: WRPRCVerifier is an immutable value — a chain validator (Sendable) plus a pure
 // time function — so it is safe to share across concurrency domains. The `@unchecked` is only needed because
 // `JwtTimeValidator`'s clock closure is not itself marked `@Sendable`. It rides on the Sendable
@@ -121,12 +123,30 @@ public struct WRPRCVerifier: @unchecked Sendable {
             throw TrustError("WRPRC missing `sub`")
         }
 
-        // Linkability (GEN-5.1.1-02): the WRPRC `sub` must equal the WRPAC organizationIdentifier.
+        // intermediary (Table 10) + actor claim binding (GEN-5.2.4-09): when the RP operates through
+        // an intermediary, `act.sub` must equal the intermediary's identifier.
+        var intermediary: Intermediary?
+        if case let .str(intSub)? = payload["intermediary"]?["sub"] {
+            var intName: String?
+            if case let .str(name)? = payload["intermediary"]?["sname"] { intName = name }
+            if case let .str(actSub)? = payload["act"]?["sub"], actSub != intSub {
+                throw TrustError("WRPRC act.sub (\(actSub)) does not match intermediary.sub (\(intSub))")
+            }
+            intermediary = Intermediary(sub: intSub, name: intName)
+        }
+
+        // Linkability (GEN-5.1.1-02 / RPRC_04): the Request Object is signed by a WRPAC whose
+        // organizationIdentifier must equal the entity that actually sent the request. For a DIRECT request
+        // that entity is the relying party itself (WRPRC `sub`); for an INTERMEDIATED request the signer is
+        // the *intermediary*, so bind the presented WRPAC to `act`/`intermediary.sub` (the intermediary's own
+        // access certificate) — `sub` stays the final RP, for display only.
         guard let orgId = X509Support.organizationIdentifier(fromDer: wrpacLeafDer) else {
             throw TrustError("WRPAC has no organizationIdentifier to bind the WRPRC against")
         }
-        guard orgId == subject else {
-            throw TrustError("WRPRC `sub` (\(subject)) does not match WRPAC organizationIdentifier (\(orgId))")
+        let boundIdentity = intermediary?.sub ?? subject
+        guard orgId == boundIdentity else {
+            let role = intermediary != nil ? "intermediary.sub" : "`sub`"
+            throw TrustError("WRPRC \(role) (\(boundIdentity)) does not match WRPAC organizationIdentifier (\(orgId))")
         }
 
         // entitlements (≥1 EU-level role, GEN-5.2.4-03).
@@ -146,18 +166,6 @@ public struct WRPRCVerifier: @unchecked Sendable {
                     purpose.append(LocalizedText(lang: lang, value: value))
                 }
             }
-        }
-
-        // intermediary (Table 10) + actor claim binding (GEN-5.2.4-09): when the RP operates through
-        // an intermediary, `act.sub` must equal the intermediary's identifier.
-        var intermediary: Intermediary?
-        if case let .str(intSub)? = payload["intermediary"]?["sub"] {
-            var intName: String?
-            if case let .str(name)? = payload["intermediary"]?["sname"] { intName = name }
-            if case let .str(actSub)? = payload["act"]?["sub"], actSub != intSub {
-                throw TrustError("WRPRC act.sub (\(actSub)) does not match intermediary.sub (\(intSub))")
-            }
-            intermediary = Intermediary(sub: intSub, name: intName)
         }
 
         return VerifiedWRPRC(

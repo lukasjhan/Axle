@@ -116,6 +116,7 @@ let package = Package(
                 .copy("Resources/wrpac_leaf.der"),
                 .copy("Resources/wrprc.jwt"),
                 .copy("Resources/wrpac_leaf_mediated.der"),
+                .copy("Resources/wrpac_leaf_intermediary.der"),
                 .copy("Resources/wrprc_intermediated.jwt"),
             ]
         ),

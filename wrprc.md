@@ -196,17 +196,18 @@ approval (`RPRC_21`).
 - Signature: `x5c` chained to the **registrar CA** (`X509ChainValidator` built from
   `TrustConfig.registrarAnchorsDer`), then ECDSA-verified; optional `x5t#S256` thumbprint match.
 - Payload: validity (`exp` optional per TS 119 475 Table 10), `sub` present.
-- **Binding** `GEN-5.1.1-02`: `sub == WRPAC.organizationIdentifier` (X.509 OID `2.5.4.97`, from the WRPAC
-  leaf DER handed in by the request verifier).
+- **Binding** `GEN-5.1.1-02` / `RPRC_04`: the presented WRPAC's `organizationIdentifier` (X.509 OID
+  `2.5.4.97`, from the WRPAC leaf DER handed in by the request verifier) must equal the entity that signed
+  the request. **Direct** request → that is the RP itself, so `WRPAC.orgId == sub`. **Intermediated** request
+  → the request is signed by the intermediary, so `WRPAC.orgId == intermediary.sub` (== `act.sub`); `sub`
+  stays the **final** RP for display only. The mediated RP has no WRPAC of its own — only the intermediary does.
 - Extracts `entitlements` (≥1), `purpose`, `intermediary` (with `act.sub == intermediary.sub`,
   `GEN-5.2.4-09`), and returns the raw `status` for the Token Status List check.
 
-Result → `VerifiedWRPRC { subject, entitlements, purpose, intermediary, claims, status }`.
-
-> Intermediated nuance: for an intermediated request the presented WRPAC is the **intermediary's**, while
-> WRPRC `sub` is the **final** RP; `RPRC_04` puts the intermediary in the WRPRC's `intermediary`/`act`.
-> The current binding checks `sub == WRPAC.orgId` (direct case) plus `act.sub == intermediary.sub`; revisit
-> when wiring the intermediary flow so the presented-WRPAC identity is bound to `act`, not `sub`.
+Result → `VerifiedWRPRC { subject, entitlements, purpose, intermediary, claims, status }`. The intermediary
+(`sub` + `sname`) and final RP (`subject`) both surface to the app via `VerifierRegistration`
+(`intermediarySub` / `intermediaryName` / `subject`). Covered by `WRPRCTest.intermediatedWRPRC` (+ the
+negative `intermediatedWRPRCRejectsFinalRpWrpac`) on both Kotlin and Swift.
 
 ---
 

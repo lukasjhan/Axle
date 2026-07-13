@@ -39,10 +39,12 @@ data class VerifiedWRPRC(
 
 /**
  * Validates a Wallet-Relying Party Registration Certificate (ETSI TS 119 475), a `rc-wrp+jwt` signed as
- * a JAdES baseline (B-B) signature. It verifies the JAdES signature against the registrar CA, binds the
- * WRPRC to the already-validated WRPAC (its `sub` must equal the WRPAC `organizationIdentifier`,
- * GEN-5.1.1-02), and extracts the entitlements / intended-use for the consent screen. The caller is
- * responsible for the Token Status List check using the returned `status` claim.
+ * a JAdES baseline (B-B) signature. It verifies the JAdES signature against the registrar CA and binds the
+ * WRPRC to the already-validated WRPAC that signed the request: for a direct request the WRPAC
+ * `organizationIdentifier` must equal the WRPRC `sub` (GEN-5.1.1-02); for an intermediated request the
+ * request is signed by the intermediary, so the WRPAC must equal `intermediary.sub`/`act.sub` (RPRC_04)
+ * while `sub` remains the final RP. It also extracts the entitlements / intended-use for the consent screen.
+ * The caller is responsible for the Token Status List check using the returned `status` claim.
  *
  * @param validator a chain validator built over the **registrar CA** trust anchors.
  */
@@ -98,11 +100,28 @@ class WRPRCVerifier(
         val subject = (payload["sub"] as? JsonValue.Str)?.value?.takeIf { it.isNotEmpty() }
             ?: throw TrustException("WRPRC missing `sub`")
 
-        // Linkability (GEN-5.1.1-02): the WRPRC `sub` must equal the WRPAC organizationIdentifier.
+        // intermediary (Table 10) + actor claim binding (GEN-5.2.4-09): when the RP operates through an
+        // intermediary, `act.sub` must equal the intermediary's identifier.
+        val intermediaryObj = payload["intermediary"] as? JsonValue.Obj
+        val intermediary = (intermediaryObj?.get("sub") as? JsonValue.Str)?.value?.let { intSub ->
+            val actSub = ((payload["act"] as? JsonValue.Obj)?.get("sub") as? JsonValue.Str)?.value
+            if (actSub != null && actSub != intSub) {
+                throw TrustException("WRPRC act.sub ($actSub) does not match intermediary.sub ($intSub)")
+            }
+            Intermediary(intSub, (intermediaryObj["sname"] as? JsonValue.Str)?.value)
+        }
+
+        // Linkability (GEN-5.1.1-02 / RPRC_04): the Request Object is signed by a WRPAC whose
+        // organizationIdentifier must equal the entity that actually sent the request. For a DIRECT request
+        // that entity is the relying party itself (WRPRC `sub`); for an INTERMEDIATED request the signer is
+        // the *intermediary*, so bind the presented WRPAC to `act`/`intermediary.sub` (the intermediary's own
+        // access certificate) — `sub` stays the final RP, for display only.
         val orgId = X509Support.organizationIdentifierFromDer(wrpacLeafDer)
             ?: throw TrustException("WRPAC has no organizationIdentifier to bind the WRPRC against")
-        if (orgId != subject) {
-            throw TrustException("WRPRC `sub` ($subject) does not match WRPAC organizationIdentifier ($orgId)")
+        val boundIdentity = intermediary?.sub ?: subject
+        if (orgId != boundIdentity) {
+            val role = if (intermediary != null) "intermediary.sub" else "`sub`"
+            throw TrustException("WRPRC $role ($boundIdentity) does not match WRPAC organizationIdentifier ($orgId)")
         }
 
         // entitlements (>=1 EU-level role, GEN-5.2.4-03).
@@ -117,17 +136,6 @@ class WRPRCVerifier(
             val value = (obj["value"] as? JsonValue.Str)?.value ?: return@mapNotNull null
             LocalizedText(lang, value)
         } ?: emptyList()
-
-        // intermediary (Table 10) + actor claim binding (GEN-5.2.4-09): when the RP operates through an
-        // intermediary, `act.sub` must equal the intermediary's identifier.
-        val intermediaryObj = payload["intermediary"] as? JsonValue.Obj
-        val intermediary = (intermediaryObj?.get("sub") as? JsonValue.Str)?.value?.let { intSub ->
-            val actSub = ((payload["act"] as? JsonValue.Obj)?.get("sub") as? JsonValue.Str)?.value
-            if (actSub != null && actSub != intSub) {
-                throw TrustException("WRPRC act.sub ($actSub) does not match intermediary.sub ($intSub)")
-            }
-            Intermediary(intSub, (intermediaryObj["sname"] as? JsonValue.Str)?.value)
-        }
 
         return VerifiedWRPRC(subject, entitlements, purpose, intermediary, payload, payload["status"])
     }
