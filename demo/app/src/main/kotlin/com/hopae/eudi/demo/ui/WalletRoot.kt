@@ -64,6 +64,7 @@ import com.hopae.eudi.demo.ui.screens.DebugScreen
 import com.hopae.eudi.demo.ui.screens.DocumentDetailScreen
 import com.hopae.eudi.demo.ui.screens.DocumentsScreen
 import com.hopae.eudi.demo.ui.screens.HomeScreen
+import com.hopae.eudi.demo.ui.screens.IssueScreen
 import com.hopae.eudi.demo.ui.screens.SettingsScreen
 import com.hopae.eudi.demo.ui.screens.TransactionDetailScreen
 import com.hopae.eudi.demo.ui.theme.WalletTheme
@@ -98,8 +99,7 @@ fun WalletRoot(wallet: Wallet) {
     val clipboard = LocalClipboardManager.current
 
     var refreshKey by remember { mutableStateOf(0) }
-    var offerToConfirm by remember { mutableStateOf<CredentialOffer?>(null) }
-    var txCodeFor by remember { mutableStateOf<CredentialOffer?>(null) }
+    var issuing by remember { mutableStateOf<CredentialOffer?>(null) }
     var consent by remember { mutableStateOf<PendingConsent?>(null) }
     var detail by remember { mutableStateOf<Credential?>(null) }
     var txDetail by remember { mutableStateOf<TransactionLogEntry?>(null) }
@@ -135,7 +135,7 @@ fun WalletRoot(wallet: Wallet) {
         when (scheme) {
             in OFFER_SCHEMES -> scope.launch {
                 busy = "Resolving offer…"
-                runCatching { offerToConfirm = wallet.issuance.resolveOffer(uri) }
+                runCatching { issuing = wallet.issuance.resolveOffer(uri) }
                     .onFailure { LogStore.log("❌ resolveOffer: ${it.message}") }
                 busy = null
             }
@@ -206,25 +206,13 @@ fun WalletRoot(wallet: Wallet) {
         }
     }
 
-    // ── overlays (reused interim flows; replaced by full screens in later phases) ──
-    offerToConfirm?.let { offer ->
-        OfferConfirmDialog(
-            offer = offer,
-            onConfirm = {
-                offerToConfirm = null
-                if (offer.requiresTxCode) txCodeFor = offer
-                else scope.launch { busy = "Issuing…"; runIssuance(wallet, offer, null, openAuth); refreshKey++; busy = null }
-            },
-            onCancel = { offerToConfirm = null; LogStore.log("Issuance cancelled") },
-        )
-    }
-    txCodeFor?.let { offer ->
-        TxCodeDialog(
-            onSubmit = { code ->
-                txCodeFor = null
-                scope.launch { busy = "Issuing…"; runIssuance(wallet, offer, code, openAuth); refreshKey++; busy = null }
-            },
-            onDismiss = { txCodeFor = null; LogStore.log("Issuance cancelled (no tx_code)") },
+    // ── overlays ──
+    issuing?.let { offer ->
+        BackHandler { issuing = null }
+        IssueScreen(
+            offer = offer, wallet = wallet, onAuth = openAuth,
+            onDone = { issuing = null; refreshKey++ },
+            onCancel = { issuing = null; LogStore.log("Issuance cancelled") },
         )
     }
     consent?.let { p ->
