@@ -65,6 +65,36 @@ no review wait.
 - Copy the **opt-in (“test participation”) link**, open it on the phone, join, then **install from Play**.
 - The app **must be installed via Play** (not side-loaded) to be `PLAY_RECOGNIZED`.
 
+## 6. Building & releasing from another machine (key recovery)
+
+Everything signing-specific is **gitignored**, so a fresh clone can't sign a release until you restore the
+machine-local key material. Keep a **recovery bundle** (zip) of these off the repo, in a password manager /
+encrypted volume — see the bundle's own `RECOVERY.md` for the exact restore steps.
+
+| File (gitignored)                              | Restore to the same path · role |
+|------------------------------------------------|---------------------------------|
+| `demo/upload-keystore.jks`                     | Play **upload key** — must be *identical* on every machine (Play rejects a differently-signed AAB). Losing it → request an upload-key reset in Play Console (the Google-held app-signing key is unaffected, so user updates keep working). |
+| `demo/keystore.properties`                     | keystore path + passwords (`storeFile=upload-keystore.jks`, relative to `demo/`). |
+| `demo/app/src/main/assets/reader_wrpac.json`   | reader-auth identity (optional — absent → Read-mDL requests unsigned, holder shows the reader "unverified", app still works). |
+
+Recreate **per machine** (do not carry these — the SDK path is machine-local):
+
+```sh
+echo "sdk.dir=$ANDROID_HOME" > demo/local.properties
+echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+```
+
+Then restore the three files above and build:
+
+```sh
+cd demo
+./gradlew :app:assembleDebug   # debug APK → adb install -r app/build/outputs/apk/debug/app-debug.apk
+./gradlew :app:bundleRelease    # signed AAB → app/build/outputs/bundle/release/app-release.aab
+```
+
+**Bump `versionCode`** in `demo/app/build.gradle.kts` before every Play upload (Play rejects a re-used code).
+The `~/.android/debug.keystore` is auto-generated per machine — nothing to carry for debug installs.
+
 ## Store listing (Play Console — separate from the on-device icon)
 
 In Play Console / the store the app shows as `com.hopae.axle.wallet (unreviewed)` **with no icon or name**
