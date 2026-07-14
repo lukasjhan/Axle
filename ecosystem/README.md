@@ -65,7 +65,9 @@ the Scheme Operator → then checking the credential's certificate chains to a C
   verified claims + trust status (Vite + React).
 
 The **Wallet Provider** (WUA + key attestation) lives at the repo root in [`../wallet-provider`](../wallet-provider),
-and the **RP Registrar** is a separate service (sandbox at https://demo-registrar.vercel.app/).
+and the **RP Registrar** is a separate project at
+[github.com/hopae-official/registrar](https://github.com/hopae-official/registrar)
+(sandbox at https://demo-registrar.vercel.app/).
 
 ## Roadmap
 

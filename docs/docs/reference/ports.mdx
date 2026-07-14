@@ -7,14 +7,20 @@ import TabItem from '@theme/TabItem';
 
 # Ports
 
-The host implements these and injects them via `WalletPorts`. The SDK provides defaults for `Rng`,
-`WalletClock`, and `TransactionLogStore` — you must supply at least `SecureArea`, `StorageDriver`,
-and `HttpTransport`.
+The host implements these and injects them via `WalletPorts`. You must supply at least `SecureArea`,
+`StorageDriver`, and `HttpTransport`; `WalletClock`, `Rng`, `WalletLogger`, `TransactionLogStore`, and
+`WalletAttestationProvider` all have defaults (a system clock, the platform secure RNG, no logging, an
+in-memory log store, and no attestation, respectively). `ProximityTransport` is not part of `WalletPorts`
+— you pass it per call to `wallet.proximity.present` / `wallet.reader.read`.
 
 ## SecureArea
 
-Creates and uses key material that never leaves the secure boundary. Back it with Android Keystore or
-iOS Secure Enclave; a software implementation exists for tests.
+The private-key custody boundary: creates and uses key material that never leaves the secure boundary.
+Back it with Android Keystore or iOS Secure Enclave; a software implementation exists for tests.
+`capabilities` (`SecureAreaCapabilities`) declares supported algorithms and whether the area is
+hardware-backed and can do user-auth, key attestation, and key agreement — the SDK reads it before, e.g.,
+selecting mdoc `Mac` device auth. Signing over the COSE/JOSE layers is bridged by
+`SecureAreaCoseSigner` / `SecureAreaJwsSigner`, which call `sign` for you.
 
 <Tabs groupId="lang">
 <TabItem value="kotlin" label="Kotlin">
@@ -22,9 +28,14 @@ iOS Secure Enclave; a software implementation exists for tests.
 ```kotlin
 interface SecureArea {
     val id: SecureAreaId
+    val capabilities: SecureAreaCapabilities
     suspend fun createKey(spec: KeySpec): KeyInfo
-    suspend fun publicKey(handle: KeyHandle): EcPublicKey
-    // signing is exposed via SecureAreaJwsSigner / SecureAreaCoseSigner
+    suspend fun publicKey(key: KeyHandle): EcPublicKey
+    suspend fun sign(key: KeyHandle, algorithm: SigningAlgorithm, data: ByteArray, hint: AuthorizationHint? = null): ByteArray
+    suspend fun keyAgreement(key: KeyHandle, peerPublicKey: EcPublicKey, hint: AuthorizationHint? = null): ByteArray
+    /** Null when the area cannot attest (e.g. software area, or a key created without a challenge). */
+    suspend fun attestation(key: KeyHandle, challenge: ByteArray): KeyAttestation?
+    suspend fun deleteKey(key: KeyHandle)
 }
 ```
 
@@ -32,16 +43,23 @@ interface SecureArea {
 <TabItem value="swift" label="Swift">
 
 ```swift
-public protocol SecureArea {
+public protocol SecureArea: Sendable {
     var id: SecureAreaId { get }
+    var capabilities: SecureAreaCapabilities { get }
     func createKey(spec: KeySpec) async throws -> KeyInfo
     func publicKey(key: KeyHandle) async throws -> EcPublicKey
-    // signing is exposed via SecureAreaJwsSigner / SecureAreaCoseSigner
+    func sign(key: KeyHandle, algorithm: SigningAlgorithm, data: [UInt8], hint: AuthorizationHint?) async throws -> [UInt8]
+    func keyAgreement(key: KeyHandle, peerPublicKey: EcPublicKey, hint: AuthorizationHint?) async throws -> [UInt8]
+    /// Nil when the area cannot attest (e.g. software area, or a key created without a challenge).
+    func attestation(key: KeyHandle, challenge: [UInt8]) async throws -> KeyAttestation?
+    func deleteKey(key: KeyHandle) async throws
 }
 ```
 
 </TabItem>
 </Tabs>
+
+An adapter qualifies by passing `SecureAreaContract.verify(area)` from the test kit.
 
 ## StorageDriver
 
@@ -167,5 +185,64 @@ public protocol TransactionLogStore: Sendable {
 
 ## WalletAttestationProvider
 
-Optional — the link to your Wallet Provider backend for wallet-unit attestation (WUA) and
-attestation-based client authentication during issuance.
+Optional — the link to your Wallet Provider backend. `walletAttestation` returns a Wallet Unit
+Attestation (WUA) used for attestation-based client authentication during issuance; `keyAttestation`
+returns a per-issuance key attestation over the holder keys the issuer will bind credentials to.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+interface WalletAttestationProvider {
+    suspend fun walletAttestation(keyInfo: KeyInfo): String
+    suspend fun keyAttestation(keys: List<KeyInfo>, nonce: String?): String
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+public protocol WalletAttestationProvider: Sendable {
+    func walletAttestation(keyInfo: KeyInfo) async throws -> String
+    func keyAttestation(keys: [KeyInfo], nonce: String?) async throws -> String
+}
+```
+
+</TabItem>
+</Tabs>
+
+## Runtime ports
+
+`WalletClock`, `Rng`, and `WalletLogger` are small runtime hooks. The clock and RNG are injectable so
+tests can pin them for deterministic validity checks and transcripts; both default to the platform
+implementation. `WalletLogger` is a structured sink for the SDK's and adapters' logs — default none.
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+fun interface WalletClock { fun now(): Instant }                 // default: WalletClock.System
+fun interface Rng { fun nextBytes(size: Int): ByteArray }        // default: Rng.Default
+
+interface WalletLogger {
+    enum class Level { Debug, Info, Warn, Error }
+    fun log(level: Level, message: String, throwable: Throwable? = null)
+}
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+public protocol WalletClock: Sendable { func now() -> Date }     // default: SystemClock()
+public protocol Rng: Sendable { func nextBytes(_ size: Int) -> [UInt8] }  // default: SystemRng()
+
+public enum LogLevel: Sendable { case debug, info, warn, error }
+public protocol WalletLogger: Sendable {
+    func log(level: LogLevel, message: String, error: Error?)
+}
+```
+
+</TabItem>
+</Tabs>

@@ -17,17 +17,25 @@ as an `AsyncStream`.
 
 ## The session state machine
 
-`wallet.issuance.start(…)` returns an `IssuanceSession`. It emits a sequence of states; two of them
+`wallet.issuance.start(…)` returns an `IssuanceSession`. It emits a sequence of states; three of them
 are **terminal** (`isTerminal == true`), and every flow ends on one of those.
 
 | Stage | Kotlin `IssuanceState` | Swift `IssuanceState` | Meaning |
 |---|---|---|---|
 | Preparing | `Preparing` | `.preparing` | Fetching issuer metadata, building PAR + PKCE. |
 | Authorization | `AuthorizationRequired(authorizationUrl)` | `.authorizationRequired(String)` | Open the URL in a browser (authorization-code flow), then call `completeAuthorization`. |
-| Tx code | `TxCodeRequired` | `.txCodeRequired` | The issuer expects an out-of-band code; call `submitTxCode`. |
+| Tx code | `TxCodeRequired(txCode)` | `.txCodeRequired(TxCodeSpec?)` | The issuer expects an out-of-band code; call `submitTxCode`. `txCode` carries §4.1.1 input hints, if any. |
 | Processing | `Processing` | `.processing` | Exchanging the code and requesting the credential(s). |
+| Deferred | `Deferred(credentialId, retryAfter)` | `.deferred(credentialId:, retryAfter:)` | **Terminal.** Issuer accepted but isn't ready (§9.2). The credential is stored deferred; call `resumeDeferred(credentialId)` after `retryAfter`. |
 | Completed | `Completed(result)` | `.completed(IssuanceResult)` | **Terminal.** `result.issued` is the list of stored `CredentialId`s. |
 | Failed | `Failed(error)` | `.failed(IssuanceError)` | **Terminal.** Carries the error. |
+
+:::note `Deferred` is terminal
+`Deferred` is **not** a failure and **not** a pause you can resume in place — the session ends there.
+The `else -> {}` / `default` branch in the terminal idiom below swallows it, so if your issuer defers,
+match `Deferred` explicitly and schedule a `resumeDeferred(credentialId)` for after `retryAfter`
+(null → retry immediately).
+:::
 
 Session controls: `submitTxCode(code)`, `completeAuthorization(redirectUri)`, and `cancel()`.
 Kotlin reads the current value from `session.state`; Swift from `session.states` (and the synchronous
@@ -67,6 +75,17 @@ for await state in session.states {
 
 </TabItem>
 </Tabs>
+
+### What `Failed` carries
+
+`Failed.error` is a `WalletError.Issuance` (Kotlin) / `IssuanceError` (Swift):
+
+| Case | When |
+|---|---|
+| `InvalidOffer` / `.invalidOffer` | The offer URI or JSON could not be parsed / resolved. |
+| `AuthorizationFailed` / `.authorizationFailed(oauthError:)` | The authorization or token step was rejected — the OAuth `error` code is preserved. |
+| `CredentialRequestFailed` / `.credentialRequestFailed` | The issuer refused or could not fulfil the credential request. |
+| `Unexpected` / `.unexpected` | Any other error (transport, encoding), wrapping the cause. |
 
 ## Pre-authorized code flow
 
@@ -258,7 +277,8 @@ leave it.
 Both operations return an `IssuanceSession` that you drive exactly like the flows above.
 
 `resumeDeferred(id)` resumes a credential the issuer accepted but hadn't finished minting (a deferred
-transaction). `reissue(id)` renews an existing credential using its stored refresh token and metadata.
+transaction) — the `id` is the `credentialId` a prior session surfaced in its terminal `Deferred` state.
+`reissue(id)` renews an existing credential using its stored refresh token and metadata.
 
 <Tabs groupId="lang">
 <TabItem value="kotlin" label="Kotlin">

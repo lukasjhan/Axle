@@ -1,8 +1,8 @@
-# EUDI Wallet SDK
+# Axle
 
-A **headless, from-scratch SDK for building EU Digital Identity (EUDI) wallets** — issuing, storing, and
-presenting digital credentials under **eIDAS 2.0** (ARF · HAIP). Embed it in your own app and you own the
-UI; the SDK owns the protocols, cryptography, and trust.
+**Axle is a headless, from-scratch SDK for building EU Digital Identity (EUDI) wallets** — issuing, storing,
+and presenting digital credentials under **eIDAS 2.0** (ARF · HAIP). Embed it in your own app and you own the
+UI; the SDK owns the protocols, cryptography, and trust. The reference wallet built with it is **Axle Wallet**.
 
 It ships as **two native implementations — Kotlin and Swift** — that share only an API contract, with a pure
 core that builds and tests on plain Linux. New to EUDI? Start with **[Concepts](docs/docs/concepts.mdx)**.
@@ -81,6 +81,30 @@ The [`android/`](android/) adapters are a ready-made preset; [`demo/app/.../Demo
 is the canonical "assemble from adapters + config" example. Full walkthrough in
 [`docs/` → Getting Started](docs/docs/getting-started.mdx) and [Architecture](docs/docs/architecture.md).
 
+## Quick start
+
+```kotlin
+// Assemble once from platform adapters + config (Android preset shown).
+val wallet = Wallet.create(
+    config = WalletConfig(trust = TrustConfig(issuerAnchorsDer, readerAnchorsDer, registrarAnchorsDer)),
+    ports  = WalletPorts(
+        secureAreas = listOf(AndroidKeystoreSecureArea()),   // your SecureArea adapter
+        storage     = FileStorageDriver(dir),                // your StorageDriver adapter
+        http        = OkHttpTransport(),                     // your HttpTransport adapter
+    ),
+)
+
+wallet.issuance.resolveOffer(offerUri)   // OpenID4VCI — resolve → start session → store credential
+wallet.presentation.start(requestUri)    // OpenID4VP  — resolve → select credentials → submit
+wallet.proximity.present(transport)      // ISO 18013-5 — present in person over BLE/NFC
+wallet.credentials.list()                // stored credentials (+ DCQL match, status)
+wallet.transactions.history()            // audit log
+```
+
+Swap `AndroidKeystoreSecureArea` / `FileStorageDriver` / `OkHttpTransport` for your own adapters (or the
+`testkit` software ones) to run the same core anywhere. Full walkthrough — Kotlin + Swift — in
+[Getting Started](docs/docs/getting-started.mdx).
+
 ## Modules
 
 Each concern is a separate module (Kotlin name / Swift target), tested in isolation.
@@ -138,7 +162,8 @@ npm run build             # static build of both locales
 ## The reference ecosystem
 
 A complete EUDI sandbox — every counterpart the wallet talks to — lives in this repo (except the Registrar,
-which is a separate service; sandbox at [demo-registrar.vercel.app](https://demo-registrar.vercel.app/)):
+a separate project at [github.com/hopae-official/registrar](https://github.com/hopae-official/registrar);
+sandbox at [demo-registrar.vercel.app](https://demo-registrar.vercel.app/)):
 
 | Service | Path | Role |
 |---|---|---|
@@ -156,3 +181,7 @@ See [`ecosystem/README.md`](ecosystem/README.md) for the trust model overview.
 Reference / sandbox implementation for eIDAS 2.0 EUDI interoperability. The Kotlin and Swift cores and the
 Android adapters are functional and tested (CI runs both suites); iOS adapters are planned. The hosted
 services above are a **non-production sandbox**.
+
+## License
+
+Licensed under the **Apache License 2.0** — see [LICENSE](LICENSE).

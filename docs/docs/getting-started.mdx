@@ -81,13 +81,16 @@ let wallet = Wallet.create(
 
 ### `WalletConfig`
 
-Both fields have defaults, so `WalletConfig()` is valid for a first run against an issuer that does
+Every field has a default, so `WalletConfig()` is valid for a first run against an issuer that does
 not require trust anchors.
 
 | Field | Type | Purpose |
 |---|---|---|
-| `trust` | `TrustConfig` | X.509 trust anchors used across the SDK. `issuerAnchorsDer` validates issuer signing certificates and status-list signers; `readerAnchorsDer` validates signed presentation requests (OpenID4VP JAR) and mdoc reader authentication. Anchors are DER-encoded certificates (`List<ByteArray>` / `[[UInt8]]`). |
+| `trust` | `TrustConfig` | X.509 trust anchors used across the SDK, all DER-encoded (`List<ByteArray>` / `[[UInt8]]`). `issuerAnchorsDer` validates issuer signing certificates and status-list signers; `readerAnchorsDer` validates signed presentation requests (OpenID4VP JAR) and mdoc reader authentication; `registrarAnchorsDer` validates an RP registration certificate (WRPRC) and its status list. See [Trust & audit](./guides/trust-and-audit). |
 | `issuance` | `IssuanceConfig` | Defaults applied to issuance flows: `clientId` (default `"wallet-dev"`) and `redirectUri` (default `"eudi-wallet://authorize"`). Set these to the values your issuer registered for your app. |
+| `presentation` | `PresentationConfig` | mdoc presentation policy: `mdocDeviceAuth` (`Signature` default, or `Mac` — see [Proximity](./guides/proximity#device-authentication)), `proximitySessionCurve` (P-256 default), `mdocTransactionDataBinder` (required to bind `transaction_data` to an mdoc), and `verifyRegistrationViaRegistrarApi` (opt-in online registrar lookup). |
+| `transactionLog` | `TransactionLogConfig` | `recordFailures` (default `false`) — when `true`, presentations that fail at submission are also written to the audit log with an `ERROR` status. |
+| `readerAuth` | `ReaderAuthSigner?` | The wallet's ISO 18013-5 **reader** identity (for `wallet.reader`, the Read-mDL role): a signer + certificate chain so the holder you read from can authenticate you. Null (default) → your read requests carry no reader auth. |
 
 ### `WalletPorts`
 
@@ -140,6 +143,42 @@ let wallet = Wallet.create(
         http: fakeHttpTransport
     )
 )
+```
+
+</TabItem>
+</Tabs>
+
+### Your own adapters
+
+Most apps depend on the ready-made `android/` presets (`AndroidKeystoreSecureArea`, `FileStorageDriver`,
+`OkHttpTransport`, …) — see [Android adapters & demo](./android-demo). To target another platform, or to
+harden a preset, implement the port yourself. Two rules make an adapter correct:
+
+- **`SecureArea`** is the private-key custody boundary: implement `createKey`, `publicKey`, `sign`
+  (raw `r||s`), `keyAgreement`, `attestation`, `deleteKey`, and declare `capabilities` honestly (a
+  wallet configured for mdoc `Mac` checks `capabilities.keyAgreement`). Private keys must never leave it.
+- **`HttpTransport`** must honour `request.followRedirects` — the OpenID4VCI/VP flows intercept redirects,
+  so a transport that always follows them breaks issuance and presentation.
+
+Use the test kit's `SoftwareSecureArea` and `InMemoryStorageDriver` as reference implementations, and
+qualify your adapter against the shared **contract test suites** — the same checks that gate the presets:
+
+<Tabs groupId="lang">
+<TabItem value="kotlin" label="Kotlin">
+
+```kotlin
+// From the testkit — throws IllegalStateException on any contract violation.
+SecureAreaContract.verify(mySecureArea)
+StorageDriverContract.verify(myStorageDriver)
+```
+
+</TabItem>
+<TabItem value="swift" label="Swift">
+
+```swift
+// From the test kit — throws on any contract violation.
+try await SecureAreaContract.verify(mySecureArea)
+try await StorageDriverContract.verify(myStorageDriver)
 ```
 
 </TabItem>

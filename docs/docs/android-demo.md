@@ -10,7 +10,7 @@ platform-adapter libraries** under `android/` that implement the SDK's ports. Yo
 
 ## The `android/` adapter libraries
 
-Three modules under the Maven group **`com.hopae.eudi.android`** (distinct from the SDK's
+Four modules under the Maven group **`com.hopae.eudi.android`** (distinct from the SDK's
 `com.hopae.eudi`, so artifacts never clash):
 
 | Module | Provides | Key classes |
@@ -18,6 +18,7 @@ Three modules under the Maven group **`com.hopae.eudi.android`** (distinct from 
 | `core` | Tier-1 ports | `AndroidKeystoreSecureArea` (`SecureArea`, hardware-backed), `FileStorageDriver` (`StorageDriver`), `OkHttpTransport` (`HttpTransport`), `FileTransactionLogStore` (`TransactionLogStore`) |
 | `proximity` | ISO 18013-5 transports | `BleGattClientTransport` / `BleGattServerTransport` (`ProximityTransport`), `NfcEngagementService` (holder HCE), `NfcReader` (reader). Its **library manifest** merges the BLE/NFC permissions + the HCE service into your app |
 | `dcapi` | Digital Credentials API | `DcApiRegistrar` (Credential Manager registration + matcher), `DcApiRequest` / `DcApiResult` (envelope + marshalling), `DcApiBranding` (OS-selector logo/branding) |
+| `attestation` | Wallet Provider link | `WalletProviderAttestation` (`WalletAttestationProvider`, talks to a `wallet-provider/` backend for WUA + key attestation), `PlayIntegrityTokenProvider` (device integrity, with a `DevIntegrityTokenProvider` fallback for side-loaded debug builds) |
 
 ## Assembling a `Wallet`
 
@@ -33,17 +34,35 @@ val wallet = Wallet.create(
         http = OkHttpTransport(logger = logger),                                 // android/core
         transactionLogStore = FileTransactionLogStore(File(filesDir, "tx.log")), // android/core
         logger = logger,
-        // walletAttestation = ...   // WUA (Wallet Provider) — no adapter yet; see the attestation track
+        // walletAttestation = WalletProviderAttestation(...)  // android/attestation — WUA + key attestation
     ),
 )
 ```
 
 **Port coverage.** The `android/` libraries cover every **required** port (`SecureArea`, `StorageDriver`,
-`HttpTransport`) plus `TransactionLogStore` and the proximity transports. `WalletClock` / `Rng` use the
-SDK defaults (`WalletClock.System` / `Rng.Default`). `WalletLogger` is intentionally **app-supplied** —
-real logging (screen/file) is app-specific, so no concrete logger ships in `android/core`. The one port
-with **no adapter yet** is `WalletAttestationProvider` (Wallet Unit Attestation), tracked in the
-attestation workstream.
+`HttpTransport`) plus `TransactionLogStore`, the proximity transports, and `WalletAttestationProvider`.
+`WalletClock` / `Rng` use the SDK defaults (`WalletClock.System` / `Rng.Default`). `WalletLogger` is
+intentionally **app-supplied** — real logging (screen/file) is app-specific, so no concrete logger ships
+in `android/core`.
+
+## Wallet Provider attestation
+
+`android/attestation` implements `WalletAttestationProvider` against a `wallet-provider/` backend: a WUA
+for attestation-based client authentication and per-issuance key attestation, with the device attested by
+Play Integrity (falling back to a dev token on side-loaded builds). Wire it only if your deployment needs
+it — issuance against issuers that accept a public `client_id` works without it.
+
+```kotlin
+val walletAttestation = WalletProviderAttestation(
+    baseUrl = "https://your-wallet-provider.example/wp",
+    http = http,
+    secureArea = secureArea,   // signs the instance-key proof of possession
+    integrity = PlayIntegrityTokenProvider(context, gcpProjectNumber, fallback = DevIntegrityTokenProvider(), logger = logger),
+    clientId = "wallet-dev",   // must equal IssuanceConfig.clientId so the WUA `sub` matches at the issuer
+    storage = storage,         // persists the instance registration id across restarts
+)
+// → WalletPorts(..., walletAttestation = walletAttestation)
+```
 
 ## Proximity (BLE + NFC)
 

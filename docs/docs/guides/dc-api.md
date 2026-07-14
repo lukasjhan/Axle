@@ -21,6 +21,13 @@ The wallet answers three DC API protocols, all verified on-device against `verif
 Both entry points are cross-platform (identical in Kotlin and Swift). Everything else on this page is
 Android provider plumbing.
 
+:::tip This plumbing is packaged
+The `android/dcapi` adapter module ships this end to end — `DcApiRegistrar` (Credential Manager
+registration + matcher), `DcApiRequest` / `DcApiResult` (envelope parsing + marshalling), and
+`DcApiBranding` (OS-selector logo). Depend on it and the walkthrough below is done for you; the code here
+shows what it does under the hood, and how to adapt it. See [Android adapters & demo](../android-demo).
+:::
+
 :::note Why a custom matcher
 The Credential Manager runs a **matcher** — a small WASM program — to filter your credentials against
 an incoming request before showing the selector. The androidx `OpenId4VpRegistry` bundles a matcher

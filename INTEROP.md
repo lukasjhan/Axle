@@ -1,7 +1,11 @@
-# Live Interop — Issuing a real PID from issuer.eudiw.dev
+# Live Interop — the EUDI reference issuer, verifier, and Multipaz
 
-This records how we issued **and verified a real PID (SD-JWT VC)** from the official EUDI
-reference issuer using only this SDK's from-scratch stack (CBOR/COSE/JOSE/SD-JWT/OpenID4VCI).
+Reproducible records of this SDK running end-to-end against the **live EUDI reference implementations** and the
+Multipaz reference wallet — issuance, presentation, encrypted requests, signed metadata, the Digital
+Credentials API, and phone-to-phone proximity — using only its from-scratch stack (CBOR/COSE/JOSE/SD-JWT/
+mdoc/OpenID4VCI/VP/trust). It starts with issuing **and verifying a PID (SD-JWT VC)** from the **EUDI
+reference issuer** (`issuer.eudiw.dev`) — the official EU Digital Identity Wallet *reference implementation*,
+not a production/member-state issuer.
 
 **Result (2026-07-04):** real PID issued and verified end to end. The issuer signs the
 SD-JWT VC with an **x5c certificate chain** (`CN=PID DS - 01`, EUDI Wallet Reference
@@ -143,10 +147,11 @@ Observed live request: `response_mode=direct_post.jwt`, `client_id=x509_hash:…
 `{query_0: dc+sd-jwt, vct urn:eudi:pid:1, [family_name, given_name]}`. The verifier **accepts the
 encrypted response (HTTP 200)** — the JWE decrypts with its key and the SD-JWT + KB-JWT verify.
 
-Notes: the verifier uses `client_id_scheme = x509_hash` (not `x509_san_dns`); we parse the request
-and present, but full request-signature/chain trust (x509_hash + chain to IACA) is the trust
-module's job (M3, tracked in `SPEC-MATRIX.md`). The holder key must come from the same issuance
-(its public key is the credential's `cnf`); `preAuthIssue` persists it to `eudi-holder-key.json`.
+Notes: the verifier uses `client_id_scheme = x509_hash` (not `x509_san_dns`); the request signature +
+chain trust (x509_hash + chain to a reader anchor) is verified by the `trust` module's `X509RequestVerifier`,
+so the presentation runs against a **trusted** verifier (`PRESENTED TO TRUSTED VERIFIER`, below). The holder
+key must come from the same issuance (its public key is the credential's `cnf`); `preAuthIssue` persists it
+to `eudi-holder-key.json`.
 
 ## mdoc (ISO 18013-5) — same three flows
 
@@ -310,18 +315,17 @@ sides bind `[Hs, Hr]` into the SessionTranscript; a successful DeviceResponse de
 matched. The protocol lives in the SDK (`kotlin/proximity`: `NfcTnep`, `NfcEngagementProcessor`,
 `MdocNfcHandover`, loopback-tested); `android/proximity` is a thin HCE/IsoDep bridge. **Not yet cross-checked
 against Multipaz** (Multipaz also implements TNEP, but BLE-role alignment for negotiated is unverified) — a
-bonus check tracked in `TODO.md`.
+bonus check still open.
 
 Independently, the holder claims the shared **NDEF Type-4 AID** (`D2760000850101`) while presenting via
 `CardEmulation.setPreferredService` (released on teardown), so with several NFC/mdoc wallets installed Android
 routes the tap deterministically to us instead of showing its HCE routing-conflict picker. Device-verified:
 `dumpsys nfc` shows the foreground service flip `null` → our service while armed.
 
-## Known gaps this exercise surfaced
+## Notes
 
-- **x5c issuer-key resolution is production-needed, not just metadata.** The real issuer uses
-  x5c. `X5cLeafKeyResolver` currently lives in tests (JVM `CertificateFactory`) and extracts
-  the leaf key **without chain validation**. The production resolver — both languages, with
-  chain validation against IACA/LOTL trust anchors — lands with the **trust module (M3)**
-  (Swift needs `swift-certificates`). Tracked in `SPEC-MATRIX.md`.
-- Full live issuance still needs the browser step; only that one step isn't headless.
+- **x5c issuer-key resolution.** The reference issuer signs with an x5c chain (no `.well-known/jwt-vc-issuer`).
+  The production `trust` module resolves the issuer key from the x5c leaf **with full chain validation** to
+  the configured issuer anchors (`X5cIssuerKeyResolver`, both languages); the tests' `X5cLeafKeyResolver` was
+  the pre-trust-module stand-in.
+- Full live issuance still needs the one browser step (FormEU auth); everything else is headless.

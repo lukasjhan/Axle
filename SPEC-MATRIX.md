@@ -7,7 +7,39 @@ vectors (`vectors/`) and live interop where available.
 Last full spec audit: **2026-07-09** (all six anchor specs cross-checked clause-by-clause against both
 language trees — see [Detailed coverage & known gaps](#detailed-coverage--known-gaps) below).
 
+Updated **2026-07-15**: added the trust / registration / attestation layer — ETSI TS 119 475 (RP
+registration cert / WRPRC, incl. the intermediated flow) and ETSI TS 119 602 (Trusted Lists); the Wallet
+Provider WUA + key-attestation loop is now closed end-to-end (Play Integrity `PLAY_RECOGNIZED`); and the
+ISO 18013-5 reader role can sign its own requests.
+
 Legend: ✅ implemented · 🟡 partial · ⬜ not yet.
+
+## At a glance
+
+The whole picture in one table. Every row is implemented in **both the Kotlin and Swift trees** (line-for-line
+ports), verified against shared golden vectors (`vectors/`) and live interop, unless the row says otherwise.
+Detailed clause-by-clause coverage and the exact gaps are in the sections below.
+
+| Area | Standard(s) | Status | In one line |
+|---|---|---|---|
+| Formats & crypto | CBOR (RFC 8949), COSE, JOSE/JWS, JWE, HPKE, X.509 PKIX | ✅ | in-house, RFC-vector-verified; no crypto stack beyond JCA / swift-crypto |
+| Credential formats | SD-JWT VC · ISO/IEC 18013-5 mdoc | 🟡 · ✅ | mdoc complete; SD-JWT VC verifier complete but **Type Metadata (§4) absent** |
+| Issuance | OpenID4VCI 1.0 + HAIP | ✅ | pre-auth & auth-code (PAR/PKCE/DPoP), key attestation, batch/deferred/notification/refresh, signed metadata, encrypted request+response — **live vs. the EUDI reference issuer** |
+| Presentation — remote | OpenID4VP 1.0 + HAIP | ✅ | DCQL, `direct_post(.jwt)`, signed requests + reader trust, `transaction_data` — **live vs. the EUDI reference verifier** |
+| Presentation — proximity | ISO/IEC 18013-5 | 🟡 | data model + session crypto + `deviceSignature`/`deviceMac` + reader auth complete (holder & reader); **BLE/NFC transports are Android-only — no iOS**. Device-to-device verified with Multipaz |
+| Presentation — DC API | ISO/IEC 18013-7 · W3C Digital Credentials API | ✅ | origin-bound handover + HPKE-sealed mdoc response; OpenID4VP over the browser DC API |
+| Trust & registration | ETSI TS 119 475 (WRPRC) · TS 119 602 (Trusted Lists) | ✅ | registrar-issued RP registration incl. the **intermediated** flow; JAdES trusted-list CA anchors |
+| Attestation | WUA (attestation client auth) · key attestation | ✅ | Wallet Provider loop closed — Play Integrity `PLAY_RECOGNIZED` |
+| Revocation | IETF Token Status List | ✅ | fetch + verify + index lookup |
+| Audit | ARF / GDPR transaction log | ✅ | presentations + issuances, queryable by type / party / time |
+
+**Headline open items** (all symmetric across both language trees):
+
+1. **SD-JWT VC Type Metadata (§4)** — `vct` resolution / `extends` / display / JSON-schema, plus `vct#integrity`. The single largest gap.
+2. **iOS proximity transport** — CoreBluetooth / CoreNFC. The proximity protocol and crypto are complete in the portable core; only the **Android** transport adapters exist today.
+3. **The trust cluster** (sequenced last by dependency, not effort): DCQL `trusted_authorities`; the `verifier_attestation` / `decentralized_identifier` / `openid_federation` client-ID prefixes; real-time revocation (CRL / OCSP / LOTL-2). None is the security boundary — the verifier re-validates issuer trust independently (OpenID4VP §6.1) and DCQL matching is `SHOULD`.
+
+Anything tagged a **[deliberate non-goal](#deliberate-non-goals)** (the legacy `vc+sd-jwt` typ, the superseded TS-literal `OID4VPHandover`, 18013-7 Annex A website retrieval, …) is a decision — not a to-do.
 
 ## Formats & crypto
 
@@ -27,7 +59,7 @@ Legend: ✅ implemented · 🟡 partial · ⬜ not yet.
 
 | Spec | Anchor version | Status |
 |---|---|---|
-| OpenID4VCI | 1.0 Final (2025-09-16) | ✅ `openid4vci` — pre-authorized & authorization-code (+PAR), offer resolution, scope-preferred; **signed metadata** (§12.2.2 `Accept` negotiation + §12.2.3 `application/jwt` with `typ`/`alg`/`sub`/`iat`/`exp` rules); **live-issued a real PID from `issuer.eudiw.dev`** and **live-verified signed metadata from `dev.issuer-backend.eudiw.dev`** (see `INTEROP.md`). **encrypted Credential Requests/Responses** (§8.2/§10, ECDH-ES + A*GCM, live-verified against `issuer.eudiw.dev`) — same on the **deferred endpoint** (§9.1); deferred issuance surfaces the §8.3 `interval` (`IssuanceState.Deferred(retryAfter)`) and handles §9.2 202 re-deferrals; **`credential_identifiers`** (§8.2 — request by `credential_identifier` when the token binds them); both key-proof mechanisms — `jwt` proofs with the `key_attestation` header, and the **`attestation` proof type** (Appendix F.3, `preferAttestationProof`). No open gaps in the reviewed clauses |
+| OpenID4VCI | 1.0 Final (2025-09-16) | ✅ `openid4vci` — pre-authorized & authorization-code (+PAR), offer resolution, scope-preferred; **signed metadata** (§12.2.2 `Accept` negotiation + §12.2.3 `application/jwt` with `typ`/`alg`/`sub`/`iat`/`exp` rules); **live-issued a PID from the EUDI reference issuer (`issuer.eudiw.dev`, the EU reference implementation — not a production issuer)** and **live-verified signed metadata from `dev.issuer-backend.eudiw.dev`** (see `INTEROP.md`). **encrypted Credential Requests/Responses** (§8.2/§10, ECDH-ES + A*GCM, live-verified against `issuer.eudiw.dev`) — same on the **deferred endpoint** (§9.1); deferred issuance surfaces the §8.3 `interval` (`IssuanceState.Deferred(retryAfter)`) and handles §9.2 202 re-deferrals; **`credential_identifiers`** (§8.2 — request by `credential_identifier` when the token binds them); both key-proof mechanisms — `jwt` proofs with the `key_attestation` header, and the **`attestation` proof type** (Appendix F.3, `preferAttestationProof`). No open gaps in the reviewed clauses |
 | PKCE | RFC 7636 (S256) | ✅ |
 | DPoP | RFC 9449 | ✅ jti/htm/htu/ath + DPoP-Nonce retry |
 | OAuth Attestation-Based Client Auth | draft (wallet attestation + PoP) | ✅ WUA client authentication during issuance |
@@ -48,6 +80,17 @@ Legend: ✅ implemented · 🟡 partial · ⬜ not yet.
 |---|---|---|
 | IETF Token Status List | draft-ietf-oauth-status-list | ✅ `statuslist` / `StatusList` — fetch + verify status token (signature + issuer chain), cached, index lookup |
 | Transaction log (ARF / GDPR) | ARF transaction logging | ✅ `txlog` / `TransactionLog` — **presentations** (relying party id/name/trusted/chain, per-document disclosed claims) **and issuances** (issuer + credential type on success; **ERROR + message on a failed attempt** — start / deferred-complete / reissue); history/query by type/party/time |
+
+## Trust, registration & attestation
+
+| Spec | Anchor version | Status |
+|---|---|---|
+| ETSI TS 119 475 (RP registration / WRPRC) | v1.2.1 | ✅ `trust` `WRPRCVerifier` — validates the JAdES `rc-wrp+jwt` WRPRC against the registrar CA and binds it to the request-signing WRPAC (`organizationIdentifier`): a **direct** request binds to `sub`, an **intermediated** request (§5.1) to `intermediary.sub`/`act.sub` while `sub` stays the final RP. Surfaces entitlements, purpose, the intermediary, the **final-RP display name**, the attribute-scope check (**RPRC_21** — requested claims outside the registration), and the Token Status List result; also the self-declared `registrar_dataset` path with optional online confirmation via the registrar TS5 API (RPRC_16/18). Trust is **informational, not a gate** (ARF informed consent). Both languages |
+| WRPRC / dataset transport | ETSI TS 119 472-2 §6.3 | ✅ read from the OpenID4VP request's `verifier_info` (`registration_cert` by value + `registrar_dataset`); surfaced on `VerifierInfo.registration` for the consent screen and the audit log |
+| ETSI TS 119 602 (Trusted Lists) | v1.1.1 | ✅ `trustlist` `TrustedListClient` — fetches issuer / reader / registrar CA anchors from JAdES-signed Trusted Lists (verified to a pinned Scheme Operator), feeding `TrustConfig`; the sandbox Scheme Operator publishes them (`ecosystem/trusted-list`) |
+| ISO 18013-5 reader authentication (signing) | §9.1.4 | ✅ the wallet's reader role signs its device requests with a `ReaderAuthSigner` (`WalletConfig.readerAuth`) so the holder can authenticate *who is asking*; the holder side already verified reader auth |
+| Wallet Unit Attestation (WUA) | OAuth Attestation-Based Client Auth (draft) | ✅ `WalletAttestationProvider` port + `AttestationClientAuth` — instance registration → WUA client-auth JWT (`cnf.jwk` PoP) used at the Issuer; **e2e closed** against the `wallet-provider` backend (Play Integrity `PLAY_RECOGNIZED`, see `demo/RELEASE.md`) |
+| Key attestation | OpenID4VCI §8.2.1.1 (`keyattestation+jwt`) | ✅ per-issuance key attestation over the proof keys (`KeyAttestationSource`) — both the `jwt`-proof `key_attestation` header and the `attestation` proof type (Appendix F.3) |
 
 ## Detailed coverage & known gaps
 
@@ -174,7 +217,7 @@ Not gaps to be closed later — decisions. Recorded so the matrix cannot be read
 | SD-JWT VC Type Metadata (§4: vct resolution, `extends`, display, claim metadata, schema) + `vct#integrity` | ⬜ largest single gap; §4.7 is a step of the verification algorithm |
 | iOS proximity transport (CoreBluetooth / CoreNFC) + session termination (status 20) | ⬜ Android demo adapters only (BLE Ident is done on Android — see below) |
 | NFC negotiated handover (18013-5 §8.2.2.1) — demo/host transport choreography | 🟡 SDK complete (messages + `[Hs, Hr]` transcript + `present`/`read` wiring); only the demo NFC transport's negotiated exchange remains (folds into transport hardening below) |
-| Wallet Provider backend end-to-end (WUA issue → verify loop) | 🟡 backend exists (`wallet-provider/`); e2e loop closure pending |
+| Wallet Provider backend end-to-end (WUA issue → verify loop) | ✅ registration → WUA → Issuer client-auth + per-issuance key attestation, closed and Play-verified (`PLAY_RECOGNIZED`, see `demo/RELEASE.md`) |
 | BLE / NFC transport production hardening | 🟡 demo adapters + live Multipaz interop done; **timeout + cancellation/failure cleanup, BLE Ident, and initial-connect retry (GATT 133) all done — device-verified**; MTU is negotiated. No mdoc session resumption exists (mid-session drop → restart from engagement, by design). Remaining: NFC negotiated transport choreography, MTU-fallback edge cases |
 | Shared mdoc golden vectors (MSO / DeviceResponse / SessionTranscript / deviceMac) | ⬜ cross-language equivalence currently via round-trip tests + live interop |
 

@@ -102,6 +102,9 @@ carrier (service UUID + mode) travels inside either one. Once the reader connect
 `DeviceRequest`, the SDK decrypts and parses it and emits `RequestReceived`.
 
 The terminal states are `Completed`, `Declined`, and `Failed`; every state exposes `.isTerminal`.
+`Failed.error` is a `WalletError.Proximity` (Kotlin) / `ProximityError` (Swift): `SessionFailed` /
+`.sessionFailed` (the transport or session-encryption exchange broke), `NoMatchingCredential` /
+`.noMatchingCredential` (nothing stored answers the reader's request), or `Unexpected` / `.unexpected`.
 
 ### Inspecting the request
 

@@ -13,9 +13,13 @@ Trust is configured as DER certificate lists on `WalletConfig.trust`, so the pub
 X.509 types:
 
 - **`issuerAnchorsDer`** — validates issuer certificates for the Token Status List and mdoc issuer
-  authentication.
+  authentication. Also gates issuer-metadata verification (signed metadata → *registered* issuer) and
+  the trust label written on each stored credential.
 - **`readerAnchorsDer`** — one validator shared by two flows: remote **signed VP request objects**
   (`X509RequestVerifier`) and proximity **mdoc reader authentication** (`X5cMdocReaderTrust`).
+- **`registrarAnchorsDer`** — validates a relying party's **registration certificate (WRPRC)** and its
+  status list, when one rides in an OpenID4VP request's `verifier_info`. With these set, a WRPRC is
+  verified and revocation-checked, and the relying party is recorded as registrar-`attested`.
 
 Chain validation is real PKIX (path building to an anchor, validity, basic constraints). A
 certificate that does not chain to a configured anchor is **not trusted** — presence of a certificate
@@ -53,8 +57,11 @@ Revocation uses the IETF **Token Status List** — the SDK fetches and verifies 
 
 ## Transaction log
 
-Every presentation is recorded for transparency (ARF / GDPR). Provide a `TransactionLogStore`
-(persistence) via ports; query history through the facade:
+Successful and declined presentations (and issuances) are recorded for transparency (ARF / GDPR);
+presentations that fail at submission are logged only when you opt in with
+`WalletConfig.transactionLog = TransactionLogConfig(recordFailures = true)`. Provide a
+`TransactionLogStore` (persistence) via ports — the default is in-memory, so persist it to keep history
+across restarts. Query history through the facade:
 
 <Tabs groupId="lang">
 <TabItem value="kotlin" label="Kotlin">

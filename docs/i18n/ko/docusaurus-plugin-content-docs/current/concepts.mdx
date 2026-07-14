@@ -1,0 +1,214 @@
+---
+id: concepts
+title: 개념
+sidebar_position: 2
+---
+
+# 개념
+
+이 페이지는 나머지 문서를 위한 용어집입니다. EUDI, eIDAS, 또는 검증 가능한 크리덴셜(verifiable
+credential)을 다뤄본 적이 없다면 위에서 아래로 끝까지 읽으세요 — 각 용어는 두세 문장에서 다섯
+문장으로 정의되며 해당 용어를 규정하는 명세(spec)에 대한 링크가 함께 제공됩니다. 이미 이 용어들에
+익숙하다면 **[아키텍처](./architecture)** 또는 **[명세 참고문헌](./reference/specs)**으로
+건너뛰세요.
+
+:::note 멘탈 모델
+**지갑(wallet)**(스마트폰의 앱)은 **발급자(issuer)**로부터 서명된 **크리덴셜(credential)**을 받아
+저장하고, 이후 선택된 일부를 **검증자(verifier)**에게 제시합니다 — 이 모든 과정은 공유된 **신뢰
+프레임워크(trust framework)** 아래에서 이루어져, 각 당사자는 자신이 상대하는 대상이 누구인지, 그리고
+데이터가 진정한지 확인할 수 있습니다.
+:::
+
+## 프레임워크
+
+**eIDAS 2.0** — Regulation (EU) 2024/1183으로, 기존 2014년 eIDAS 규정을 개정한 것입니다. 모든 EU
+회원국이 자국 시민과 거주자에게 디지털 신원 지갑(digital identity wallet)을 제공하도록 의무화하며, 그
+지갑이 보유하는 크리덴셜의 법적 효력을 정의합니다. 아래의 모든 것을 선택이 아니라 필수로 만드는
+법률입니다.
+
+**EUDI Wallet (EU Digital Identity Wallet)** — eIDAS 2.0이 각 회원국에 (직접 또는 인증된 제공자를
+통해) 제공하도록 요구하는 지갑 애플리케이션입니다. 개인이 정부 발행 신원과 그 외
+어테스테이션(attestation)을 한곳에, 스마트폰 기반으로 보관하고, 과도한 정보 공유 없이 온라인과
+대면에서 자신에 관한 사실을 증명할 수 있게 합니다.
+
+**ARF (Architecture Reference Framework)** — EUDI 지갑, 발급자, 검증자가 어떻게 동작하고
+상호운용해야 하는지를 규정한 EU 집행위원회의 기술 명세입니다. ARF 자체는 표준화 기구의 문서가 아니라,
+기존 표준들(OpenID4VCI/VP, ISO mdoc, SD-JWT VC, ETSI 신뢰 목록 등)을 *선택하고 프로파일링하여* 하나의
+일관된 아키텍처로 엮은 것입니다. 이 SDK의 어떤 선택이 임의적으로 보인다면, 대개 ARF가 그렇게 정한
+것입니다. 참조: EUDI Wallet Architecture and Reference Framework (버전 관리됨;
+[참고문헌](./reference/specs) 참고).
+
+## 액터와 역할
+
+**Holder / User** — 크리덴셜이 기술하는 대상이자 지갑을 제어하는 자연인입니다. 상호작용마다 어떤
+크리덴셜과 어떤 개별 속성을 공개할지 스스로 결정합니다.
+
+**Wallet (Unit / Instance)** — 한 개인의 기기에 설치된 구체적인 지갑 앱 설치본입니다. ARF는
+배포·프로비저닝된 이 단위를 *Wallet Unit*(또는 *Wallet Instance*)이라 부릅니다. 기기의 보안
+하드웨어에 키를 보관하며 모든 발급과 제시를 매개합니다. 이 SDK에서 Wallet Unit은 조립된 `Wallet`
+파사드에 해당합니다.
+
+**Wallet Provider** — 지갑 솔루션을 배포하고 보증하는 조직입니다(회원국 또는 인증된 민간 제공자).
+Wallet Unit Attestation(아래 참고)을 통해 특정 Wallet Unit이 진정하며 변조되지 않았음을 증명하고,
+그러한 어테스테이션을 발급하는 백엔드를 운영합니다.
+
+**Issuer / Attestation Provider** — 지갑에 크리덴셜을 서명하여 전달하는 주체입니다. **PID
+Provider**는 정부가 뒷받침하는 Person Identification Data를 발급하고, **QEAA/EAA Provider**는 학위,
+전문 자격증, 멤버십 등과 같은 (적격) 전자 속성 어테스테이션((Qualified) Electronic Attestations of
+Attributes)을 발급합니다. 발급자는 OpenID4VCI 크리덴셜 발급자 엔드포인트를 운영합니다.
+
+**Relying Party / Verifier** — 의사결정을 위해 크리덴셜을 요청하고 확인하는 주체입니다(고객을
+온보딩하는 은행, 나이를 확인하는 술집, 정부 포털 등). "Relying Party"는 법적 역할을 가리키고,
+"Verifier"는 OpenID4VP 또는 ISO 18013-5 리더를 실행하는 기술적 엔드포인트로서 본 동일한 주체를
+가리킵니다.
+
+**RP Registrar** — Relying Party를 등록하고 각 주체가 법적으로 요청할 수 있는 데이터가 무엇인지
+기록하는 국가 기관입니다. 지갑이 정당한 검증자를 인식하고 그 선언된 목적을 확인할 수 있도록 접근
+인증서와 등록 인증서(WRPAC / WRPRC, 아래 참고)를 발급합니다. 참조: ETSI TS 119 475 / ARF.
+
+**Trusted List / Scheme Operator** — 어떤 주체가 어떤 역할에서 신뢰되는지(어떤 발급자가 PID를 발급할
+수 있는지, 어떤 CA가 검증자 인증서의 신뢰 기반이 되는지 등)를 기계가 읽을 수 있는 목록으로 게시하는
+권한 기관입니다. 지갑의 신뢰 결정은 궁극적으로 이 목록들에 근거합니다. 참조: ETSI TS 119 602(아래
+*Trusted Lists* 참고).
+
+**Intermediary (optional)** — Relying Party와 지갑 사이에 위치하여 RP를 대신해 제시 프로토콜을
+실행하는 서비스입니다(자체 검증자를 운영하고 싶지 않은 가맹점에서 흔히 사용). 이 경우에도 지갑은 여전히
+RP의 등록된 신원과 목적을 확인하고 강제합니다.
+
+## 크리덴셜 종류
+
+**PID (Person Identification Data)** — 핵심 정부 발행 신원 크리덴셜로, 법적 이름, 생년월일 및 이와
+유사한 핵심 속성을 담습니다. 지갑이 보유하는 가장 높은 보증 수준의 크리덴셜이며, 다른 서비스들이
+신뢰의 기준으로 삼는 앵커입니다. ARF의 PID Rulebook에 정의되어 있습니다.
+
+**(Q)EAA — (Qualified) Electronic Attestation of Attributes** — 보유자에 관한 PID가 아닌 모든
+어테스테이션입니다: 대학 학위, 건강보험증, 사원증, 멤버십 등급 등. *적격(Qualified)* EAA(QEAA)는 적격
+신뢰 서비스 제공자가 발급하며 일반 EAA보다 강한 법적 효력을 갖습니다. eIDAS 2.0 / ARF에 정의되어
+있습니다.
+
+**mDL (mobile Driving Licence)** — mdoc 크리덴셜로 담긴 운전면허증입니다. ISO/IEC 18013-5의
+대표적인 활용 사례이며, mdoc 포맷과 대면 근접(proximity) 플로우가 존재하는 이유이기도 합니다. EUDI
+맥락에서 mDL은 (Q)EAA의 한 구체적인 종류입니다. 참조: ISO/IEC 18013-5.
+
+## 크리덴셜 포맷
+
+**SD-JWT VC** — **선택적 공개**(selective disclosure)를 위해 설계된 JSON/JWT 기반 크리덴셜
+포맷입니다. 발급자는 크리덴셜을 한 번만 서명하되 공개 가능한 각 클레임을 솔트가 적용된 해시로
+대체합니다. 이후 보유자는 검증자가 필요로 하는 특정 클레임만 공개하고, 검증자는 해시를 다시 계산하여
+해당 클레임이 원래 서명된 집합의 일부였음을 확인합니다. 이것이 보유자가 생년월일을 밝히지 않고도 "만
+18세 이상"임을 증명할 수 있는 방식입니다. 참조: **RFC 9901**의 SD-JWT 메커니즘 위에 구축된 IETF
+SD-JWT VC(`draft-ietf-oauth-sd-jwt-vc`).
+
+**KB-JWT (Key-Binding JWT)** — 보유자가 제시 시점에 서명하여 SD-JWT VC에 첨부하는 짧은 JWT입니다.
+공개된 크리덴셜을 보유자의 개인키 및 *현재* 요청에 결속하며(검증자의 nonce와 audience를 담음),
+제시자가 크리덴셜의 사본만 가진 것이 아니라 실제로 그 크리덴셜이 발급된 키를 소유하고 있음을
+증명합니다. 참조: RFC 9901 / IETF SD-JWT VC.
+
+**ISO mdoc / `mso_mdoc`** — ISO/IEC 18013-5에서 정의한 CBOR 기반 모바일 문서 포맷입니다(mDL의
+포맷). 클레임은 **네임스페이스**(예: `org.iso.18013.5.1`)로 묶이며, 서명된 **MSO (Mobile Security
+Object)**가 각 클레임을 인증하는 다이제스트를 담아 SD-JWT VC와 동일한 선택적 공개 속성을 제공합니다.
+제시 시점에 기기는 키 소유를 증명하기 위해 **기기 인증**(세션 트랜스크립트에 대한 서명 또는 MAC)을
+추가합니다. 참조: ISO/IEC 18013-5.
+
+## 프로토콜
+
+**OpenID4VCI (OpenID for Verifiable Credential Issuance)** — 지갑이 발급자로부터 크리덴셜을
+획득하기 위해 사용하는 프로토콜입니다: 발급자 메타데이터 탐색, 인가(사전 인가 코드 또는 인가 코드), 새
+키의 소유 증명, 그리고 하나 이상의 서명된 크리덴셜 수신. 이 SDK는 `wallet.issuance`를 통해 이
+프로토콜에 접근합니다. 참조: OpenID4VCI 1.0.
+
+**OpenID4VP (OpenID for Verifiable Presentations)** — 검증자가 크리덴셜을 요청하고 지갑이 이를
+원격으로 제시하기 위해 사용하는 프로토콜입니다(QR을 통한 교차 기기 방식, 또는 링크를 통한 동일 기기
+방식). 요청은 무엇이 필요한지 명시하고 검증자의 신원과 nonce를 담으며, 지갑은 공개된 클레임과 키 소유
+증명을 함께 응답합니다. 참조: OpenID4VP 1.0.
+
+**DCQL (Digital Credentials Query Language)** — 검증자가 *어떤* 크리덴셜과 클레임을 원하는지
+표현하기 위해 OpenID4VP가 사용하는 JSON 쿼리 언어입니다("family_name과 만 18세 이상 플래그만 공개하는
+PID" 등). 지갑은 저장된 크리덴셜을 DCQL 쿼리와 매칭하여 적합한 후보를 찾습니다. 참조: OpenID4VP
+1.0(DCQL 절).
+
+**W3C Digital Credentials API** — 웹 페이지가 크리덴셜을 요청하고 그 요청을 운영체제의 크리덴셜
+선택기(credential chooser)에 넘기면, 선택기가 이를 설치된 지갑으로 라우팅하는 브라우저/OS API입니다.
+동일 기기에서의 제시를 위한 오리진 결속(origin-bound)·피싱 방지 경로를 제공하며, 이때 전달되는
+페이로드는 여전히 OpenID4VP 요청입니다. 참조: W3C Digital Credentials API.
+
+**ISO/IEC 18013-5** — **대면 / 근접(proximity)** 제시를 위한 표준입니다: 기기 인게이지먼트(QR 또는
+NFC 태그), ECDH로 수립되는 암호화된 BLE/NFC 세션, 리더 인증, 그리고 mdoc 기기 검색(device
+retrieval) — 검증자와의 네트워크 연결이 필요하지 않습니다. 이 SDK에서는 `wallet.proximity`(보유자)와
+`wallet.reader`(검증자)에 해당합니다. 참조: ISO/IEC 18013-5.
+
+**ISO/IEC 18013-7** — 18013-5의 온라인 확장입니다: mdoc을 근접 링크가 아니라 **OpenID4VP와 Digital
+Credentials API를 통해** 제시하는 방법을 정의하여, 동일한 mdoc 크리덴셜이 원격에서도 동작하도록
+합니다. 참조: ISO/IEC 18013-7.
+
+**HAIP (High Assurance Interoperability Profile)** — OpenID4VCI/VP의 수많은 열린 선택지를 하나의
+구체적이고 상호운용 가능한 집합으로 고정하는 OpenID 프로파일입니다(어떤 크리덴셜 포맷, 어떤 키 바인딩,
+어떤 클라이언트 인증, DPoP, PAR 등). ARF가 HAIP를 요구하기 때문에, 이 SDK의 기본값은 설정
+가능하기보다는 고정적으로 정해진 것처럼 보입니다. 참조: OpenID4VC High Assurance Interoperability
+Profile.
+
+## 신뢰와 보증
+
+**Wallet Unit Attestation (WUA)** — 특정 Wallet Unit이 승인된 지갑 솔루션의 진정하고 폐기되지 않은
+인스턴스임을 증명하는, **Wallet Provider**가 서명한 진술입니다. 발급자는 고가치 크리덴셜을 발급하기
+전에 WUA를 검사하여, 신뢰할 수 있는 기기에 신뢰할 수 있는 소프트웨어로 프로비저닝하고 있음을
+확인합니다. 이 SDK에서는 `WalletAttestationProvider` 포트에서 제공됩니다. 참조: ARF / ETSI TS 119
+472-3.
+
+**Key Attestation** — 크리덴셜이 결속될 특정 키가 기기의 보안 하드웨어 안에 존재하며 그 안에서
+생성되었다는 증거입니다. WUA가 *지갑 인스턴스*를 보증하는 반면, key attestation은 *개별 발급 키*를
+보증하므로, 발급자는 해당 개인키가 외부로 반출될 수 없음을 알 수 있습니다. 일부 명세는 명명을
+혼용하지만 이 둘은 서로 구분됩니다. 참조: ARF / OpenID4VCI key attestation.
+
+**X.509 trust anchors / DSC (Document Signer Certificate)** — 발급자는 인증서가 신뢰된 루트(신뢰
+앵커)까지 체이닝되는 개인키로 크리덴셜을 서명합니다. mdoc의 경우 그 리프(leaf)가 **Document Signer
+Certificate (DSC)**이며, 이는 다시 해당 국가의 IACA 루트 아래에서 발급됩니다. 지갑이나 검증자는
+서명을 신뢰하기 전에 설정된 앵커까지의 체인을 검증합니다. 참조: RFC 5280 (PKIX) / ISO/IEC 18013-5
+Annex B.
+
+**Trusted Lists** — 각 역할(PID 제공자, QEAA 제공자, RP 등록기관, 지갑 제공자)에 대한 신뢰 앵커를
+게시하는, 서명되고 기계가 읽을 수 있는 레지스트리입니다. 인증서를 하드코딩하는 대신, 각 주체는 해당
+목록을 가져와 그 목록이 명시하는 대상을 신뢰합니다. 참조: ETSI TS 119 602(및 과거의 ETSI TS 119 612
+신뢰 목록 포맷).
+
+**WRPAC (Wallet-Relying-Party Access Certificate)** — RP Registrar가 Relying Party에게 발급하여
+애초에 지갑과 통신할 수 있는 권한을 부여하는 인증서입니다. 지갑은 요청을 처리하기 전에 WRPAC를 확인하여
+해당 검증자가 등록된 주체임을 확인합니다. 참조: ETSI TS 119 475.
+
+**WRPRC (Wallet-Relying-Party Registration Certificate)** — Relying Party가 *무엇을* 어떤 목적으로
+요청하도록 등록되어 있는지를 선언하는 짝(companion) 인증서입니다. 지갑은 이를 사용해 검증자의 정당한
+데이터 요구 범위를 보유자에게 보여주고, 과도한 요청을 거부합니다. OpenID4VP에서는 `verifier_info`에
+실려 전달되고, mdoc에서는 `euWrprc`로 나타납니다. 참조: ETSI TS 119 475 / ETSI TS 119 472-2.
+
+**Token Status List** — **폐기와 정지**를 위한 간결하고 프라이버시를 보존하는 메커니즘입니다:
+발급자는 각 크리덴셜의 상태가 하나의 참조 인덱스로 표현되는 비트 배열을 게시하고, 검증자는 해당 비트를
+확인하여 크리덴셜이 여전히 유효한지 봅니다. 이는 어떤 크리덴셜이 확인되는지를 노출시킬 수 있는
+크리덴셜별 상태 조회 호출을 피합니다. 이 SDK에서는 `statuslist` 모듈에 해당합니다. 참조: IETF Token
+Status List(`draft-ietf-oauth-status-list`).
+
+## 보조 표준
+
+다음은 HAIP가 발급 플로우에 고정해 넣은 범용 OAuth/JOSE 구성 요소입니다:
+
+| 표준 | RFC | 역할 |
+|---|---|---|
+| **DPoP** — Demonstrating Proof of Possession | RFC 9449 | 액세스 토큰을 클라이언트가 소유를 증명한 키에 결속하여, 토큰이 탈취되어도 그 키 없이는 쓸모없게 만듭니다. |
+| **PAR** — Pushed Authorization Requests | RFC 9126 | 클라이언트가 인가 요청 파라미터를 먼저 백채널을 통해 서버로 전송하여, 프론트채널 URL에 노출되지 않게 합니다. |
+| **PKCE** — Proof Key for Code Exchange | RFC 7636 | 인가 코드를 플로우를 시작한 클라이언트에 결속하여, 퍼블릭 클라이언트에서의 코드 가로채기를 방지합니다. |
+
+## 이 개념들이 SDK에 나타나는 곳
+
+위의 용어들은 작고 구체적인 표면(surface)에 매핑됩니다. 이는 전체 API가 아니라 상위 수준의 방향
+안내입니다 — 모듈과 포트 배치는 **[아키텍처](./architecture)**를 참고하세요.
+
+| 개념 | SDK 표면 |
+|---|---|
+| OpenID4VCI (발급) | `wallet.issuance` |
+| OpenID4VP + DC API (원격 제시) | `wallet.presentation` |
+| ISO/IEC 18013-5 (근접) | `wallet.proximity` (보유자) · `wallet.reader` (검증자) |
+| SD-JWT VC / mdoc 포맷, DCQL 매칭, Token Status List | `wallet.credentials` (크리덴셜 저장소) |
+| Wallet Unit Attestation (WUA) | `WalletAttestationProvider` 포트 |
+| X.509 trust anchors / Trusted Lists | `WalletConfig.trust` |
+| 공개 및 신뢰 결정의 감사(audit) | `wallet.transactions` |
+
+이 페이지의 각 용어를 뒷받침하는 정확한 문서는 **[명세 참고문헌](./reference/specs)**을 참고하세요.

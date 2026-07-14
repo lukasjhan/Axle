@@ -153,6 +153,22 @@ for await state in session.states {
 </TabItem>
 </Tabs>
 
+### What `Failed` carries
+
+`Failed.error` is a `WalletError.Presentation` (Kotlin) / `PresentationError` (Swift):
+
+| Case | When |
+|---|---|
+| `InvalidRequest` / `.invalidRequest` | The request object was malformed or failed an OpenID4VP §5 check (bad `typ`, `client_id` mismatch, missing/echoed `wallet_nonce`, `expected_origins`). |
+| `VerifierNotTrusted` / `.verifierNotTrusted` | A signed request failed reader-trust verification (chain, signature, or `client_id` scheme). Raised only when `readerAnchorsDer` is configured — see [Reader trust](#reader-trust). |
+| `QueryNotSatisfiable` / `.queryNotSatisfiable` | No stored credential answers a required query. |
+| `SelectionIncomplete` / `.selectionIncomplete` | The selection you passed to `respond` omitted a required query. |
+| `ResponseRejected` / `.responseRejected` | The verifier rejected the submitted response. |
+| `Unexpected` / `.unexpected` | Any other error (transport, encoding), wrapping the cause. |
+
+A request that fails to resolve ends in `Failed` **before** `RequestResolved` — so a `VerifierNotTrusted`
+or `InvalidRequest` request never reaches your consent UI.
+
 ## Selective disclosure & holder binding
 
 Only the claims covered by the request are disclosed — everything else in the credential stays hidden.
