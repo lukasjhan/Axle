@@ -41,11 +41,26 @@ sealed interface Lifecycle {
 }
 
 /** A disclosed claim, path-addressed (namespace+element for mdoc, JSON path for SD-JWT VC). */
-data class Claim(val path: List<String>, val value: ClaimValue)
+data class Claim(val path: List<String>, val value: ClaimValue, val category: ClaimCategory = ClaimCategory.Subject)
 
-/** A claim value with a format-agnostic rendering. */
-class ClaimValue internal constructor(val raw: Any?) {
-    fun display(): String = raw?.toString() ?: ""
+/**
+ * Whether a claim carries the subject's personal data or the credential's administrative metadata. Derived
+ * structurally where possible (SD-JWT VC registered claims like iss/iat/exp/vct/cnf/status) and from the
+ * ARF/ISO administrative element names otherwise (issuing_authority/country, issuance/expiry dates, …). A
+ * hint for grouping — consumers may present it however they like.
+ */
+enum class ClaimCategory { Subject, Metadata }
+
+/** The value's underlying shape, so a UI can render it without re-sniffing the raw type. */
+enum class ClaimValueKind { Text, Number, Boolean, Date, Array, Unknown }
+
+/** A claim value with a format-agnostic rendering and a [kind] hint. */
+class ClaimValue internal constructor(val raw: Any?, val kind: ClaimValueKind = ClaimValueKind.Text) {
+    fun display(): String = when (kind) {
+        ClaimValueKind.Boolean -> if (raw == true) "Yes" else "No"
+        ClaimValueKind.Array -> (raw as? List<*>)?.joinToString(", ") { it?.toString().orEmpty() } ?: (raw?.toString() ?: "")
+        else -> raw?.toString() ?: ""
+    }
     override fun toString(): String = display()
 }
 

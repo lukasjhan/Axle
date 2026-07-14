@@ -52,7 +52,7 @@ internal fun CredentialEnvelope.toCredential(): Credential = Credential(
     configurationId = metadata?.configurationId,
     lifecycle = when (val lc = lifecycle) {
         is EnvelopeLifecycle.Issued -> Lifecycle.Issued(
-            claims = claimsTree()?.let { flattenClaims(it) } ?: emptyList(),
+            claims = claimsTree()?.let { flattenClaims(it, format) } ?: emptyList(),
             validity = null, // validity slice
             instances = CredentialInstances(remaining = lc.instances.size, use = lc.policy.use),
         )
@@ -61,15 +61,47 @@ internal fun CredentialEnvelope.toCredential(): Credential = Credential(
     },
 )
 
-/** Flattens a claims tree into path-addressed leaf claims (nested objects → deeper paths). */
-internal fun flattenClaims(obj: JsonValue.Obj, prefix: List<String> = emptyList()): List<Claim> =
+/** Flattens a claims tree into path-addressed leaf claims (nested objects → deeper paths), classifying each. */
+internal fun flattenClaims(obj: JsonValue.Obj, format: CredentialFormat, prefix: List<String> = emptyList()): List<Claim> =
     obj.entries.flatMap { (key, value) ->
         val path = prefix + key
         when (value) {
-            is JsonValue.Obj -> flattenClaims(value, path)
-            else -> listOf(Claim(path, ClaimValue(jsonToPlain(value))))
+            is JsonValue.Obj -> flattenClaims(value, format, path)
+            else -> {
+                val raw = jsonToPlain(value)
+                listOf(Claim(path, ClaimValue(raw, kindOf(raw, key)), categoryOf(format, path)))
+            }
         }
     }
+
+/** SD-JWT VC registered / JWT claims that carry credential metadata rather than subject data. */
+private val JWT_REGISTERED = setOf("iss", "sub", "aud", "exp", "nbf", "iat", "jti", "cnf", "vct", "status")
+
+/** ARF/ISO administrative element names (both formats) — issuance/validity, issuing party, document identity. */
+private val ADMIN_ELEMENTS = setOf(
+    "issue_date", "issuance_date", "date_of_issuance", "expiry_date", "expiration_date", "valid_from", "valid_until",
+    "issuing_authority", "issuing_country", "issuing_jurisdiction",
+    "document_number", "administrative_number", "un_distinguishing_sign", "portrait_capture_date", "version",
+)
+
+private fun categoryOf(format: CredentialFormat, path: List<String>): ClaimCategory {
+    val key = path.last().lowercase()
+    // SD-JWT VC: top-level registered claims are metadata (structural).
+    if (format is CredentialFormat.SdJwtVc && path.size == 1 && key in JWT_REGISTERED) return ClaimCategory.Metadata
+    // Administrative data elements, either format.
+    if (key in ADMIN_ELEMENTS) return ClaimCategory.Metadata
+    return ClaimCategory.Subject
+}
+
+private val DATE_RE = Regex("""^\d{4}-\d{2}-\d{2}([T ].*)?$""")
+private fun kindOf(raw: Any?, key: String): ClaimValueKind = when (raw) {
+    is Boolean -> ClaimValueKind.Boolean
+    is Int, is Long, is Double, is Float -> ClaimValueKind.Number
+    is List<*> -> ClaimValueKind.Array
+    is String -> if (DATE_RE.matches(raw) || key.endsWith("_date")) ClaimValueKind.Date else ClaimValueKind.Text
+    null -> ClaimValueKind.Unknown
+    else -> ClaimValueKind.Text
+}
 
 private fun jsonToPlain(v: JsonValue): Any? = when (v) {
     is JsonValue.Str -> v.value

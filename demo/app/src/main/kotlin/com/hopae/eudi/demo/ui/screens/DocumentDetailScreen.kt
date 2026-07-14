@@ -58,6 +58,7 @@ import com.hopae.eudi.demo.ui.components.TrustRow
 import com.hopae.eudi.demo.ui.components.WalletCard
 import com.hopae.eudi.demo.ui.theme.WalletTheme
 import com.hopae.eudi.wallet.Claim
+import com.hopae.eudi.wallet.ClaimCategory
 import com.hopae.eudi.wallet.Credential
 import com.hopae.eudi.wallet.Lifecycle
 import com.hopae.eudi.wallet.spi.CredentialFormat
@@ -127,10 +128,9 @@ fun DocumentDetailScreen(
             TrustRow("Issuer registration", trustText(cred.issuer?.registered), cred.issuer?.registered == true)
         }
 
-        // claims vs. credential metadata (issuance/expiry dates, issuing authority/country, JWT registered
-        // claims, …) — the split keeps the personal attributes distinct from the administrative fields.
-        val personal = claims.filter { !isMetadata(it.path) }
-        val metadata = claims.filter { isMetadata(it.path) }
+        // Claims vs. credential metadata — classified by the SDK (SD-JWT registered claims + ARF/ISO admin fields).
+        val personal = claims.filter { it.category != ClaimCategory.Metadata }
+        val metadata = claims.filter { it.category == ClaimCategory.Metadata }
         if (personal.isNotEmpty()) {
             SectionLabel("Claims")
             ClaimsCard(cred, personal, reveal)
@@ -181,7 +181,7 @@ private fun CircleIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, on
 private fun ClaimsCard(cred: Credential, items: List<Claim>, reveal: Boolean) {
     WalletCard(padding = PaddingValues(0.dp)) {
         items.forEach { claim ->
-            val raw = claimDisplay(claim)
+            val raw = claim.value.display() // SDK-typed rendering (arrays → list, booleans → Yes/No)
             val value = if (isSensitive(claim.path) && !reveal) mask(raw) else raw
             InfoRow(claimLabel(cred, claim.path), value)
         }
@@ -199,27 +199,6 @@ private fun claimLabel(cred: Credential, path: List<String>): String {
     val p = if (cred.format is CredentialFormat.MsoMdoc && path.size > 1) path.drop(1) else path
     return p.joinToString(" › ") { it.replace('_', ' ').replaceFirstChar { ch -> ch.uppercase() } }
 }
-
-/** Renders any claim value legibly regardless of type — arrays as a comma list, booleans as Yes/No. */
-private fun claimDisplay(claim: Claim): String = when (val raw = claim.value.raw) {
-    is List<*> -> raw.joinToString(", ") { it?.toString().orEmpty() }
-    is Boolean -> if (raw) "Yes" else "No"
-    else -> claim.value.display()
-}
-
-/**
- * Credential metadata (administrative fields + JWT registered claims) vs. the personal-data claims. Covers
- * both formats: mdoc admin elements (issuing_authority/country, issuance/expiry dates, document/administrative
- * number, …) and SD-JWT VC registered claims (iss/iat/exp/vct/cnf/status/…).
- */
-private val METADATA_KEYS = setOf(
-    "issuance_date", "issue_date", "date_of_issuance", "issued_at", "iat",
-    "expiry_date", "expiration_date", "valid_until", "valid_from", "exp", "nbf",
-    "issuing_authority", "issuing_country", "issuing_jurisdiction",
-    "document_number", "administrative_number", "un_distinguishing_sign", "version",
-    "iss", "sub", "jti", "vct", "cnf", "status", "aud",
-)
-private fun isMetadata(path: List<String>): Boolean = path.lastOrNull()?.lowercase() in METADATA_KEYS
 
 private val SENSITIVE = listOf("number", "identifier", "birth", "national", "iban", "administrative", "document", "passport", "ssn", "tax")
 private fun isSensitive(path: List<String>): Boolean {
