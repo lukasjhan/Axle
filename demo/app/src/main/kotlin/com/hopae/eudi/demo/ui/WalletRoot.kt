@@ -2,6 +2,7 @@ package com.hopae.eudi.demo.ui
 
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -59,6 +60,7 @@ import com.hopae.eudi.demo.PortraitCaptureActivity
 import com.hopae.eudi.demo.security.AppLock
 import com.hopae.eudi.demo.ui.screens.ActivityScreen
 import com.hopae.eudi.demo.ui.screens.DebugScreen
+import com.hopae.eudi.demo.ui.screens.DocumentDetailScreen
 import com.hopae.eudi.demo.ui.screens.HomeScreen
 import com.hopae.eudi.demo.ui.screens.SettingsScreen
 import com.hopae.eudi.demo.ui.theme.WalletTheme
@@ -227,26 +229,21 @@ fun WalletRoot(wallet: Wallet) {
             onDecline = { consent = null; scope.launch { p.session.decline(); LogStore.log("Declined presentation") } },
         )
     }
-    detail?.let { c ->
-        CredentialDetailDialog(
-            c = c,
-            onCopy = {
-                scope.launch {
-                    val raw = runCatching { wallet.credentials.export(c.id) }.getOrNull()
-                    if (raw.isNullOrEmpty()) LogStore.log("❌ export: nothing to copy for ${c.id.value}")
-                    else { clipboard.setText(AnnotatedString(raw)); LogStore.log("Copied raw credential ${c.id.value}") }
-                }
-            },
+    detail?.let { cred ->
+        BackHandler { detail = null }
+        DocumentDetailScreen(
+            cred = cred,
+            onBack = { detail = null },
+            onPresentProximity = if (credIsMdl(cred)) ({ detail = null; showProximity = true }) else null,
             onDelete = {
                 detail = null
                 scope.launch {
-                    runCatching { wallet.credentials.delete(c.id) }
-                        .onSuccess { LogStore.log("Deleted credential ${c.id.value}") }
+                    runCatching { wallet.credentials.delete(cred.id) }
+                        .onSuccess { LogStore.log("Deleted credential ${cred.id.value}") }
                         .onFailure { LogStore.log("❌ delete: ${it.message}") }
                     refreshKey++
                 }
             },
-            onDismiss = { detail = null },
         )
     }
     if (showProximity) ProximityHolderDialog(wallet) { showProximity = false }

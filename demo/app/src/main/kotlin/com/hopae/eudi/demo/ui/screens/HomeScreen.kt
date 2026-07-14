@@ -258,12 +258,10 @@ private fun holderName(creds: List<Credential>): String {
 }
 
 private fun validityLine(cred: Credential): String {
-    val until = (cred.lifecycle as? Lifecycle.Issued)?.validity?.validUntil ?: return credFormat(cred)
+    val until = (cred.lifecycle as? Lifecycle.Issued)?.validity?.validUntil ?: return ""
     val d = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withLocale(Locale.getDefault()).withZone(ZoneId.systemDefault())
     return "Valid until ${d.format(until)}"
 }
-
-private fun credFormat(cred: Credential): String = com.hopae.eudi.demo.ui.credFormatLabel(cred)
 
 private fun relTime(epochSeconds: Long): String {
     val now = System.currentTimeMillis() / 1000
