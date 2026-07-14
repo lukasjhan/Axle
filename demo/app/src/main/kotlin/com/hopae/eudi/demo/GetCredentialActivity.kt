@@ -66,11 +66,16 @@ class GetCredentialActivity : FragmentActivity() {
                 return@launch
             }
 
-            val openid4vp = DcApiRequest.extractOpenId4Vp(option.requestJson)
-            if (openid4vp == null) { finishError(resultData, "no openid4vp request"); return@launch }
+            // Match the OpenID4VP request AND capture its protocol identifier — the response envelope must echo it.
+            val vp = DcApiRequest.matchProtocol(
+                option.requestJson,
+                listOf("openid4vp-v1-unsigned", "openid4vp-v1-signed", "openid4vp-v1-multisigned"),
+            )
+            if (vp == null) { finishError(resultData, "no openid4vp request"); return@launch }
+            val (vpProtocol, vpData) = vp
 
             runCatching {
-                val session = wallet.presentation.startDcApi(openid4vp, origin)
+                val session = wallet.presentation.startDcApi(vpData.toString(), origin)
                 val resolved = session.state.first { it is PresentationState.RequestResolved || it is PresentationState.Failed }
                 if (resolved is PresentationState.Failed) throw resolved.error
                 val presentation = (resolved as PresentationState.RequestResolved).request
@@ -89,7 +94,7 @@ class GetCredentialActivity : FragmentActivity() {
                             runCatching {
                                 session.respond(PresentationSelection.auto(presentation))
                                 when (val done = session.state.first { it.isTerminal }) {
-                                    is PresentationState.Completed -> returnDcApiResponse(resultData, done.dcApiResponse)
+                                    is PresentationState.Completed -> returnDcApiResponse(resultData, vpProtocol, done.dcApiResponse)
                                     is PresentationState.Failed -> throw done.error
                                     else -> error("unexpected terminal state $done")
                                 }
@@ -101,9 +106,13 @@ class GetCredentialActivity : FragmentActivity() {
         }
     }
 
-    private fun returnDcApiResponse(resultData: Intent, response: String?) {
+    private fun returnDcApiResponse(resultData: Intent, protocol: String, response: String?) {
         runCatching {
-            DcApiResult.setResponse(resultData, response ?: error("no DC API response produced"))
+            val body = response ?: error("no DC API response produced")
+            // Wrap the SDK's inner response ({vp_token}|{response:<JWE>}) in the `{protocol, data}` envelope the
+            // platform expects, echoing the matched request protocol — recent Chrome rejects a response without a
+            // top-level `protocol` ("No value for protocol"). The mdoc path builds the same envelope.
+            DcApiResult.setResponse(resultData, DcApiResult.openId4VpResponseJson(protocol, body))
             LogStore.log("✅ DC API response returned to caller")
             setResult(RESULT_OK, resultData)
         }.onFailure { finishExceptionData(resultData, it.message) }

@@ -25,4 +25,13 @@ object DcApiResult {
     /** Envelope for an ISO `org-iso-mdoc` DC API response: `{"protocol", "data":{"response"}}`. */
     fun mdocResponseJson(protocol: String, response: String): String =
         JSONObject().put("protocol", protocol).put("data", JSONObject().put("response", response)).toString()
+
+    /**
+     * Envelope for an OpenID4VP DC API response: `{"protocol", "data": <SDK response>}`. The SDK produces only
+     * the inner `data` object (`{vp_token}` for `dc_api`, `{response:<JWE>}` for `dc_api.jwt`); the platform /
+     * Credential Manager requires the outer `protocol` + `data` envelope, echoing the matched request protocol.
+     * Recent Chrome rejects a response without top-level `protocol` (`JSONException: No value for protocol`).
+     */
+    fun openId4VpResponseJson(protocol: String, response: String): String =
+        JSONObject().put("protocol", protocol).put("data", JSONObject(response)).toString()
 }
