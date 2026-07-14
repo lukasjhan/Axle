@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -88,7 +89,7 @@ fun HomeScreen(
     LazyColumn(
         Modifier.fillMaxWidth().background(c.screen),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp, 16.dp, 20.dp, 24.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp), // between sections; within a section rows are tighter
     ) {
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -115,25 +116,34 @@ fun HomeScreen(
 
         if (ordered.size > 1) {
             item {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Documents", style = MaterialTheme.typography.titleSmall, color = c.ink, modifier = Modifier.weight(1f))
-                    if (ordered.size - 1 > previewCount) {
-                        Text("See all", style = MaterialTheme.typography.labelMedium, color = c.brand, modifier = Modifier.clickable { onSeeDocuments() })
-                    }
+                Section("Documents", actionLabel = "See all", onAction = onSeeDocuments) {
+                    ordered.drop(1).take(previewCount).forEach { d -> DocumentRow(d) { onOpenDoc(d) } }
                 }
             }
-            items(ordered.drop(1).take(previewCount)) { d -> DocumentRow(d) { onOpenDoc(d) } }
         }
 
         if (recent.isNotEmpty()) {
             item {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Recent activity", style = MaterialTheme.typography.titleSmall, color = c.ink, modifier = Modifier.weight(1f))
-                    Text("See all", style = MaterialTheme.typography.labelMedium, color = c.brand, modifier = Modifier.clickable { onSeeActivity() })
+                Section("Recent activity", actionLabel = "See all", onAction = onSeeActivity) {
+                    recent.take(3).forEach { e -> ActivityRow(e, onClick = { onOpenActivity(e) }) }
                 }
             }
-            items(recent.take(3)) { e -> ActivityRow(e, onClick = { onOpenActivity(e) }) }
         }
+    }
+}
+
+/** A titled home section: a header row (with an optional action) tightly grouped with its rows. */
+@Composable
+private fun Section(title: String, actionLabel: String?, onAction: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    val c = WalletTheme.colors
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(title, style = MaterialTheme.typography.titleSmall, color = c.ink, modifier = Modifier.weight(1f))
+            if (actionLabel != null) {
+                Text(actionLabel, style = MaterialTheme.typography.labelMedium, color = c.brand, modifier = Modifier.clickable { onAction() })
+            }
+        }
+        content()
     }
 }
 
