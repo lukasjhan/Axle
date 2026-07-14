@@ -7,6 +7,12 @@ import SdJwt
 import TransactionLog
 import WalletAPI
 
+/// Whether an issued credential's issuer signature (mdoc `issuerAuth` x5c / SD-JWT VC JWS x5c) chains to a
+/// trusted issuer anchor — checked before the credential is stored so the wallet can label it; never blocks.
+public protocol IssuerCredentialTrust: Sendable {
+    func isTrusted(format: String, credential: String) async -> Bool
+}
+
 /// OpenID4VCI issuance. Owns key creation, issuance, persistence, and follow-ups.
 public struct IssuanceService {
     let vci: Openid4VciClient
@@ -19,6 +25,8 @@ public struct IssuanceService {
     let txlog: TransactionLog
     /// Wallet Provider backend for Key Attestations over the proof keys; nil when none is configured.
     let walletAttestation: (any WalletAttestationProvider)?
+    /// Verifies the issued credential's issuer signature against issuer anchors; nil when none configured.
+    let credentialTrust: (any IssuerCredentialTrust)?
 
     private struct BuiltKeys { let keys: IssuanceKeys; let proofKeys: [KeyInfo]; let dpopKey: KeyInfo }
 
@@ -199,13 +207,17 @@ public struct IssuanceService {
         guard !response.credentials.isEmpty else { throw IssuanceError.credentialRequestFailed("issuer returned no credentials") }
         for credential in response.credentials { try rejectIssuerBoundKb(credential) }
         let (format, _) = try decode(response.credentials[0])
+        // Check the issuer signature chains to a trusted anchor BEFORE storing (best-effort; a batch shares one issuer).
+        let first = response.credentials[0]
+        let issuerTrusted = await credentialTrust?.isTrusted(format: first.format, credential: first.credential)
         var instances: [CredentialInstance] = []
         for (i, credential) in response.credentials.enumerated() {
             instances.append(CredentialInstance(key: proofKeys[i], payload: try decode(credential).1))
         }
         let id = existingId ?? newId()
         try await store.save(CredentialEnvelope(id: id, format: format, createdAt: clock.now(),
-                                                lifecycle: .issued(policy: policy, instances: instances), metadata: await captureMetadata(response)))
+                                                lifecycle: .issued(policy: policy, instances: instances),
+                                                metadata: await captureMetadata(response, issuerTrusted: issuerTrusted)))
         // ARF/GDPR audit trail: record the issuance (covers immediate, deferred-completed, and reissued).
         _ = await txlog.recordIssuance(issuer: response.credentialIssuer ?? "", documents: [loggedDocument(format)], status: .success)
         try await storage.put(collection: "followup", key: id.value, value: contextOf(response, proofKeys, dpopKey, policy, response.configurationId ?? "").encode())
@@ -232,13 +244,14 @@ public struct IssuanceService {
         return try FollowUpContext.decode(bytes)
     }
 
-    private func captureMetadata(_ response: CredentialResponse) async -> CredentialMetadata? {
+    private func captureMetadata(_ response: CredentialResponse, issuerTrusted: Bool? = nil) async -> CredentialMetadata? {
         guard let issuer = response.credentialIssuer, let configId = response.configurationId else { return nil }
         do {
             let metadata = try await vci.loadIssuerMetadata(issuer)
             let config = metadata.credentialConfigurationsSupported[configId]
             return CredentialMetadata(issuerUrl: issuer, issuerDisplayName: metadata.issuerDisplayName, configurationId: configId,
-                                      displayName: config?.displayName, logoUri: config?.logoUri, backgroundColor: config?.backgroundColor)
+                                      displayName: config?.displayName, logoUri: config?.logoUri, backgroundColor: config?.backgroundColor,
+                                      issuerTrusted: issuerTrusted, issuerRegistered: metadata.signedMetadataVerified)
         } catch { return nil }
     }
 

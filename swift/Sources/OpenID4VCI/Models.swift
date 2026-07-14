@@ -158,8 +158,11 @@ public struct CredentialIssuerMetadata {
     public let issuerDisplayName: String?
     public let credentialResponseEncryption: ResponseEncryptionMetadata?
     public let credentialRequestEncryption: RequestEncryptionMetadata?
+    /// Whether this metadata arrived as signed `signed_metadata` (§12.2.3) AND its signer chained to a trusted
+    /// issuer anchor — i.e. a *registered* issuer. False for unsigned/unverifiable metadata.
+    public var signedMetadataVerified: Bool = false
 
-    public static func fromObj(_ o: JsonValue) throws -> CredentialIssuerMetadata {
+    public static func fromObj(_ o: JsonValue, signedMetadataVerified: Bool = false) throws -> CredentialIssuerMetadata {
         let issuer = try o.requireString("credential_issuer", "issuer metadata")
         var configs: [String: CredentialConfiguration] = [:]
         if case let .obj(entries)? = o["credential_configurations_supported"] {
@@ -182,7 +185,8 @@ public struct CredentialIssuerMetadata {
             credentialConfigurationsSupported: configs,
             issuerDisplayName: issuerDisplayName,
             credentialResponseEncryption: o["credential_response_encryption"].map { ResponseEncryptionMetadata.fromObj($0) },
-            credentialRequestEncryption: o["credential_request_encryption"].map { RequestEncryptionMetadata.fromObj($0) }
+            credentialRequestEncryption: o["credential_request_encryption"].map { RequestEncryptionMetadata.fromObj($0) },
+            signedMetadataVerified: signedMetadataVerified
         )
     }
 }

@@ -35,15 +35,22 @@ public struct CredentialMetadata: Sendable {
     public let displayName: String?
     public let logoUri: String?
     public let backgroundColor: String?
+    /// The credential's issuer signature (DSC) chained to a trusted issuer anchor: true/false/nil(unchecked).
+    public let issuerTrusted: Bool?
+    /// The issuer's `.well-known` signed metadata chained to a trusted issuer anchor (a registered issuer).
+    public let issuerRegistered: Bool?
 
     public init(issuerUrl: String, issuerDisplayName: String?, configurationId: String,
-                displayName: String?, logoUri: String?, backgroundColor: String?) {
+                displayName: String?, logoUri: String?, backgroundColor: String?,
+                issuerTrusted: Bool? = nil, issuerRegistered: Bool? = nil) {
         self.issuerUrl = issuerUrl
         self.issuerDisplayName = issuerDisplayName
         self.configurationId = configurationId
         self.displayName = displayName
         self.logoUri = logoUri
         self.backgroundColor = backgroundColor
+        self.issuerTrusted = issuerTrusted
+        self.issuerRegistered = issuerRegistered
     }
 }
 

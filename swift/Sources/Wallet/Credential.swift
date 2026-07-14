@@ -14,7 +14,17 @@ public struct Credential {
 }
 
 /// Where the credential came from (captured from issuer metadata at issuance).
-public struct IssuerInfo { public let url: String; public let displayName: String? }
+public struct IssuerInfo {
+    public let url: String
+    public let displayName: String?
+    /// The credential's issuer signature (DSC) chained to a trusted issuer anchor: true/false/nil(unchecked).
+    public let trusted: Bool?
+    /// The issuer's `.well-known` signed metadata chained to a trusted issuer anchor (a registered issuer).
+    public let registered: Bool?
+    public init(url: String, displayName: String?, trusted: Bool? = nil, registered: Bool? = nil) {
+        self.url = url; self.displayName = displayName; self.trusted = trusted; self.registered = registered
+    }
+}
 
 /// Display metadata for a credential type (issuer-metadata derived).
 public struct CredentialDisplay {

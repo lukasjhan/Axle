@@ -151,13 +151,15 @@ public struct Openid4VciClient {
             HttpRequest(method: .get, url: url, headers: [("Accept", metadataPolicy.acceptHeader)])
         )
         try checkStatus(response, url)
-        return try CredentialIssuerMetadata.fromObj(try await metadataBody(response, url, credentialIssuer))
+        let (claims, verified) = try await metadataBody(response, url, credentialIssuer)
+        return try CredentialIssuerMetadata.fromObj(claims, signedMetadataVerified: verified)
     }
 
     /// Picks the unsigned/signed branch by response media type (OpenID4VCI §12.2.2): `application/json`
     /// carries the metadata as-is, `application/jwt` carries it as the payload of a signed JWT. Issuers
     /// MUST label the body; when the header is absent we fall back to sniffing a JSON object.
-    private func metadataBody(_ response: HttpResponse, _ url: String, _ credentialIssuer: String) async throws -> JsonValue {
+    /// Returns the metadata claims plus whether signed metadata was cryptographically verified to a trusted signer.
+    private func metadataBody(_ response: HttpResponse, _ url: String, _ credentialIssuer: String) async throws -> (JsonValue, Bool) {
         let mediaType = header(response, "Content-Type")?
             .split(separator: ";").first
             .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
@@ -173,47 +175,47 @@ public struct Openid4VciClient {
             if metadataPolicy.requiresSigned {
                 throw VciError.metadata("policy requires signed metadata but the issuer returned unsigned metadata")
             }
-            return try parseObj(response, url)
+            return (try parseObj(response, url), false)
         }
         return try await verifySignedMetadata(text, credentialIssuer)
     }
 
-    /// Enforces the §12.2.3 shape — `typ`, an asymmetric `alg`, `sub` matching the Credential Issuer
-    /// Identifier, a present `iat` and an unexpired `exp`. `SignedMetadataVerifier` proves the signature
-    /// and the signer's trust; the verified payload *is* the metadata (all parameters are top-level claims).
-    private func verifySignedMetadata(_ jws: String, _ credentialIssuer: String) async throws -> JsonValue {
+    /// The signed metadata's claims (its JWS payload) plus whether trust was established: true when the §12.2.3
+    /// shape holds AND the signer chains to a trusted anchor. Under `PreferSigned` a verification failure is not
+    /// fatal — the metadata is still used, just marked unverified; `RequireSigned` fails instead.
+    private func verifySignedMetadata(_ jws: String, _ credentialIssuer: String) async throws -> (JsonValue, Bool) {
         guard let verifier = metadataPolicy.verifier else {
             throw VciError.metadata("issuer returned signed metadata but no SignedMetadataVerifier is configured")
         }
         guard let parsed = try? Jws.parse(jws) else {
             throw VciError.metadata("signed metadata is not a compact JWS")
         }
-        guard case let .str(typ)? = parsed.header["typ"], typ == signedMetadataTyp else {
-            throw VciError.metadata("signed metadata typ must be '\(signedMetadataTyp)'")
+        // The metadata IS the JWS payload — usable whether or not trust is established.
+        guard let payload = try? JsonValue.parse(String(bytes: parsed.payloadBytes, encoding: .utf8) ?? ""),
+              case .obj = payload else {
+            throw VciError.metadata("signed metadata payload is not a JSON object")
         }
-        guard case let .str(alg)? = parsed.header["alg"] else {
-            throw VciError.metadata("signed metadata has no alg")
+        do {
+            guard case let .str(typ)? = parsed.header["typ"], typ == signedMetadataTyp else {
+                throw VciError.metadata("signed metadata typ must be '\(signedMetadataTyp)'")
+            }
+            guard case let .str(alg)? = parsed.header["alg"] else { throw VciError.metadata("signed metadata has no alg") }
+            if alg.lowercased() == "none" || alg.hasPrefix("HS") {
+                throw VciError.metadata("signed metadata alg must be asymmetric, got '\(alg)'")
+            }
+            let claims = try await verifier.verify(signedMetadataJws: jws) // proves signature + chains to a trusted anchor
+            guard case let .str(sub)? = claims["sub"] else { throw VciError.metadata("signed metadata has no sub") }
+            func trimSlash(_ s: String) -> String { s.hasSuffix("/") ? String(s.dropLast()) : s }
+            guard trimSlash(sub) == trimSlash(credentialIssuer) else {
+                throw VciError.metadata("signed metadata sub '\(sub)' != issuer '\(credentialIssuer)'")
+            }
+            guard case .numInt? = claims["iat"] else { throw VciError.metadata("signed metadata has no iat") }
+            if case let .numInt(exp)? = claims["exp"], exp <= clock() { throw VciError.metadata("signed metadata expired") }
+            return (payload, true)
+        } catch {
+            if metadataPolicy.requiresSigned { throw error } // strict: a bad signature fails
+            return (payload, false) // PreferSigned: use the unverified metadata, mark not-registered
         }
-        if alg.lowercased() == "none" || alg.hasPrefix("HS") {
-            throw VciError.metadata("signed metadata alg must be an asymmetric signature, got '\(alg)'")
-        }
-
-        let claims = try await verifier.verify(signedMetadataJws: jws)
-
-        guard case let .str(sub)? = claims["sub"] else {
-            throw VciError.metadata("signed metadata has no sub")
-        }
-        func trimSlash(_ s: String) -> String { s.hasSuffix("/") ? String(s.dropLast()) : s }
-        guard trimSlash(sub) == trimSlash(credentialIssuer) else {
-            throw VciError.metadata("signed metadata sub '\(sub)' does not match the Credential Issuer Identifier '\(credentialIssuer)'")
-        }
-        guard case .numInt? = claims["iat"] else {
-            throw VciError.metadata("signed metadata has no iat")
-        }
-        if case let .numInt(exp)? = claims["exp"], exp <= clock() {
-            throw VciError.metadata("signed metadata expired at \(exp)")
-        }
-        return claims
     }
 
     public func loadAuthorizationServerMetadata(_ issuer: String) async throws -> AuthorizationServerMetadata {

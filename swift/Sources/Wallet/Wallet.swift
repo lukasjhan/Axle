@@ -45,11 +45,26 @@ public struct Wallet {
             AttestationClientAuth(clientId: config.issuance.clientId, provider: $0, secureArea: ports.defaultSecureArea,
                                   storage: ports.storage, rng: ports.rng, clock: clockSeconds)
         }
+        // Issuer registration (Trust 2A): prefer signed Credential Issuer Metadata (OID4VCI §12.2.3) and verify the
+        // signer's access cert chains to a trusted issuer anchor — so the wallet can tell a *registered* issuer from
+        // an unverified one. Lenient: unsigned/unverifiable metadata is still used (marked not-registered), never fails.
+        let metadataPolicy: IssuerMetadataPolicy = config.trust.issuerAnchorsDer.isEmpty
+            ? .ignoreSigned
+            : .preferSigned(X5cSignedMetadataVerifier(validator: validator))
         let vci = Openid4VciClient(http: ports.http, rng: ports.rng, clock: clockSeconds,
-                                   clientId: config.issuance.clientId, clientAuth: clientAuth)
+                                   clientId: config.issuance.clientId, clientAuth: clientAuth,
+                                   metadataPolicy: metadataPolicy)
+        // Credential authenticity (Trust 2B): verify an issued credential's issuer signature (mdoc issuerAuth x5c /
+        // SD-JWT VC JWS x5c) chains to a trusted issuer anchor — checked before storing so the wallet can label the
+        // credential trusted or not (never blocks issuance).
+        let credentialTrust: (any IssuerCredentialTrust)? = config.trust.issuerAnchorsDer.isEmpty ? nil :
+            X5cIssuerCredentialTrust(
+                mdoc: MdocVerifier(trust: X5cMdocIssuerTrust(validator: validator), now: { ports.clock.now() }),
+                sdJwt: SdJwtVcVerifier(issuerKeyResolver: X5cIssuerKeyResolver(validator: validator),
+                                       timeValidator: JwtTimeValidator(now: { ports.clock.now() })))
         let issuance = IssuanceService(vci: vci, store: store, storage: ports.storage, secureArea: ports.defaultSecureArea,
                                        rng: ports.rng, clock: ports.clock, redirectUri: config.issuance.redirectUri, txlog: txlog,
-                                       walletAttestation: ports.walletAttestation)
+                                       walletAttestation: ports.walletAttestation, credentialTrust: credentialTrust)
 
         // Reader trust: one validator over the configured reader anchors, shared by remote (signed OpenID4VP
         // request objects) and proximity (mdoc reader authentication). No anchors → readers stay untrusted.
@@ -90,6 +105,29 @@ public struct Wallet {
         return Wallet(credentials: CredentialsService(store: store, statusClient: statusClient),
                       issuance: issuance, presentation: presentation, proximity: proximity, reader: reader,
                       transactions: txlog, ports: ports)
+    }
+}
+
+/// Verifies an issued credential's issuer signature chains to a trusted issuer anchor. `verify()` throws on any
+/// failure (untrusted chain, bad signature, malformed) — a thrown error simply means "not trusted", never fatal.
+///
+/// `@unchecked Sendable`: an immutable value wrapping two verifiers, each a chain validator (Sendable) plus a
+/// pure time closure; safe to share. The `@unchecked` is only needed because those closures are not `@Sendable`
+/// (same rationale as `WRPRCVerifier`).
+struct X5cIssuerCredentialTrust: IssuerCredentialTrust, @unchecked Sendable {
+    let mdoc: MdocVerifier
+    let sdJwt: SdJwtVcVerifier
+    func isTrusted(format: String, credential: String) async -> Bool {
+        do {
+            if format == "mso_mdoc" {
+                _ = try await mdoc.verify(IssuerSigned.decode(Base64Url.decode(credential)))
+            } else {
+                _ = try await sdJwt.verify(SdJwt.parse(credential))
+            }
+            return true
+        } catch {
+            return false
+        }
     }
 }
 

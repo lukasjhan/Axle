@@ -46,7 +46,7 @@ extension CredentialEnvelope {
         }
         return Credential(
             id: id, format: format, lifecycle: lc,
-            issuer: metadata.map { IssuerInfo(url: $0.issuerUrl, displayName: $0.issuerDisplayName) },
+            issuer: metadata.map { IssuerInfo(url: $0.issuerUrl, displayName: $0.issuerDisplayName, trusted: $0.issuerTrusted, registered: $0.issuerRegistered) },
             display: metadata.map { CredentialDisplay(name: $0.displayName, logoUri: $0.logoUri, backgroundColor: $0.backgroundColor) },
             configurationId: metadata?.configurationId, createdAt: createdAt)
     }

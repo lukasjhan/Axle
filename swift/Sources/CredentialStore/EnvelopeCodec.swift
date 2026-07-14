@@ -92,6 +92,8 @@ public enum EnvelopeCodec {
             if let x = m.displayName { mm.append((.int(3), .text(x))) }
             if let x = m.logoUri { mm.append((.int(4), .text(x))) }
             if let x = m.backgroundColor { mm.append((.int(5), .text(x))) }
+            if let x = m.issuerTrusted { mm.append((.int(6), .bool(x))) }
+            if let x = m.issuerRegistered { mm.append((.int(7), .bool(x))) }
             entries.append((.int(kMetadata), .map(mm)))
         }
         return .map(entries)
@@ -158,13 +160,16 @@ public enum EnvelopeCodec {
         if let mCbor = get(root, kMetadata) {
             let m = try asMap(mCbor, "metadata")
             func txt(_ key: Int64) -> String? { if case let .text(s)? = get(m, key) { return s }; return nil }
+            func bl(_ key: Int64) -> Bool? { if case let .bool(b)? = get(m, key) { return b }; return nil }
             metadata = CredentialMetadata(
                 issuerUrl: try text(m, 0),
                 issuerDisplayName: txt(1),
                 configurationId: try text(m, 2),
                 displayName: txt(3),
                 logoUri: txt(4),
-                backgroundColor: txt(5)
+                backgroundColor: txt(5),
+                issuerTrusted: bl(6),
+                issuerRegistered: bl(7)
             )
         }
 
