@@ -20,6 +20,17 @@ function serviceAccountCredentials(): Record<string, unknown> | undefined {
  * secret, or Application Default Credentials as a fallback).
  * Reference: https://developer.android.com/google/play/integrity/standard#decrypt-verify
  */
+/**
+ * Nonce equality tolerant of base64 vs base64url and padding: Play Integrity returns the nonce it received
+ * re-encoded as standard, padded base64, so a raw string compare against our base64url challenge always fails.
+ */
+function nonceMatches(tokenNonce: string | undefined, challenge: string): boolean {
+  if (!tokenNonce) return false;
+  const bytes = (s: string): Buffer => Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+  const a = bytes(tokenNonce);
+  return a.length > 0 && a.equals(bytes(challenge));
+}
+
 export async function verifyPlayIntegrity(
   packageName: string,
   token: string,
@@ -43,7 +54,9 @@ export async function verifyPlayIntegrity(
     if (!res.ok) return { trusted: false, platform: 'android', reason: `Play Integrity decode failed: ${res.status}` };
 
     const verdict = ((await res.json()) as any)?.tokenPayloadExternal;
-    if (verdict?.requestDetails?.nonce !== challenge) {
+    // Play Integrity echoes the nonce re-encoded as standard, padded base64 (`…==`); the challenge we issued is
+    // base64url without padding. Same bytes, different string — so compare the decoded bytes, not the strings.
+    if (!nonceMatches(verdict?.requestDetails?.nonce, challenge)) {
       return { trusted: false, platform: 'android', reason: 'Play Integrity nonce mismatch' };
     }
     const appVerdict = verdict?.appIntegrity?.appRecognitionVerdict;
