@@ -47,7 +47,13 @@ class EnvironmentVariables {
   @IsString()
   ADMIN_API_KEY?: string;
 
-  /** Set to `true` to accept the `dev-integrity:<nonce>` bypass. OFF by default; never set in production. */
+  /**
+   * Dev/sandbox integrity leniency (a single dev-vs-prod switch). When `true`:
+   *  - the `dev-integrity:<nonce>` placeholder token is accepted (no real Play Integrity / App Attest), and
+   *  - a real Play Integrity verdict that would otherwise be rejected (e.g. a sideloaded `UNRECOGNIZED_VERSION`
+   *    build, or device not `MEETS_DEVICE_INTEGRITY`) is logged and allowed through instead of returning 401.
+   * OFF by default; never set in production.
+   */
   @IsOptional()
   @IsString()
   DEV_INTEGRITY_BYPASS?: string;

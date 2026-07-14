@@ -46,10 +46,18 @@ export async function verifyPlayIntegrity(
     if (verdict?.requestDetails?.nonce !== challenge) {
       return { trusted: false, platform: 'android', reason: 'Play Integrity nonce mismatch' };
     }
-    const appRecognized = verdict?.appIntegrity?.appRecognitionVerdict === 'PLAY_RECOGNIZED';
+    const appVerdict = verdict?.appIntegrity?.appRecognitionVerdict;
+    const appRecognized = appVerdict === 'PLAY_RECOGNIZED';
     const deviceOk: boolean = (verdict?.deviceIntegrity?.deviceRecognitionVerdict ?? []).includes('MEETS_DEVICE_INTEGRITY');
     if (!appRecognized || !deviceOk) {
-      return { trusted: false, platform: 'android', reason: 'Play Integrity verdict failed (app/device)' };
+      const detail = `app=${appVerdict ?? 'none'}, device ok=${deviceOk}`;
+      // Dev/sandbox: the token decoded and its nonce matched (so it's a genuine Play Integrity response), but
+      // the trust verdict is weak — typically a sideloaded UNRECOGNIZED_VERSION build. Log and allow through.
+      if (process.env.DEV_INTEGRITY_BYPASS === 'true') {
+        logger.warn(`DEV_INTEGRITY_BYPASS: accepting weak Play Integrity verdict (${detail})`);
+        return { trusted: true, platform: 'android' };
+      }
+      return { trusted: false, platform: 'android', reason: `Play Integrity verdict failed (${detail})` };
     }
     return { trusted: true, platform: 'android' };
   } catch (e) {
