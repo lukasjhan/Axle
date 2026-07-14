@@ -83,6 +83,9 @@ fun credFormatLabel(c: Credential): String = when (c.format) {
 /** True for a Mobile Driving Licence — the one credential kind that also presents over proximity. */
 fun credIsMdl(c: Credential): Boolean = kindOf(c) == DocKind.MDL
 
+/** True for a Personal ID (PID) — the wallet's primary identity credential, featured as the home hero. */
+fun credIsPid(c: Credential): Boolean = kindOf(c) == DocKind.PID
+
 private fun prettifyType(raw: String): String {
     val tail = raw.substringAfterLast('/').substringAfterLast(':').substringAfterLast('.')
     return tail.replace('_', ' ').replaceFirstChar { it.uppercase() }.ifBlank { "Credential" }

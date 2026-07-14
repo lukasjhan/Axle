@@ -30,6 +30,7 @@ object BiometricAuth {
         subtitle: String,
         onSuccess: () -> Unit,
         onError: (String) -> Unit = {},
+        negativeText: String = "Use PIN",
     ) {
         val executor = ContextCompat.getMainExecutor(activity)
         val prompt = BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
@@ -40,7 +41,7 @@ object BiometricAuth {
         val info = BiometricPrompt.PromptInfo.Builder()
             .setTitle(title)
             .setSubtitle(subtitle)
-            .setNegativeButtonText("Use PIN")
+            .setNegativeButtonText(negativeText)
             .setAllowedAuthenticators(STRONG)
             .build()
         prompt.authenticate(info)

@@ -65,13 +65,13 @@ import com.hopae.eudi.demo.ui.screens.DocumentDetailScreen
 import com.hopae.eudi.demo.ui.screens.DocumentsScreen
 import com.hopae.eudi.demo.ui.screens.HomeScreen
 import com.hopae.eudi.demo.ui.screens.IssueScreen
+import com.hopae.eudi.demo.ui.screens.PresentScreen
 import com.hopae.eudi.demo.ui.screens.SettingsScreen
 import com.hopae.eudi.demo.ui.screens.TransactionDetailScreen
 import com.hopae.eudi.demo.ui.theme.WalletTheme
 import com.hopae.eudi.wallet.Credential
 import com.hopae.eudi.wallet.CredentialOffer
 import com.hopae.eudi.wallet.IssuanceSession
-import com.hopae.eudi.wallet.PresentationSelection
 import com.hopae.eudi.wallet.PresentationState
 import com.hopae.eudi.wallet.Wallet
 import com.hopae.eudi.wallet.txlog.TransactionLogEntry
@@ -215,27 +215,12 @@ fun WalletRoot(wallet: Wallet) {
         )
     }
     consent?.let { p ->
-        ConsentDialog(
+        PresentScreen(
             request = p.request,
-            onApprove = {
-                consent = null
-                scope.launch {
-                    busy = "Presenting…"
-                    try {
-                        p.session.respond(PresentationSelection.auto(p.request))
-                        val t = p.session.state.first { it.isTerminal }
-                        LogStore.log(
-                            when (t) {
-                                is PresentationState.Completed -> "✅ Presented" + (t.redirectUri?.let { " → $it" } ?: "")
-                                is PresentationState.Failed -> "❌ ${t.error.message}"
-                                else -> t::class.simpleName ?: ""
-                            },
-                        )
-                        refreshKey++
-                    } finally { busy = null }
-                }
-            },
-            onDecline = { consent = null; scope.launch { p.session.decline(); LogStore.log("Declined presentation") } },
+            session = p.session,
+            wallet = wallet,
+            onDone = { consent = null; refreshKey++ },
+            onCancel = { consent = null; refreshKey++ },
         )
     }
     detail?.let { cred ->

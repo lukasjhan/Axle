@@ -8,27 +8,72 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.Build
 import android.util.Base64
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.StartOffset
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Nfc
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.hopae.eudi.demo.security.BiometricAuth
+import com.hopae.eudi.demo.security.WalletSecurity
+import com.hopae.eudi.demo.ui.components.InfoRow
+import com.hopae.eudi.demo.ui.components.PrimaryButton
+import com.hopae.eudi.demo.ui.components.SecondaryButton
+import com.hopae.eudi.demo.ui.components.SectionLabel
+import com.hopae.eudi.demo.ui.components.TrustBadge
+import com.hopae.eudi.demo.ui.components.TrustRow
+import com.hopae.eudi.demo.ui.components.WalletCard
+import com.hopae.eudi.demo.ui.components.absorbTouches
+import com.hopae.eudi.demo.ui.screens.Centered
+import com.hopae.eudi.demo.ui.screens.GroupHeader
+import com.hopae.eudi.demo.ui.screens.PresentDeclined
+import com.hopae.eudi.demo.ui.screens.PresentDone
+import com.hopae.eudi.demo.ui.screens.PresentFailed
+import com.hopae.eudi.demo.ui.screens.PresentProgress
+import com.hopae.eudi.demo.ui.screens.claimPathLabel
+import com.hopae.eudi.demo.ui.theme.WalletTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,11 +81,18 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
+import com.hopae.eudi.wallet.ClaimCategory
+import com.hopae.eudi.wallet.Credential
+import com.hopae.eudi.wallet.Lifecycle
+import com.hopae.eudi.wallet.RequestedDocumentView
 import com.google.zxing.BarcodeFormat
 import com.hopae.eudi.demo.LogStore
 import com.hopae.eudi.demo.PortraitCaptureActivity
@@ -89,6 +141,9 @@ private fun readerRequest() = listOf(
     ),
 )
 
+/** Holder present flow phases: waiting for a reader → reviewing its request → sending → terminal. */
+private enum class ProxPhase { Engaging, Consent, Sending, Done, Declined, Failed }
+
 // ---------- Holder: present an mdoc over BLE (this device is the wallet) ----------
 
 @Composable
@@ -96,9 +151,21 @@ fun ProximityHolderDialog(wallet: Wallet, onClose: () -> Unit) {
     val context = LocalContext.current
     var status by remember { mutableStateOf("Preparing…") }
     var qr by remember { mutableStateOf<Bitmap?>(null) }
-    var mode by remember { mutableStateOf(0) } // 0 = QR peripheral, 1 = QR central, 2 = NFC static, 3 = NFC negotiated
+    // Top-level engagement kind (QR vs NFC), remembered across sessions; the peripheral/central and
+    // static/negotiated variants come from Settings. `mode` (0..3) is derived from the two.
+    var kind by remember { mutableStateOf(ProximityPrefs.kind(context)) }
+    val bleCentral = remember { ProximityPrefs.bleCentral(context) }
+    val nfcNegotiatedPref = remember { ProximityPrefs.nfcNegotiated(context) }
+    val mode = when (kind) {
+        ProximityPrefs.NFC -> if (nfcNegotiatedPref) 3 else 2
+        else -> if (bleCentral) 1 else 0
+    }
     var session by remember { mutableStateOf<ProximitySession?>(null) }
     var pending by remember { mutableStateOf<ProximityRequest?>(null) } // reader's request, awaiting the user's consent
+    var phase by remember { mutableStateOf(ProxPhase.Engaging) }
+    var errMsg by remember { mutableStateOf<String?>(null) }
+    var credsById by remember { mutableStateOf<Map<String, Credential>>(emptyMap()) }
+    LaunchedEffect(Unit) { credsById = runCatching { wallet.credentials.list().associateBy { it.id.value } }.getOrDefault(emptyMap()) }
     var granted by remember { mutableStateOf(BLE_PERMISSIONS.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }) }
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { r -> granted = r.values.all { it } }
     val btAdapter = remember { context.getSystemService(BluetoothManager::class.java)?.adapter }
@@ -123,6 +190,8 @@ fun ProximityHolderDialog(wallet: Wallet, onClose: () -> Unit) {
         }
         qr = null
         pending = null
+        errMsg = null
+        phase = ProxPhase.Engaging
         val central = mode == 1
         val nfc = mode == 2 || mode == 3
         val negotiated = mode == 3
@@ -167,16 +236,18 @@ fun ProximityHolderDialog(wallet: Wallet, onClose: () -> Unit) {
                             !negotiated -> { NfcEngagementService.processor = NfcEngagementProcessor(staticHandoverSelect = ndef); qr = null; status = "Tap your phone to the reader" }
                             else -> { qr = null; status = "Negotiating over NFC…" } // negotiated: the processor is already armed
                         }
+                        phase = ProxPhase.Engaging
                     }
                     is ProximityState.RequestReceived -> {
                         pending = st.request // ask the user before sending (like OpenID4VP consent)
+                        phase = ProxPhase.Consent
                         status = "Reader connected — review the request"
                         LogStore.log("Proximity: reader requested ${st.request.documents.size} doc(s); awaiting consent")
                     }
-                    ProximityState.Submitting -> { pending = null; status = "Sending response…" }
-                    ProximityState.Completed -> { pending = null; status = "✅ Presented to the reader" }
-                    ProximityState.Declined -> { pending = null; status = "Declined" }
-                    is ProximityState.Failed -> { pending = null; status = "❌ ${st.error.message}" }
+                    ProximityState.Submitting -> { pending = null; phase = ProxPhase.Sending; status = "Sending response…" }
+                    ProximityState.Completed -> { pending = null; phase = ProxPhase.Done; status = "✅ Presented to the reader"; LogStore.log("✅ Proximity presented") }
+                    ProximityState.Declined -> { pending = null; phase = ProxPhase.Declined; status = "Declined" }
+                    is ProximityState.Failed -> { pending = null; errMsg = st.error.message; phase = ProxPhase.Failed; status = "❌ ${st.error.message}" }
                     else -> {}
                 }
             }
@@ -210,59 +281,184 @@ fun ProximityHolderDialog(wallet: Wallet, onClose: () -> Unit) {
         onDispose { cleanup() }
     }
 
-    Dialog(onDismissRequest = onClose) {
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text("Present mdoc (BLE / NFC)", style = MaterialTheme.typography.titleLarge)
-                val req = pending
-                if (req != null) {
-                    ProximityConsent(
-                        req,
-                        onShare = { session?.respond(ProximitySelection.auto(req)); pending = null; status = "Sending response…" },
-                        onDecline = { session?.decline(); pending = null; status = "Declined" },
-                    )
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilterChip(selected = mode == 0, onClick = { mode = 0 }, label = { Text("QR·Periph") })
-                            FilterChip(selected = mode == 1, onClick = { mode = 1 }, label = { Text("QR·Central") })
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilterChip(selected = mode == 2, onClick = { mode = 2 }, label = { Text("NFC") })
-                            FilterChip(selected = mode == 3, onClick = { mode = 3 }, label = { Text("NFC·Nego") })
-                        }
-                    }
-                    qr?.let { Image(it.asImageBitmap(), contentDescription = "engagement QR", modifier = Modifier.size(260.dp)) }
-                    Text(status, style = MaterialTheme.typography.bodyLarge)
-                    Button(onClick = onClose) { Text("Close") }
-                }
+    val c = WalletTheme.colors
+    val activity = context as? FragmentActivity
+    fun decline() { session?.decline(); phase = ProxPhase.Declined }
+    fun share(req: ProximityRequest) {
+        val s = session ?: return
+        val go = { s.respond(ProximitySelection.auto(req)); phase = ProxPhase.Sending }
+        val useBio = activity != null && WalletSecurity.biometricEnabled(context) && BiometricAuth.canUse(activity)
+        if (useBio) BiometricAuth.prompt(activity, "Confirm sharing", "Verify to share with the reader", onSuccess = { go() }, negativeText = "Cancel")
+        else go()
+    }
+    fun back() { if (phase == ProxPhase.Consent) decline() else onClose() }
+    BackHandler { back() }
+
+    val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    Column(
+        Modifier.fillMaxSize().background(c.screen).absorbTouches()
+            .padding(start = 20.dp, end = 20.dp, top = topInset + 12.dp, bottom = bottomInset + 20.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(36.dp).clip(RoundedCornerShape(99.dp)).background(c.card).clickable { back() },
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = c.ink, modifier = Modifier.size(18.dp)) }
+            Spacer(Modifier.width(10.dp))
+            Text("Present in person", style = MaterialTheme.typography.titleMedium, color = c.ink)
+        }
+        Spacer(Modifier.height(16.dp))
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            val req = pending
+            val onKind: (Int) -> Unit = { k -> kind = k; ProximityPrefs.setKind(context, k) }
+            when (phase) {
+                ProxPhase.Consent ->
+                    if (req != null) ProximityReview(req, credsById, onShare = { share(req) }, onDecline = { decline() })
+                    else ProximityEngagement(kind, onKind, qr, status)
+                ProxPhase.Sending -> Centered { PresentProgress("Sharing…", "Sending your data to the reader.") }
+                ProxPhase.Done -> Centered { PresentDone("Shared", "The reader received your data.", onDone = onClose) }
+                ProxPhase.Declined -> Centered { PresentDeclined("Nothing was shared with the reader.", onClose) }
+                ProxPhase.Failed -> Centered { PresentFailed("Couldn't share", errMsg ?: "The presentation failed.", onClose = onClose) }
+                ProxPhase.Engaging -> ProximityEngagement(kind, onKind, qr, status)
             }
         }
     }
 }
 
-/** Consent for an in-person reader's proximity request — what it asked for + a Share/Decline choice. */
+/** Waiting-for-a-reader screen: the engagement QR (or NFC prompt) and a QR / NFC choice. */
 @Composable
-private fun ProximityConsent(req: ProximityRequest, onShare: () -> Unit, onDecline: () -> Unit) {
-    InfoBox("Reader") {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(req.reader.commonName ?: "In-person reader", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-            TrustBadge(req.reader.trusted)
-        }
-    }
-    InfoBox("Will share") {
-        req.documents.forEach { doc ->
-            val missing = doc.candidate == null
-            Text(doc.docType + if (missing) " — no matching credential" else "", style = MaterialTheme.typography.labelMedium)
-            doc.requestedElements.forEach { (ns, elements) ->
-                elements.forEach { Text("• $it", style = MaterialTheme.typography.bodyMedium) }
+private fun ProximityEngagement(kind: Int, onKind: (Int) -> Unit, qr: Bitmap?, status: String) {
+    val c = WalletTheme.colors
+    Column(Modifier.fillMaxSize()) {
+        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                if (qr != null) {
+                    WalletCard(Modifier.size(280.dp)) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Image(qr.asImageBitmap(), "engagement QR", Modifier.size(240.dp))
+                        }
+                    }
+                    Text(status, style = MaterialTheme.typography.bodyMedium, color = c.inkBody)
+                } else {
+                    NfcPulse()
+                    Text(status, style = MaterialTheme.typography.titleSmall, color = c.ink)
+                }
             }
         }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            KindChip(kind == ProximityPrefs.QR, "QR") { onKind(ProximityPrefs.QR) }
+            KindChip(kind == ProximityPrefs.NFC, "NFC") { onKind(ProximityPrefs.NFC) }
+        }
     }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        TextButton(onClick = onDecline, modifier = Modifier.weight(1f)) { Text("Decline") }
-        Button(onClick = onShare, enabled = req.satisfiable, modifier = Modifier.weight(1f)) { Text("Share") }
+}
+
+/** An NFC icon with concentric rings rippling outward — the "tap your phone" cue while waiting over NFC. */
+@Composable
+private fun NfcPulse() {
+    val c = WalletTheme.colors
+    val t = rememberInfiniteTransition(label = "nfc")
+    val r1 by t.animateFloat(0f, 1f, infiniteRepeatable(tween(2000, easing = LinearEasing), RepeatMode.Restart, StartOffset(0)), "r1")
+    val r2 by t.animateFloat(0f, 1f, infiniteRepeatable(tween(2000, easing = LinearEasing), RepeatMode.Restart, StartOffset(666)), "r2")
+    val r3 by t.animateFloat(0f, 1f, infiniteRepeatable(tween(2000, easing = LinearEasing), RepeatMode.Restart, StartOffset(1333)), "r3")
+    Box(Modifier.size(220.dp), contentAlignment = Alignment.Center) {
+        Canvas(Modifier.fillMaxSize()) {
+            val maxR = size.minDimension / 2f
+            val minR = 34.dp.toPx()
+            val stroke = 2.5.dp.toPx()
+            listOf(r1, r2, r3).forEach { p ->
+                drawCircle(color = c.brand, radius = minR + (maxR - minR) * p, alpha = (1f - p) * 0.6f, style = Stroke(width = stroke))
+            }
+        }
+        Box(Modifier.size(68.dp).clip(RoundedCornerShape(99.dp)).background(c.brand), contentAlignment = Alignment.Center) {
+            Icon(Icons.Filled.Nfc, null, tint = Color.White, modifier = Modifier.size(34.dp))
+        }
     }
+}
+
+@Composable
+private fun RowScope.KindChip(selected: Boolean, label: String, onClick: () -> Unit) {
+    val c = WalletTheme.colors
+    val shape = RoundedCornerShape(12.dp)
+    Box(
+        Modifier.weight(1f).clip(shape)
+            .background(if (selected) c.brand else c.card)
+            .border(1.dp, if (selected) c.brand else c.cardBorderStrong, shape)
+            .clickable { onClick() }.padding(vertical = 14.dp),
+        contentAlignment = Alignment.Center,
+    ) { Text(label, style = MaterialTheme.typography.labelLarge, color = if (selected) Color.White else c.ink) }
+}
+
+/** Consent for an in-person reader's request — reader trust + shared/not-shared attributes + Share/Decline. */
+@Composable
+private fun ProximityReview(req: ProximityRequest, credsById: Map<String, Credential>, onShare: () -> Unit, onDecline: () -> Unit) {
+    val c = WalletTheme.colors
+    val reader = req.reader
+    Column(Modifier.fillMaxSize()) {
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            // Reader
+            WalletCard {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(Modifier.size(42.dp).clip(RoundedCornerShape(12.dp)).background(c.ink), contentAlignment = Alignment.Center) {
+                        Text((reader.commonName ?: "R").take(1).uppercase(), color = Color.White, style = MaterialTheme.typography.titleMedium)
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text(reader.commonName ?: "In-person reader", style = MaterialTheme.typography.titleSmall, color = c.ink)
+                        Text("ISO 18013-5 · in person", style = MaterialTheme.typography.bodySmall, color = c.inkMuted)
+                    }
+                    TrustBadge(reader.trusted, trustedText = "Verified", untrustedText = "Unverified")
+                }
+            }
+            // Trust — reader authentication only (no OpenID4VP registration in proximity).
+            SectionLabel("Trust")
+            WalletCard(padding = PaddingValues(0.dp)) {
+                TrustRow("Reader authentication", if (reader.trusted) "Verified" else "Not verified", reader.trusted)
+            }
+            // Shared attributes per requested document.
+            SectionLabel("You'll share")
+            req.documents.forEach { ProximityDocCard(it, credsById) }
+            Text("Only the shown attributes are shared. Your full documents never leave this device.", style = MaterialTheme.typography.bodySmall, color = c.inkMuted)
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            SecondaryButton("Decline", onDecline, Modifier.weight(1f))
+            PrimaryButton("Share", onShare, Modifier.weight(1.5f), enabled = req.satisfiable)
+        }
+    }
+}
+
+@Composable
+private fun ProximityDocCard(doc: RequestedDocumentView, credsById: Map<String, Credential>) {
+    val c = WalletTheme.colors
+    val cred = doc.candidate?.let { credsById[it.value] }
+    val title = cred?.let { credTitle(it) } ?: docTypeLabel(doc.docType)
+    val requested = doc.requestedElements.flatMap { (ns, els) -> els.map { listOf(ns, it) } }
+    val requestedSet = requested.toSet()
+    val notShared = (cred?.lifecycle as? Lifecycle.Issued)?.claims.orEmpty()
+        .filter { it.category == ClaimCategory.Subject && it.path !in requestedSet }.map { it.path }
+
+    WalletCard(padding = PaddingValues(0.dp)) {
+        Row(Modifier.fillMaxWidth().padding(16.dp, 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, color = if (cred != null) c.ink else c.inkFaint)
+                Text(if (cred != null) "Required" else "No matching document", style = MaterialTheme.typography.bodySmall, color = if (cred != null) c.inkMuted else c.danger)
+            }
+        }
+        Box(Modifier.fillMaxWidth().height(1.dp).background(c.divider))
+        GroupHeader("Shared")
+        requested.forEach { InfoRow(claimPathLabel(it), "Shared", c.trust) }
+        if (notShared.isNotEmpty()) {
+            GroupHeader("Not shared")
+            notShared.forEach { InfoRow(claimPathLabel(it), "Private", c.inkFaint) }
+        }
+    }
+}
+
+/** Friendly label for a bare mdoc doctype when no matching credential is held to name it. */
+private fun docTypeLabel(docType: String): String = when {
+    docType.contains("pid", true) -> "Personal ID"
+    docType.contains("mdl", true) || docType.contains("18013.5.1", true) -> "Mobile Driving Licence"
+    else -> docType.substringAfterLast('.').replace('_', ' ').replaceFirstChar { it.uppercase() }
 }
 
 // ---------- Reader: scan a wallet's QR and read its mdoc over BLE (this device is the verifier) ----------

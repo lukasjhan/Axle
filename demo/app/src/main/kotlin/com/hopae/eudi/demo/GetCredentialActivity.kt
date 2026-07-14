@@ -5,11 +5,12 @@ package com.hopae.eudi.demo
 import android.content.Intent
 import android.os.Bundle
 import android.util.Base64
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.credentials.GetDigitalCredentialOption
 import androidx.credentials.provider.PendingIntentHandler
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
+import com.hopae.eudi.demo.ui.theme.WalletTheme
 import com.hopae.eudi.wallet.PresentationSelection
 import com.hopae.eudi.wallet.PresentationState
 import com.hopae.eudi.wallet.android.dcapi.DcApiRequest
@@ -24,7 +25,7 @@ import kotlinx.coroutines.launch
  * `com.hopae.eudi.android:dcapi` library (`DcApiRequest` / `DcApiResult`); this Activity owns the flow: show
  * the app's consent, drive the SDK, return the response.
  */
-class GetCredentialActivity : ComponentActivity() {
+class GetCredentialActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val resultData = Intent()
@@ -75,7 +76,7 @@ class GetCredentialActivity : ComponentActivity() {
                 val presentation = (resolved as PresentationState.RequestResolved).request
                 LogStore.log("DC API verifier=${presentation.verifier.clientId} · satisfiable=${presentation.satisfiable}")
                 val items = presentation.queries.map { q ->
-                    ConsentItem(q.queryId, q.candidates.firstOrNull()?.disclosedPaths?.map { it.joinToString(" › ") } ?: listOf("no matching credential"))
+                    ConsentItem(q.queryId, q.candidates.firstOrNull()?.disclosedPaths?.map { it.last() } ?: listOf("no matching credential"))
                 }
                 showConsent(presentation.verifier.commonName ?: presentation.verifier.clientId, presentation.verifier.trusted, items,
                     onApprove = {
@@ -83,16 +84,11 @@ class GetCredentialActivity : ComponentActivity() {
                             runCatching {
                                 session.respond(PresentationSelection.auto(presentation))
                                 when (val done = session.state.first { it.isTerminal }) {
-                                    is PresentationState.Completed -> {
-                                        DcApiResult.setResponse(resultData, done.dcApiResponse ?: error("no DC API response produced"))
-                                        LogStore.log("✅ DC API response returned to caller")
-                                        setResult(RESULT_OK, resultData)
-                                    }
+                                    is PresentationState.Completed -> returnDcApiResponse(resultData, done.dcApiResponse)
                                     is PresentationState.Failed -> throw done.error
                                     else -> error("unexpected terminal state $done")
                                 }
-                            }.onFailure { finishExceptionData(resultData, it.message) }
-                            finish()
+                            }.onFailure { finishError(resultData, it.message) }
                         }
                     },
                     onDecline = { finishError(resultData, "declined by user") })
@@ -100,8 +96,17 @@ class GetCredentialActivity : ComponentActivity() {
         }
     }
 
+    private fun returnDcApiResponse(resultData: Intent, response: String?) {
+        runCatching {
+            DcApiResult.setResponse(resultData, response ?: error("no DC API response produced"))
+            LogStore.log("✅ DC API response returned to caller")
+            setResult(RESULT_OK, resultData)
+        }.onFailure { finishExceptionData(resultData, it.message) }
+        finish()
+    }
+
     private fun showConsent(verifier: String, trusted: Boolean, items: List<ConsentItem>, onApprove: () -> Unit, onDecline: () -> Unit) {
-        setContent { DcApiConsentScreen(verifier, trusted, items, onApprove, onDecline) }
+        setContent { WalletTheme { DcApiConsentSheet(verifier, trusted, items, onApprove, onDecline) } }
     }
 
     /** The app-owned privileged-caller allowlist (which browsers may present a web origin). */

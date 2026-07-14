@@ -99,8 +99,8 @@ fun TransactionDetailScreen(e: TransactionLogEntry, onBack: () -> Unit) {
                 rp.name?.let { InfoRow("Name", it) }
                 InfoRow("Identifier", rp.id)
                 rp.subject?.takeIf { it.isNotBlank() }?.let { InfoRow("Registered as", it) }
-                TrustRow("Request verified", if (rp.trusted) "Yes" else "No", rp.trusted)
-                rp.attested?.let { InfoRow("Registration", if (it) "Registrar-sealed (WRPRC)" else "Self-declared") }
+                TrustRow("Signed request", if (rp.trusted) "Verified" else "Not verified", rp.trusted)
+                rp.attested?.let { TrustRow("Registration (WRPRC)", if (it) "Verified by registrar" else "Self-declared", it) }
                 rp.statusValid?.let { InfoRow("Registration status", if (it) "Valid" else "Revoked", if (it) null else c.danger) }
                 rp.intermediaryName?.let { InfoRow("Via intermediary", it) }
             }

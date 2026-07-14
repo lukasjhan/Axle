@@ -44,6 +44,7 @@ import com.hopae.eudi.demo.ui.AddFirstDocument
 import com.hopae.eudi.demo.ui.DocumentRow
 import com.hopae.eudi.demo.ui.byRecentUse
 import com.hopae.eudi.demo.ui.credGradient
+import com.hopae.eudi.demo.ui.credIsPid
 import com.hopae.eudi.demo.ui.credKicker
 import com.hopae.eudi.demo.ui.credTitle
 import com.hopae.eudi.demo.ui.components.Pill
@@ -84,8 +85,11 @@ fun HomeScreen(
         reload()
         runCatching { wallet.credentials.changes.collect { reload() } }
     }
-    // Surface the most-recently-used documents first (hero = the top one, then a short preview).
+    // Surface the most-recently-used documents first. The hero features the PID (the primary identity
+    // credential) when held, otherwise the most-recently-used document; the preview lists the rest.
     val ordered = remember(creds, recent) { creds.byRecentUse(recent) }
+    val hero = remember(ordered) { ordered.firstOrNull { credIsPid(it) } ?: ordered.firstOrNull() }
+    val rest = remember(ordered, hero) { ordered.filter { it !== hero } }
     val previewCount = 3
 
     LazyColumn(
@@ -103,7 +107,6 @@ fun HomeScreen(
             }
         }
 
-        val hero = ordered.firstOrNull()
         item {
             if (hero == null) AddFirstDocument(onScan) else HeroCard(hero) { onOpenDoc(hero) }
         }
@@ -118,10 +121,10 @@ fun HomeScreen(
             }
         }
 
-        if (ordered.size > 1) {
+        if (rest.isNotEmpty()) {
             item {
                 Section("Documents", actionLabel = "See all", onAction = onSeeDocuments) {
-                    ordered.drop(1).take(previewCount).forEach { d -> DocumentRow(d) { onOpenDoc(d) } }
+                    rest.take(previewCount).forEach { d -> DocumentRow(d) { onOpenDoc(d) } }
                 }
             }
         }
