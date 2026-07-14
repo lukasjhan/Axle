@@ -127,16 +127,17 @@ fun DocumentDetailScreen(
             TrustRow("Issuer registration", trustText(cred.issuer?.registered), cred.issuer?.registered == true)
         }
 
-        // attributes
-        if (claims.isNotEmpty()) {
-            SectionLabel("Attributes")
-            WalletCard(padding = PaddingValues(0.dp)) {
-                claims.forEach { claim ->
-                    val raw = claimDisplay(claim)
-                    val value = if (isSensitive(claim.path) && !reveal) mask(raw) else raw
-                    InfoRow(claimLabel(cred, claim.path), value)
-                }
-            }
+        // claims vs. credential metadata (issuance/expiry dates, issuing authority/country, JWT registered
+        // claims, …) — the split keeps the personal attributes distinct from the administrative fields.
+        val personal = claims.filter { !isMetadata(it.path) }
+        val metadata = claims.filter { isMetadata(it.path) }
+        if (personal.isNotEmpty()) {
+            SectionLabel("Claims")
+            ClaimsCard(cred, personal, reveal)
+        }
+        if (metadata.isNotEmpty()) {
+            SectionLabel("Metadata")
+            ClaimsCard(cred, metadata, reveal)
         }
 
         // Proximity is the one genuinely holder-initiated present action (show *this* mDL over BLE/NFC).
@@ -176,6 +177,17 @@ private fun CircleIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, on
     ) { Icon(icon, null, tint = c.ink, modifier = Modifier.size(18.dp)) }
 }
 
+@Composable
+private fun ClaimsCard(cred: Credential, items: List<Claim>, reveal: Boolean) {
+    WalletCard(padding = PaddingValues(0.dp)) {
+        items.forEach { claim ->
+            val raw = claimDisplay(claim)
+            val value = if (isSensitive(claim.path) && !reveal) mask(raw) else raw
+            InfoRow(claimLabel(cred, claim.path), value)
+        }
+    }
+}
+
 private fun trustText(flag: Boolean?): String = when (flag) {
     true -> "Trusted"
     false -> "Not verified"
@@ -194,6 +206,20 @@ private fun claimDisplay(claim: Claim): String = when (val raw = claim.value.raw
     is Boolean -> if (raw) "Yes" else "No"
     else -> claim.value.display()
 }
+
+/**
+ * Credential metadata (administrative fields + JWT registered claims) vs. the personal-data claims. Covers
+ * both formats: mdoc admin elements (issuing_authority/country, issuance/expiry dates, document/administrative
+ * number, …) and SD-JWT VC registered claims (iss/iat/exp/vct/cnf/status/…).
+ */
+private val METADATA_KEYS = setOf(
+    "issuance_date", "issue_date", "date_of_issuance", "issued_at", "iat",
+    "expiry_date", "expiration_date", "valid_until", "valid_from", "exp", "nbf",
+    "issuing_authority", "issuing_country", "issuing_jurisdiction",
+    "document_number", "administrative_number", "un_distinguishing_sign", "version",
+    "iss", "sub", "jti", "vct", "cnf", "status", "aud",
+)
+private fun isMetadata(path: List<String>): Boolean = path.lastOrNull()?.lowercase() in METADATA_KEYS
 
 private val SENSITIVE = listOf("number", "identifier", "birth", "national", "iban", "administrative", "document", "passport", "ssn", "tax")
 private fun isSensitive(path: List<String>): Boolean {
