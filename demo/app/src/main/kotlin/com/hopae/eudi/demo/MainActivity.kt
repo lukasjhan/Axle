@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,7 +23,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.hopae.eudi.demo.adapters.LogWalletLogger
-import com.hopae.eudi.demo.ui.WalletApp
+import com.hopae.eudi.demo.ui.WalletRoot
+import com.hopae.eudi.demo.ui.theme.WalletTheme
 import com.hopae.eudi.wallet.Wallet
 import com.hopae.eudi.wallet.android.dcapi.DcApiBranding
 import com.hopae.eudi.wallet.android.dcapi.DcApiRegistrar
@@ -31,12 +33,13 @@ import java.io.ByteArrayOutputStream
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         handleIntentLink(intent)
         // Brand the DC API selector entries with this wallet's own launcher icon (scaled by the library).
         val branding = DcApiBranding(logoPng = appIconPng())
         val logger = LogWalletLogger()
         setContent {
-            MaterialTheme {
+            WalletTheme {
                 Surface {
                     // The wallet assembles asynchronously (it fetches trust anchors from the trusted lists on
                     // first launch, cached thereafter) — show a splash until it is ready.
@@ -49,7 +52,7 @@ class MainActivity : ComponentActivity() {
                                 DcApiRegistrar.register(this@MainActivity, w, branding, logger = logger)
                                 w.credentials.changes.collect { DcApiRegistrar.register(this@MainActivity, w, branding, logger = logger) }
                             }
-                            WalletApp(w)
+                            WalletRoot(w)
                         }
                     }
                 }

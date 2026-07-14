@@ -90,7 +90,7 @@ import java.time.Instant
 import java.util.Date
 import java.util.Locale
 
-private class PendingConsent(val session: PresentationSession, val request: PresentationRequest)
+internal class PendingConsent(val session: PresentationSession, val request: PresentationRequest)
 
 @Composable
 fun WalletApp(wallet: Wallet) {
@@ -278,7 +278,7 @@ fun WalletApp(wallet: Wallet) {
     }
 }
 
-private suspend fun runIssuance(
+internal suspend fun runIssuance(
     wallet: Wallet,
     offer: CredentialOffer,
     txCode: String?,
@@ -308,8 +308,8 @@ private suspend fun runIssuance(
 }
 
 // Invocation schemes match the EUDI reference wallet — deep links route by scheme only (authoritative).
-private val OFFER_SCHEMES = setOf("openid-credential-offer", "haip-vci")
-private val VP_SCHEMES = setOf("openid4vp", "eudi-openid4vp", "mdoc-openid4vp", "haip-vp")
+internal val OFFER_SCHEMES = setOf("openid-credential-offer", "haip-vci")
+internal val VP_SCHEMES = setOf("openid4vp", "eudi-openid4vp", "mdoc-openid4vp", "haip-vp")
 
 @Composable
 private fun CredentialsScreen(wallet: Wallet, refreshKey: Int) {
@@ -389,7 +389,7 @@ private fun CredentialCard(c: Credential, onClick: () -> Unit) {
 }
 
 @Composable
-private fun CredentialDetailDialog(c: Credential, onCopy: () -> Unit, onDelete: () -> Unit, onDismiss: () -> Unit) {
+internal fun CredentialDetailDialog(c: Credential, onCopy: () -> Unit, onDelete: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(credentialTitle(c)) },
@@ -564,7 +564,7 @@ private fun DebugLogScreen() {
 }
 
 @Composable
-private fun OfferConfirmDialog(offer: CredentialOffer, onConfirm: () -> Unit, onCancel: () -> Unit) {
+internal fun OfferConfirmDialog(offer: CredentialOffer, onConfirm: () -> Unit, onCancel: () -> Unit) {
     AlertDialog(
         onDismissRequest = onCancel,
         title = { Text("Receive credential?") },
@@ -591,7 +591,7 @@ private fun OfferConfirmDialog(offer: CredentialOffer, onConfirm: () -> Unit, on
 private fun hostOf(url: String): String = runCatching { java.net.URI(url).host ?: url }.getOrDefault(url)
 
 @Composable
-private fun TxCodeDialog(onSubmit: (String) -> Unit, onDismiss: () -> Unit) {
+internal fun TxCodeDialog(onSubmit: (String) -> Unit, onDismiss: () -> Unit) {
     var code by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -605,7 +605,7 @@ private fun TxCodeDialog(onSubmit: (String) -> Unit, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun ConsentDialog(request: PresentationRequest, onApprove: () -> Unit, onDecline: () -> Unit) {
+internal fun ConsentDialog(request: PresentationRequest, onApprove: () -> Unit, onDecline: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDecline,
         title = { Text("Present to verifier?") },
