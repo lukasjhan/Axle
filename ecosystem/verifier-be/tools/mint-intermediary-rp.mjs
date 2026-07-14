@@ -13,28 +13,28 @@
  *      `usesIntermediary` link and (when we mint its WRPRC via the intermediary route) stamps the
  *      `intermediary` + `act.sub` claims from the intermediary's registered identifier.
  *
- * IDENTIFIER BINDING (verified against the registrar source — registration_cert.service.ts /
- * access_cert.service.ts / relying_party.service.getUniqueIdentifier):
- *   • The mediated RP's WRPAC `organizationIdentifier` == the mediated RP's identifier[0].identifier.
- *   • The mediated RP's WRPRC `sub`                     == the mediated RP's identifier[0].identifier.
- *     → these two are equal, which is exactly the binding the wallet's WRPRCVerifier checks.
- *   • The WRPRC `intermediary.sub` and `act.sub`        == the INTERMEDIARY's identifier[0].identifier.
- *   The intermediary itself is NEVER issued a WRPRC (Table 7 NOTE 4 — the registrar rejects it); it
- *   only lends its identity to the mediated RP's WRPRC.
+ * IDENTIFIER BINDING (ETSI TS 119 475 clause 5.1 — the intermediary presents its OWN WRPAC):
+ *   • The request is signed by the INTERMEDIARY's WRPAC, whose `organizationIdentifier` ==
+ *     the intermediary's identifier[0].identifier.
+ *   • The mediated RP's WRPRC `sub`              == the mediated RP's identifier[0].identifier (the final RP).
+ *   • The WRPRC `intermediary.sub` and `act.sub` == the INTERMEDIARY's identifier[0].identifier.
+ *     → the wallet's WRPRCVerifier binds the signing WRPAC `organizationIdentifier` to `intermediary.sub`,
+ *       so the signing cert MUST be the intermediary's (not the mediated RP's) — that was the bug this fixes.
+ *   The intermediary is issued a WRPAC (POST /portal/intermediary/:id/access-certs) but NEVER a WRPRC
+ *   (Table 7 NOTE 4 — the registrar rejects it); it only lends its identity to the mediated RP's WRPRC.
  *
  * KEY-OWNERSHIP FACT (unchanged from the direct flow):
- *   The registrar does NOT generate the WRPAC keypair and does NOT return a private key. The mediated
- *   RP's WRPAC is minted through the ordinary `POST /portal/wrp/:rpId/access-certs` route (the
- *   intermediary controllers expose NO mediated-RP access-cert route), which takes a caller-supplied
- *   PEM EC P-256 *public* key and OpenSSL-signs a leaf over it. We generate the keypair locally and
- *   keep the private key — the verifier owns the signing key.
+ *   The registrar does NOT generate the WRPAC keypair and does NOT return a private key. The intermediary's
+ *   WRPAC is minted through `POST /portal/intermediary/:id/access-certs`, which takes a caller-supplied PEM
+ *   EC P-256 *public* key and OpenSSL-signs a leaf over it. We generate the keypair locally and keep the
+ *   private key — the verifier owns the signing key.
  *
  * The registrar (NestJS, global prefix `/registrar`) exposes for this flow:
  *   POST /auth/sign-in                                                {email,password}                 -> {access_token}
  *   POST /auth/sign-up                                                {email,password,name,company}    -> {access_token}
  *   POST /portal/intermediary                                         CreateRelyingPartyDto            -> WalletRelyingParty (has .id, isIntermediary=true) [Bearer]
  *   POST /portal/intermediary/:id/mediated-rps                        CreateRelyingPartyDto            -> WalletRelyingParty (has .id, usesIntermediary set) [Bearer]
- *   POST /portal/wrp/:rpId/access-certs                               {publicKey, dns?}                -> {id, crt}                                       [Bearer]
+ *   POST /portal/intermediary/:id/access-certs                        {publicKey, dns?}                -> {id, crt}                                       [Bearer]
  *   POST /portal/intermediary/:id/mediated-rps/:rpId/registration-certs {support_uri,privacy_policy,purpose?} -> {id, jwt, intendedUse}                   [Bearer]
  *   GET  /ca-certificate                                               -> CA cert PEM  (text)
  *   GET  /ca-certificate.der                                           -> CA cert DER  (binary)
@@ -255,25 +255,27 @@ async function createMediatedRP(token, intermediaryId) {
 
 /**
  * Generate the EC P-256 keypair locally, hand the *public* key to the registrar, and get back the signed
- * WRPAC leaf certificate for the MEDIATED RP. The private key stays here. There is no mediated-RP access
- * -cert route on the intermediary controllers, so we use the ordinary `POST /portal/wrp/:rpId/access-certs`
- * with the mediated RP's id — its subject.organizationIdentifier is the mediated RP's identifier[0].identifier.
- * `dns` only adds a SAN dNSName for OpenID4VP `x509_san_dns`; HAIP `x509_hash` needs no SAN.
+ * WRPAC leaf certificate for the INTERMEDIARY. Per ETSI TS 119 475 clause 5.1, an intermediated request is
+ * authenticated by the intermediary's OWN WRPAC — so its subject.organizationIdentifier is the
+ * INTERMEDIARY's identifier, which the mediated RP's WRPRC carries as `intermediary.sub` / `act.sub`. That
+ * equality is exactly the binding the wallet's WRPRCVerifier checks. The registrar exposes a dedicated route
+ * for this: `POST /portal/intermediary/:id/access-certs`. The private key stays here (the verifier signs
+ * with it). `dns` only adds a SAN dNSName for OpenID4VP `x509_san_dns`; HAIP `x509_hash` needs no SAN.
  */
-async function issueWrpac(token, rpId) {
+async function issueIntermediaryWrpac(token, intermediaryId) {
   const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
   const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
   const privateKeyPem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
 
   // Response shape: { id: <serial>, crt: <leaf PEM> }. Leaf only — no chain is returned.
-  const { id, crt } = await api('POST', `/portal/wrp/${rpId}/access-certs`, {
+  const { id, crt } = await api('POST', `/portal/intermediary/${intermediaryId}/access-certs`, {
     token,
     body: {
       publicKey: publicKeyPem,
-      dns: [new URL(VERIFIER_ORIGIN).hostname],
+      dns: [new URL(INTERMEDIARY_ORIGIN).hostname],
     },
   });
-  process.stderr.write(`[mint-int-rp] issued mediated-RP WRPAC serial ${id}\n`);
+  process.stderr.write(`[mint-int-rp] issued INTERMEDIARY WRPAC serial ${id}\n`);
 
   return { serial: id, certPem: crt, privateKeyPem };
 }
@@ -311,7 +313,9 @@ async function main() {
   const rp = await createMediatedRP(token, intermediaryId);
   const rpId = rp.id;
 
-  const wrpac = await issueWrpac(token, rpId);
+  // Sign with the INTERMEDIARY's own WRPAC (TS 119 475 §5.1); the WRPRC is the mediated RP's (sub=final RP,
+  // intermediary/act = the intermediary). This is the binding the wallet's WRPRCVerifier enforces.
+  const wrpac = await issueIntermediaryWrpac(token, intermediaryId);
   const wrprc = await issueWrprc(token, intermediaryId, rpId);
 
   // Registrar CA (trust anchor) in both encodings.
