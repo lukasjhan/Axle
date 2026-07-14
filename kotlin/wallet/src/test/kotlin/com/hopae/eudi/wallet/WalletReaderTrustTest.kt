@@ -20,6 +20,7 @@ import java.security.Signature
 import java.util.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /** Phase D: reader trust — verify signed OpenID4VP request objects against configured reader anchors. */
@@ -71,8 +72,13 @@ class WalletReaderTrustTest {
         wallet.close()
     }
 
+    /**
+     * Reader trust is informational, not a hard gate (see PresentationService: "Trust is informational, not a
+     * gate"): a signed request whose reader does not chain to a configured anchor still resolves — marked
+     * `verifier.trusted = false` so the user can decide — rather than being rejected outright.
+     */
     @Test
-    fun signedRequestFromUntrustedReaderFails() = runBlocking {
+    fun signedRequestFromUntrustedReaderResolvesUntrusted() = runBlocking {
         val trustedCa = TestCerts.makeCa("Trusted Reader CA")
         val rogueCa = TestCerts.makeCa("Rogue CA")
         val rogueLeaf = TestCerts.makeLeaf(rogueCa, cn = "Rogue", dnsName = "verifier.example.com")
@@ -82,9 +88,10 @@ class WalletReaderTrustTest {
         )
 
         val session = wallet.presentation.start(signedRequestUrl(rogueLeaf, "x509_san_dns:verifier.example.com"))
-        val terminal = withTimeout(15_000) { session.state.first { it.isTerminal } }
-        assertTrue(terminal is PresentationState.Failed, "terminal: $terminal")
-        assertTrue(terminal.error is WalletError.Presentation.VerifierNotTrusted, "error: ${terminal.error}")
+        val resolved = withTimeout(15_000) { session.state.first { it is PresentationState.RequestResolved || it is PresentationState.Failed } }
+        assertTrue(resolved is PresentationState.RequestResolved, "resolved: $resolved")
+        assertFalse(resolved.request.verifier.trusted, "reader not chaining to the configured anchor must be untrusted")
+        session.decline()
         wallet.close()
     }
 }

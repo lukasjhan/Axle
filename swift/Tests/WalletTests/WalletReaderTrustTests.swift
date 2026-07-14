@@ -41,7 +41,10 @@ final class WalletReaderTrustTests: XCTestCase {
         wallet.close()
     }
 
-    func testSignedRequestFromUntrustedReaderFails() async throws {
+    /// Reader trust is informational, not a hard gate (see PresentationService: "Trust is informational, not a
+    /// gate"): a signed request whose reader does not chain to a configured anchor still resolves — marked
+    /// `verifier.trusted == false` so the user can decide — rather than being rejected outright.
+    func testSignedRequestFromUntrustedReaderResolvesUntrusted() async throws {
         let trustedCa = try TestCerts.makeCa("Trusted Reader CA")
         let rogueCa = try TestCerts.makeCa("Rogue CA")
         let rogueLeaf = try TestCerts.makeLeaf(rogueCa, cn: "Rogue", dns: "verifier.example.com")
@@ -51,12 +54,18 @@ final class WalletReaderTrustTests: XCTestCase {
 
         let url = try await TestCerts.signedRequestUrl(leaf: rogueLeaf, clientId: "x509_san_dns:verifier.example.com", requestClaims: requestClaims)
         let session = wallet.presentation.start(url)
+        var captured: PresentationRequest?
         var terminal: PresentationState?
         for await state in session.states {
+            if case let .requestResolved(request) = state {
+                captured = request
+                session.decline()
+            }
             if state.isTerminal { terminal = state; break }
         }
-        guard case let .failed(error) = terminal else { return XCTFail("terminal: \(String(describing: terminal))") }
-        guard case .verifierNotTrusted = error else { return XCTFail("error: \(error)") }
+        let verifier = try XCTUnwrap(captured?.verifier)
+        XCTAssertFalse(verifier.trusted, "reader not chaining to the configured anchor must be untrusted")
+        guard case .declined = terminal else { return XCTFail("terminal: \(String(describing: terminal))") }
         wallet.close()
     }
 }
