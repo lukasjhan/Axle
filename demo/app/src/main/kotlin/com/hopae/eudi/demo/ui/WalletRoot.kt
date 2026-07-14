@@ -56,6 +56,7 @@ import com.hopae.eudi.demo.IncomingLink
 import com.hopae.eudi.demo.LogStore
 import com.hopae.eudi.demo.PendingAuth
 import com.hopae.eudi.demo.PortraitCaptureActivity
+import com.hopae.eudi.demo.security.AppLock
 import com.hopae.eudi.demo.ui.screens.ActivityScreen
 import com.hopae.eudi.demo.ui.screens.DebugScreen
 import com.hopae.eudi.demo.ui.screens.HomeScreen
@@ -100,6 +101,7 @@ fun WalletRoot(wallet: Wallet) {
     val openAuth: (String, IssuanceSession) -> Unit = { url, session ->
         PendingAuth.session = session
         LogStore.log("Opening browser for authorization…")
+        AppLock.suppressResumeLock() // returning from the browser shouldn't demand a re-unlock
         runCatching {
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }.onFailure { LogStore.log("❌ open browser: ${it.message}") }
@@ -136,7 +138,9 @@ fun WalletRoot(wallet: Wallet) {
         val uri = result.contents
         if (uri == null) LogStore.log("Scan cancelled") else handleUri(uri, "Scanned")
     }
-    fun launchScan() = scanLauncher.launch(
+    fun launchScan() {
+        AppLock.suppressResumeLock() // returning from the scanner shouldn't demand a re-unlock
+        scanLauncher.launch(
         ScanOptions().apply {
             setDesiredBarcodeFormats(ScanOptions.QR_CODE)
             setPrompt("Scan an issuer offer or a verifier request")
@@ -144,7 +148,8 @@ fun WalletRoot(wallet: Wallet) {
             setOrientationLocked(false)
             setCaptureActivity(PortraitCaptureActivity::class.java)
         },
-    )
+        )
+    }
 
     val incoming by IncomingLink.flow.collectAsState()
     LaunchedEffect(incoming) {

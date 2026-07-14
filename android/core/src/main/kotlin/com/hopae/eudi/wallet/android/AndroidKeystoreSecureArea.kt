@@ -3,6 +3,7 @@ package com.hopae.eudi.wallet.android
 import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import android.security.keystore.StrongBoxUnavailableException
 import com.hopae.eudi.wallet.cbor.cose.Der
 import com.hopae.eudi.wallet.cbor.cose.EcCurve
 import com.hopae.eudi.wallet.cbor.cose.EcPublicKey
@@ -56,16 +57,26 @@ class AndroidKeystoreSecureArea(
         }
         var purposes = KeyProperties.PURPOSE_SIGN
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) purposes = purposes or KeyProperties.PURPOSE_AGREE_KEY
-        val paramSpec = KeyGenParameterSpec.Builder(alias, purposes)
+        fun paramSpec(strongBox: Boolean) = KeyGenParameterSpec.Builder(alias, purposes)
             .setAlgorithmParameterSpec(ECGenParameterSpec(spec.algorithm.curve.jcaName))
             .setDigests(digest)
             // Android Key Attestation is bound at key creation: with a challenge the Keystore emits a
             // certificate chain (leaf → … → Google hardware-attestation root) that proves the key's storage
             // and the challenge. Without one, only a self-signed leaf exists (no attestation). See attestation().
             .apply { spec.attestationChallenge?.let { setAttestationChallenge(it) } }
+            // Prefer StrongBox (a discrete secure element / WSCD) when the device has one. StrongBox is limited
+            // (typically P-256 only), so a curve it can't hold throws StrongBoxUnavailableException → fall back
+            // to the TEE-backed Keystore. Either way the private key never leaves hardware.
+            .apply { if (strongBox) setIsStrongBoxBacked(true) }
             .build()
-        KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore")
-            .apply { initialize(paramSpec) }.generateKeyPair()
+        fun generate(strongBox: Boolean) = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore")
+            .apply { initialize(paramSpec(strongBox)) }.generateKeyPair()
+        try {
+            generate(strongBox = true)
+        } catch (_: StrongBoxUnavailableException) {
+            runCatching { keystore.deleteEntry(alias) } // discard any partial entry before retrying on the TEE
+            generate(strongBox = false)
+        }
         return KeyInfo(KeyHandle(id, alias), spec.algorithm, publicKeyOf(publicOf(alias)))
     }
 
