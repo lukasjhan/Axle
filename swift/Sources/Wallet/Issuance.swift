@@ -36,6 +36,24 @@ public struct CredentialOffer {
     public var txCode: TxCodeSpec? { raw.txCode.map { TxCodeSpec($0) } }
 }
 
+/// A pre-issuance preview of an offer for a consent/review screen: who the issuer is, whether it is a
+/// *registered* issuer (its signed metadata chains to a trusted issuer anchor — the 2A signal), and which
+/// credential(s) it will issue with their display name / format.
+public struct OfferPreview {
+    public let issuerUrl: String
+    public let issuerDisplayName: String?
+    public let issuerRegistered: Bool
+    public let credentials: [OfferedCredential]
+}
+
+/// One credential an offer will issue, with issuer-metadata display info.
+public struct OfferedCredential {
+    public let configurationId: String
+    public let displayName: String?
+    public let format: String
+    public let docTypeOrVct: String?
+}
+
 /// What to issue: from an offer or wallet-initiated, plus key policy and (if pre-known) the tx_code.
 public struct IssuanceRequest {
     enum Source {

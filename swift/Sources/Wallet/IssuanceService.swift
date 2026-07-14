@@ -43,6 +43,19 @@ public struct IssuanceService {
     }
 
     /// Step 1 of the 2-phase flow: resolve an offer deep link / QR / raw JSON.
+    /// Loads issuer metadata to preview an offer before issuing: the issuer's display name and whether it is a
+    /// registered issuer (2A — its signed metadata chained to a trusted anchor), plus each offered credential's
+    /// display name / format. For a review screen; the per-credential trust (2B) is established at issuance.
+    public func previewOffer(_ offer: CredentialOffer) async throws -> OfferPreview {
+        let meta = try await catchingVci { try await vci.loadIssuerMetadata(offer.raw.credentialIssuer) }
+        let credentials = offer.raw.credentialConfigurationIds.map { id -> OfferedCredential in
+            let cfg = meta.credentialConfigurationsSupported[id]
+            return OfferedCredential(configurationId: id, displayName: cfg?.displayName, format: cfg?.format ?? "", docTypeOrVct: cfg?.docType ?? cfg?.vct)
+        }
+        return OfferPreview(issuerUrl: offer.raw.credentialIssuer, issuerDisplayName: meta.issuerDisplayName,
+                            issuerRegistered: meta.signedMetadataVerified, credentials: credentials)
+    }
+
     public func resolveOffer(_ offerUri: String) async throws -> CredentialOffer {
         CredentialOffer(try await catchingVci { try await vci.resolveCredentialOffer(offerUri) })
     }

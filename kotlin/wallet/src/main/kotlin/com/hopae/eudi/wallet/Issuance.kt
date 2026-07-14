@@ -34,6 +34,26 @@ class CredentialOffer internal constructor(internal val raw: com.hopae.eudi.wall
     val txCode: TxCodeSpec? get() = raw.txCode?.let { TxCodeSpec(it) }
 }
 
+/**
+ * A pre-issuance preview of an offer for a consent/review screen: who the issuer is, whether it is a
+ * *registered* issuer (its signed metadata chains to a trusted issuer anchor — the 2A signal), and which
+ * credential(s) it will issue with their display name / format.
+ */
+data class OfferPreview(
+    val issuerUrl: String,
+    val issuerDisplayName: String?,
+    val issuerRegistered: Boolean,
+    val credentials: List<OfferedCredential>,
+)
+
+/** One credential an offer will issue, with issuer-metadata display info. */
+data class OfferedCredential(
+    val configurationId: String,
+    val displayName: String?,
+    val format: String,
+    val docTypeOrVct: String?,
+)
+
 /** What to issue: from an offer or wallet-initiated, plus key policy and (if pre-known) the tx_code. */
 class IssuanceRequest private constructor(
     internal val source: Source,

@@ -70,6 +70,20 @@ class IssuanceService internal constructor(
     suspend fun resolveOffer(offerUri: String): CredentialOffer =
         CredentialOffer(catchingVci { vci.resolveCredentialOffer(offerUri) })
 
+    /**
+     * Loads issuer metadata to preview an offer before issuing: the issuer's display name and whether it is a
+     * registered issuer (2A — its signed metadata chained to a trusted anchor), plus each offered credential's
+     * display name / format. For a review screen; the actual per-credential trust (2B) is established at issuance.
+     */
+    suspend fun previewOffer(offer: CredentialOffer): OfferPreview {
+        val meta = catchingVci { vci.loadIssuerMetadata(offer.credentialIssuer) }
+        val credentials = offer.credentialConfigurationIds.map { id ->
+            val cfg = meta.credentialConfigurationsSupported[id]
+            OfferedCredential(id, cfg?.displayName, cfg?.format ?: "", cfg?.docType ?: cfg?.vct)
+        }
+        return OfferPreview(offer.credentialIssuer, meta.issuerDisplayName, meta.signedMetadataVerified, credentials)
+    }
+
     /** Starts an issuance session — pre-authorized or authorization-code grant, driven as a state machine. */
     fun start(request: IssuanceRequest): IssuanceSession = session {
         emit(IssuanceState.Processing)
