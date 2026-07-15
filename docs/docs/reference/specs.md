@@ -134,3 +134,8 @@ The legal and architectural framework the wallet targets.
   architecture and technical requirements the SDK's ecosystem is built to. [GitHub](https://github.com/eu-digital-identity-wallet/eudi-doc-architecture-and-reference-framework)
 - **Regulation (EU) 2024/1183 (eIDAS 2.0)** — Amends Regulation (EU) No 910/2014; the legal basis for the
   European Digital Identity Wallet. [EUR-Lex](https://eur-lex.europa.eu/eli/reg/2024/1183/oj)
+- **PID Rulebook (ARF Annex 3.01)** — How a Person Identification Data credential encodes its attributes in
+  SD-JWT VC and mdoc (claim names, data types, namespaces); age-verification attributes removed in v1.1.
+  [attestation-rulebooks-catalog](https://github.com/eu-digital-identity-wallet/eudi-doc-attestation-rulebooks-catalog/blob/main/rulebooks/pid/pid-rulebook.md)
+- **CIR (EU) 2024/2977** — Commission Implementing Regulation defining the mandatory and optional PID
+  attributes and metadata that the PID Rulebook encodes. [EUR-Lex](https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=OJ:L_202402977)

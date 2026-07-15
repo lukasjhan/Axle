@@ -133,3 +133,8 @@ search](https://www.etsi.org/standards-search)에서 무료로 내려받을 수 
   준거하여 구축된 참조 아키텍처 및 기술 요구사항. [GitHub](https://github.com/eu-digital-identity-wallet/eudi-doc-architecture-and-reference-framework)
 - **Regulation (EU) 2024/1183 (eIDAS 2.0)** — Regulation (EU) No 910/2014를 개정하며, European
   Digital Identity Wallet의 법적 근거입니다. [EUR-Lex](https://eur-lex.europa.eu/eli/reg/2024/1183/oj)
+- **PID Rulebook (ARF Annex 3.01)** — Person Identification Data 크리덴셜이 SD-JWT VC와 mdoc에서 속성을
+  어떻게 인코딩하는지(클레임 이름·데이터 타입·네임스페이스); v1.1에서 연령 검증 속성 제거.
+  [attestation-rulebooks-catalog](https://github.com/eu-digital-identity-wallet/eudi-doc-attestation-rulebooks-catalog/blob/main/rulebooks/pid/pid-rulebook.md)
+- **CIR (EU) 2024/2977** — PID 필수·선택 속성과 메타데이터를 정의하는 Commission Implementing Regulation;
+  PID Rulebook이 이를 인코딩합니다. [EUR-Lex](https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=OJ:L_202402977)

@@ -110,6 +110,36 @@ Security Object)** holds the digests that authenticate each claim, giving the sa
 property as SD-JWT VC. At presentation the device adds **device authentication** (a signature or MAC
 over the session transcript) to prove key possession. Reference: ISO/IEC 18013-5.
 
+## PID Rulebook
+
+A **Rulebook** pins down exactly how a given credential type encodes its attributes — the claim names,
+data types, and namespaces — so an issuer, wallet, and verifier all agree on the wire. The **PID
+Rulebook** ([ARF Annex 3.01](https://github.com/eu-digital-identity-wallet/eudi-doc-attestation-rulebooks-catalog/blob/main/rulebooks/pid/pid-rulebook.md))
+does this for Person Identification Data: its mandatory attributes come from [CIR (EU) 2024/2977](https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=OJ:L_202402977),
+and it maps each to a concrete encoding in **both** EUDI formats.
+
+**Identifiers.** The SD-JWT VC `vct` is `urn:eudi:pid:1`; the mdoc docType and namespace are both
+`eu.europa.ec.eudi.pid.1`. Member States may derive domestic types under the `urn:eudi:pid:` namespace.
+
+**The same attribute is named and shaped differently per format** — the part that trips people up, so
+the SDK's reference issuer follows it exactly:
+
+| Attribute | SD-JWT VC claim (§4.1) | mdoc element (§3.1) |
+| --- | --- | --- |
+| Date of birth | `birthdate` (string, `YYYY-MM-DD`) | `birth_date` (`full-date`) |
+| Place of birth | `place_of_birth` — an **object** (`country` / `region` / `locality`) | `place_of_birth` — a **map** (same members) |
+| Nationality | `nationalities` — an **array** of ISO 3166-1 alpha-2 codes | `nationality` — an **array** (nationalities type) |
+| Residence | the nested OIDC **`address`** object (`formatted`, `street_address`, `postal_code`, `locality`, `country`, `house_number`) | flat elements `resident_address`, `resident_city`, `resident_postal_code`, `resident_country`, … |
+| Portrait | `picture` (a data URL, JPEG) | `portrait` (`bstr`) |
+
+SD-JWT VC reuses the IANA/OIDC-registered claim names where they exist (`address`, `picture`, `email`,
+`phone_number`); mdoc uses the flat ISO-style element identifiers.
+
+**Age-verification attributes were removed** (Rulebook v1.1, aligning with CIR 2024/2977): a PID no
+longer carries `age_over_18` — age checks are the job of a separate age-verification attestation.
+Technical validity is the credential's `nbf`/`exp` (SD-JWT VC) or MSO validity (mdoc), distinct from the
+administrative validity of the underlying logical PID.
+
 ## Protocols
 
 **OpenID4VCI (OpenID for Verifiable Credential Issuance)** — the protocol a wallet uses to obtain a
