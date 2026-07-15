@@ -22,6 +22,8 @@ let package = Package(
                 .product(name: "WalletAPI", package: "swift"),
                 // EcPublicKey / EcCurve live in CborCose (the SecureArea port references them).
                 .product(name: "CborCose", package: "swift"),
+                // FileTransactionLogStore persists entries; re-exported so the app sees the txlog types.
+                .product(name: "TransactionLog", package: "swift"),
             ]
         ),
     ]

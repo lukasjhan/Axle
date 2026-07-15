@@ -1,56 +1,108 @@
+import AppleCore // TransactionLogEntry (re-exported)
 import Foundation
 import Observation
 import Wallet
+import WalletAPI // CredentialId
 
-/// App-level coordinator — the iOS counterpart of android `WalletRoot`'s URI routing and overlay state.
-/// Scans and deep links both funnel through `handleURI`, which dispatches by scheme exactly like the
-/// android `handleUri`: offer schemes resolve an offer (opening the issuance flow); VP schemes start a
-/// presentation (Phase 3 step 2).
+/// App-level coordinator and single source of truth for the tab UI — the iOS counterpart of android
+/// `WalletRoot`. Holds the loaded credentials + activity (so every tab and both detail screens read one
+/// consistent snapshot), routes scanned/opened URIs by scheme through `handleURI` (exactly like android
+/// `handleUri`), and drives the issuance/presentation flow overlays.
 @MainActor
 @Observable
 final class WalletModel {
-    /// Full-screen blocking overlay message (android `BusyOverlay`); nil when idle.
+    // Loaded data (single snapshot shared by Home/Documents/Activity and the detail screens).
+    var credentials: [Credential] = []
+    var transactions: [TransactionLogEntry] = []
+
+    /// Selected bottom tab; Home's "See all" links switch tabs through this (android `navigateTab`).
+    var selectedTab: WalletTab = .home
+
+    // Flow / overlay state.
     var busy: String?
-    /// Non-nil drives the issuance flow overlay (android `issuing`).
     var issuingOffer: CredentialOffer?
-    /// Non-nil drives the presentation flow overlay (android `consent`).
     var presentingSession: PresentationSession?
-    /// Bumped on the "done" path so credential lists reload and show the new document (android `refreshKey`).
-    var reloadToken = 0
+    /// Drives the QR scanner sheet (hosted at the `WalletHome` root; any tab can raise it).
+    var showScanner = false
 
     let wallet = DemoWallet.shared
 
     static let offerSchemes: Set<String> = ["openid-credential-offer", "haip-vci"]
     static let vpSchemes: Set<String> = ["openid4vp", "eudi-openid4vp", "mdoc-openid4vp", "haip-vp"]
 
+    /// Initial load plus a long-lived subscription to credential changes, so lists stay live after
+    /// issuance/deletion without manual refresh tokens (android `credentials.changes.collect`).
+    func start() async {
+        await refresh()
+        for await _ in await wallet.credentials.changes() {
+            await refresh()
+        }
+    }
+
+    func refresh() async {
+        if let creds = try? await wallet.credentials.list() { credentials = creds }
+        transactions = await wallet.transactions.history()
+    }
+
+    /// Unified inbound router (holder side): dispatch by the scanned/opened URI's scheme (android `handleUri`).
     func handleURI(_ uri: String, source: String) {
         let scheme = uri.components(separatedBy: "://").first?.lowercased() ?? ""
+        LogStore.shared.log("\(source) [\(scheme)]: \(uri.prefix(140))\(uri.count > 140 ? "…" : "")")
         if Self.offerSchemes.contains(scheme) {
             Task { await resolveOffer(uri) }
         } else if Self.vpSchemes.contains(scheme) {
             // The session resolves the request internally; PresentView shows a "Resolving request…"
             // state until `.requestResolved`, then the consent screen.
             presentingSession = wallet.presentation.start(uri)
+        } else {
+            LogStore.shared.log("⚠️ Unrecognized scheme '\(scheme)' (expected an offer or presentation link)")
         }
-        // else: unrecognized scheme — ignore, matching android's no-op + log.
     }
 
     private func resolveOffer(_ uri: String) async {
         busy = "Resolving offer…"
         defer { busy = nil }
-        issuingOffer = try? await wallet.issuance.resolveOffer(uri)
+        do {
+            issuingOffer = try await wallet.issuance.resolveOffer(uri)
+        } catch {
+            LogStore.shared.log("❌ resolveOffer: \(error)")
+        }
     }
 
-    /// Dismiss the issuance overlay; reload lists only on the "done" path (android onDone vs onCancel).
+    /// Dismiss the issuance overlay; reload lists on the "done" path (android onDone vs onCancel).
     func finishIssuance(reload: Bool) {
         issuingOffer = nil
-        if reload { reloadToken += 1 }
+        if reload { Task { await refresh() } }
     }
 
     /// Dismiss the presentation overlay; reload lists on the "done" path (a used one-time credential
     /// instance may have changed).
     func finishPresentation(reload: Bool) {
         presentingSession = nil
-        if reload { reloadToken += 1 }
+        if reload { Task { await refresh() } }
+    }
+
+    /// Delete a credential from the wallet, then refresh (android document-detail delete).
+    func delete(_ id: CredentialId) async {
+        do {
+            try await wallet.credentials.delete(id)
+            LogStore.shared.log("Deleted credential \(id.value)")
+        } catch {
+            LogStore.shared.log("❌ delete: \(error)")
+        }
+        await refresh()
+    }
+
+    /// Factory-reset the demo wallet: erase every credential (keys + keychain items), persisted activity,
+    /// and the debug log (android Settings "Reset wallet"). Keys in the Secure Enclave go with their
+    /// credential; onboarding/PIN are Phase 6, so there's nothing else to clear yet.
+    func reset() async {
+        for cred in credentials {
+            try? await wallet.credentials.delete(cred.id)
+        }
+        await DemoWallet.txStore.clear()
+        LogStore.shared.clear()
+        LogStore.shared.log("Wallet reset — all credentials and activity erased")
+        await refresh()
     }
 }

@@ -1,0 +1,358 @@
+import AppleCore // TransactionLogEntry (re-exported)
+import SwiftUI
+import Wallet
+
+// Shared UI building blocks — a port of android `ui/components/Components.kt` plus the reused rows from
+// `DocumentRow.kt` / `HomeScreen.kt`. Names that would collide with the issuance-flow pieces in
+// `IssueView.swift` (`InfoRow`, `TrustBadge`) are prefixed here (`WalletInfoRow`, `TrustPill`).
+
+// MARK: - Card & primitives
+
+/// The standard white, rounded, hairline-bordered card the whole UI is built from (android `WalletCard`).
+struct WalletCard<Content: View>: View {
+    private let padding: EdgeInsets
+    private let onTap: (() -> Void)?
+    private let content: Content
+
+    init(
+        padding: EdgeInsets = EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16),
+        onTap: (() -> Void)? = nil,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.padding = padding
+        self.onTap = onTap
+        self.content = content()
+    }
+
+    var body: some View {
+        let card = VStack(alignment: .leading, spacing: 0) { content }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(padding)
+            .background(WalletTheme.card)
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(WalletTheme.cardBorder, lineWidth: 1))
+
+        if let onTap {
+            Button(action: onTap) { card }.buttonStyle(.plain)
+        } else {
+            card
+        }
+    }
+}
+
+extension EdgeInsets {
+    /// Zero padding — for cards that hold their own padded rows (with dividers).
+    static let flush = EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0)
+}
+
+/// A rounded pill/chip (android `Pill`).
+struct Pill: View {
+    let text: String
+    var bg: Color
+    var fg: Color
+    var border: Color? = nil
+
+    var body: some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 11).padding(.vertical, 5)
+            .background(bg, in: Capsule())
+            .overlay { if let border { Capsule().strokeBorder(border, lineWidth: 1) } }
+            .foregroundStyle(fg)
+    }
+}
+
+/// The green "Wallet secured" status pill from Home (android `SecuredPill`).
+struct SecuredPill: View {
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle().fill(WalletTheme.trust).frame(width: 7, height: 7)
+            Text("Wallet secured").font(.caption2.weight(.semibold))
+        }
+        .padding(.horizontal, 11).padding(.vertical, 5)
+        .background(WalletTheme.trustBg, in: Capsule())
+        .overlay { Capsule().strokeBorder(WalletTheme.trustBorder, lineWidth: 1) }
+        .foregroundStyle(WalletTheme.trust)
+    }
+}
+
+/// A trust/verification badge pill: green when trusted, amber-red when not (android `TrustBadge`).
+struct TrustPill: View {
+    let trusted: Bool
+    var trustedText = "Verified"
+    var untrustedText = "Not verified"
+
+    var body: some View {
+        if trusted {
+            Pill(text: "✓ \(trustedText)", bg: WalletTheme.trustBg, fg: WalletTheme.trustDeep, border: WalletTheme.trustBorder)
+        } else {
+            Pill(text: "⚠ \(untrustedText)", bg: WalletTheme.dangerBg, fg: WalletTheme.danger, border: WalletTheme.danger.opacity(0.35))
+        }
+    }
+}
+
+/// Uppercase, letter-spaced section header (android `SectionLabel`).
+struct SectionLabel: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+    var body: some View {
+        Text(text.uppercased())
+            .font(.caption.weight(.semibold))
+            .tracking(0.6)
+            .foregroundStyle(WalletTheme.inkFaint)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A gradient document tile with a short glyph (e.g. "ID", "DL") (android `DocTile`).
+struct DocTile: View {
+    let glyph: String
+    let colors: [Color]
+    var size: CGFloat = 42
+
+    var body: some View {
+        Text(glyph)
+            .font(.footnote.weight(.heavy))
+            .foregroundStyle(.white)
+            .frame(width: size, height: size)
+            .background(
+                LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing),
+                in: RoundedRectangle(cornerRadius: size / 3.5)
+            )
+    }
+}
+
+// MARK: - Rows
+
+/// A shield-check row used in the trust panels (android `TrustRow`).
+struct TrustRow: View {
+    let label: String
+    let value: String
+    var ok = true
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.shield.fill")
+                .font(.system(size: 13))
+                .foregroundStyle(ok ? WalletTheme.trust : WalletTheme.inkFaint)
+            Text(label).font(.subheadline).foregroundStyle(WalletTheme.inkBody)
+            Spacer()
+            Text(value).font(.subheadline.weight(.bold)).foregroundStyle(ok ? WalletTheme.trust : WalletTheme.inkMuted)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 12)
+    }
+}
+
+/// A key/value row with a bottom hairline divider (android `InfoRow`). Prefixed to avoid the issuance-flow
+/// `InfoRow` in `IssueView.swift`.
+struct WalletInfoRow: View {
+    let label: String
+    let value: String
+    var valueColor: Color? = nil
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 12) {
+                Text(label).font(.subheadline).foregroundStyle(WalletTheme.inkMuted)
+                Spacer(minLength: 12)
+                Text(value)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(valueColor ?? WalletTheme.ink)
+                    .multilineTextAlignment(.trailing)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 13)
+            Rectangle().fill(WalletTheme.divider).frame(height: 1)
+        }
+    }
+}
+
+/// A tappable document list row (tile + title + issuer + validity chip). Shared by Home and Documents
+/// (android `DocumentRow`).
+struct DocumentRow: View {
+    let cred: Credential
+    let onTap: () -> Void
+
+    var body: some View {
+        WalletCard(padding: EdgeInsets(top: 13, leading: 13, bottom: 13, trailing: 13), onTap: onTap) {
+            HStack(spacing: 13) {
+                DocTile(glyph: credGlyph(cred), colors: credGradient(cred))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(credTitle(cred)).font(.subheadline.weight(.semibold)).foregroundStyle(WalletTheme.ink).lineLimit(1)
+                    if let issuer = cred.issuer?.displayName {
+                        Text(issuer).font(.caption).foregroundStyle(WalletTheme.inkMuted).lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 4)
+                Pill(text: "Valid", bg: WalletTheme.trustBg, fg: WalletTheme.trustDeep)
+                Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(WalletTheme.cardBorderStrong)
+            }
+        }
+    }
+}
+
+/// The home hero card — a large gradient card featuring the primary credential (android `HeroCard`).
+struct HeroCard: View {
+    let cred: Credential
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Text(credKicker(cred).uppercased())
+                        .font(.caption2.weight(.bold)).foregroundStyle(.white.opacity(0.85))
+                    Spacer()
+                    Pill(text: "eIDAS 2.0", bg: .white.opacity(0.12), fg: .white)
+                }
+                Spacer().frame(height: 26)
+                Text(credTitle(cred)).font(.title3.weight(.semibold)).foregroundStyle(.white)
+                if let issuer = cred.issuer?.displayName {
+                    Text(issuer).font(.caption).foregroundStyle(.white.opacity(0.75)).padding(.top, 3)
+                }
+                Spacer().frame(height: 18)
+                HStack {
+                    Text(validityLine(cred)).font(.caption).foregroundStyle(.white.opacity(0.75))
+                    Spacer()
+                    if cred.issuer?.trusted == true {
+                        Text("✓ Verified").font(.caption2.weight(.semibold)).foregroundStyle(WalletTheme.gold)
+                    }
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                LinearGradient(colors: credGradient(cred), startPoint: .topLeading, endPoint: .bottomTrailing),
+                in: RoundedRectangle(cornerRadius: 20)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// An activity list row (arrow badge + counterparty + docs + status/time). Shared by Home and Activity
+/// (android `ActivityRow` / `ActivityCard`).
+struct ActivityRow: View {
+    let entry: TransactionLogEntry
+    let onTap: () -> Void
+
+    private var present: Bool { entry.type == .presentation }
+    private var ok: Bool { entry.status == .success }
+
+    var body: some View {
+        WalletCard(padding: EdgeInsets(top: 13, leading: 13, bottom: 13, trailing: 13), onTap: onTap) {
+            HStack(spacing: 12) {
+                Text(present ? "↑" : "↓")
+                    .font(.headline)
+                    .foregroundStyle(present ? WalletTheme.brand : WalletTheme.trust)
+                    .frame(width: 34, height: 34)
+                    .background(present ? WalletTheme.brandSoftBg : WalletTheme.trustBg, in: Circle())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(counterparty).font(.subheadline.weight(.semibold)).foregroundStyle(WalletTheme.ink).lineLimit(1)
+                    Text(docsLabel).font(.caption).foregroundStyle(WalletTheme.inkMuted).lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(entry.status.rawValue.capitalized)
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(ok ? WalletTheme.trust : WalletTheme.danger)
+                    Text(shortTime(entry.timestamp)).font(.caption).foregroundStyle(WalletTheme.inkFaint)
+                }
+            }
+        }
+    }
+
+    private var counterparty: String {
+        entry.relyingParty?.name ?? entry.relyingParty?.id ?? entry.issuerName
+            ?? (present ? "Presentation" : "Issuance")
+    }
+
+    private var docsLabel: String {
+        let names = entry.documents.map { $0.type ?? $0.format }.filter { !$0.isEmpty }
+        if names.isEmpty { return "\(entry.documents.count) document(s)" }
+        return names.joined(separator: ", ")
+    }
+}
+
+// MARK: - Empty state & overlays
+
+/// The "add your first document" empty-state prompt (android `AddFirstDocument`).
+struct AddFirstDocument: View {
+    let onScan: () -> Void
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "doc.badge.plus").font(.system(size: 40)).foregroundStyle(WalletTheme.brand)
+            Text("No documents yet").font(.headline).foregroundStyle(WalletTheme.ink)
+            Text("Scan or paste an issuer offer to add your first document.")
+                .font(.subheadline).foregroundStyle(WalletTheme.inkMuted).multilineTextAlignment(.center)
+            Button(action: onScan) {
+                Label("Scan QR", systemImage: "qrcode.viewfinder").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent).controlSize(.large).tint(WalletTheme.brand)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity)
+        .background(WalletTheme.card, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(WalletTheme.cardBorder, lineWidth: 1))
+    }
+}
+
+/// A round icon button (back / overflow) on a card-coloured circle (android `CircleIcon`).
+struct CircleIconButton: View {
+    let system: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: system)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(WalletTheme.ink)
+                .frame(width: 36, height: 36)
+                .background(WalletTheme.card, in: Circle())
+                .overlay(Circle().strokeBorder(WalletTheme.cardBorder, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// A full-screen blocking overlay with a spinner (android `BusyOverlay`).
+struct BusyOverlay: View {
+    let message: String
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.35).ignoresSafeArea()
+            VStack(spacing: 12) {
+                ProgressView()
+                Text(message).font(.callout)
+            }
+            .padding(24)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        }
+        .transition(.opacity)
+    }
+}
+
+// MARK: - Formatting helpers
+
+/// "Valid until <date>" from an issued credential's validity, or "" when unknown (android `validityLine`).
+func validityLine(_ c: Credential) -> String {
+    guard case let .issued(_, validity, _) = c.lifecycle, let until = validity?.validUntil else { return "" }
+    return "Valid until \(until.formatted(date: .abbreviated, time: .omitted))"
+}
+
+/// A compact relative time ("now", "5m", "3h", "2d") (android `relTime`).
+func shortTime(_ epochSeconds: Int64) -> String {
+    let now = Int64(Date().timeIntervalSince1970)
+    let diff = now - epochSeconds
+    switch diff {
+    case ..<60: return "now"
+    case ..<3600: return "\(diff / 60)m"
+    case ..<86400: return "\(diff / 3600)h"
+    default: return "\(diff / 86400)d"
+    }
+}
+
+/// Absolute timestamp for the activity/detail screens.
+func absoluteTime(_ epochSeconds: Int64, style: Date.FormatStyle) -> String {
+    Date(timeIntervalSince1970: TimeInterval(epochSeconds)).formatted(style)
+}
