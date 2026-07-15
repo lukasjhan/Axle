@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Axle Wallet uses the camera to scan QR codes for credential offers and presentation requests.</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.hopae.axle.wallet.deeplinks</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>openid-credential-offer</string>
+				<string>haip-vci</string>
+				<string>openid4vp</string>
+				<string>eudi-openid4vp</string>
+				<string>mdoc-openid4vp</string>
+				<string>haip-vp</string>
+				<string>eu.europa.ec.euidi</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
