@@ -67,6 +67,31 @@ enum DocGradients {
     static let palette = [education, residence, finance, health, neutral]
 }
 
+/// The wallet type scale — a 1:1 port of android `ui/theme/Type.kt` (Manrope, Material3 slots). Sizes and
+/// weights match the Compose `WalletTypography` exactly so text lays out the same. Tracking (letter spacing)
+/// is applied at the call site via `.tracking(...)` where android sets it (section labels, kickers).
+enum WalletFont {
+    private static func manrope(_ size: CGFloat, _ weight: Font.Weight) -> Font {
+        .custom("Manrope", size: size).weight(weight)
+    }
+
+    static let titleLarge = manrope(21, .heavy)    // 800
+    static let titleMedium = manrope(16, .heavy)   // 800
+    static let titleSmall = manrope(14, .bold)     // 700
+    static let bodyLarge = manrope(14, .semibold)  // 600
+    static let bodyMedium = manrope(13, .semibold) // 600
+    static let bodySmall = manrope(12, .medium)    // 500
+    static let labelLarge = manrope(14, .bold)     // 700
+    static let labelMedium = manrope(12, .bold)    // 700
+    static let labelSmall = manrope(11, .bold)     // 700 (tracked 0.6 at call site)
+    static let sectionLabel = manrope(11.5, .heavy) // 800 (tracked 0.8 at call site)
+    /// android `bodyMedium` with a `fontWeight(700)` override — used for InfoRow/TrustRow values.
+    static let bodyMediumStrong = manrope(13, .bold)
+
+    /// JetBrains Mono for the debug console.
+    static func mono(_ size: CGFloat = 11) -> Font { .custom("JetBrains Mono", size: size) }
+}
+
 extension Color {
     /// 24-bit RGB hex (e.g. `0x2555DB`) — matches the android `Color(0xFF……)` tokens.
     init(hex: UInt32) {

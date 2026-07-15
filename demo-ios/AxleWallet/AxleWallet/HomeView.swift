@@ -63,8 +63,8 @@ struct HomeView: View {
     private var header: some View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(greeting()).font(.subheadline).foregroundStyle(WalletTheme.inkMuted)
-                Text(holderName()).font(.title2.weight(.bold)).foregroundStyle(WalletTheme.ink)
+                Text(greeting()).font(WalletFont.bodyMedium).foregroundStyle(WalletTheme.inkMuted)
+                Text(holderName()).font(WalletFont.titleLarge).foregroundStyle(WalletTheme.ink)
             }
             Spacer()
             SecuredPill()
@@ -72,12 +72,12 @@ struct HomeView: View {
     }
 
     private var quickActions: some View {
-        // Scan (issuer offer / verifier request), Present (show a document in person over BLE), Reader
-        // (verify someone else's document). Paste lives in the Documents "+" menu. Mirrors android's trio.
+        // Scan / Proximity / Reader — android's exact trio. Proximity (present this wallet in person) and
+        // Reader (verify someone else) share the same "sensors" glyph, matching android `Icons.Filled.Sensors`.
         HStack(spacing: 10) {
             QuickAction(label: "Scan", system: "qrcode.viewfinder", primary: true) { model.showScanner = true }
-            QuickAction(label: "Present", system: "dot.radiowaves.left.and.right", primary: false) { showProximity = true }
-            QuickAction(label: "Reader", system: "doc.text.viewfinder", primary: false) { showReader = true }
+            QuickAction(label: "Proximity", system: "dot.radiowaves.left.and.right", primary: false) { showProximity = true }
+            QuickAction(label: "Reader", system: "dot.radiowaves.left.and.right", primary: false) { showReader = true }
         }
     }
 
@@ -90,11 +90,11 @@ struct HomeView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(title).font(.headline).foregroundStyle(WalletTheme.ink)
+                Text(title).font(WalletFont.titleSmall).foregroundStyle(WalletTheme.ink)
                 Spacer()
                 if let action {
                     Button(action: onAction) {
-                        Text(action).font(.subheadline.weight(.medium)).foregroundStyle(WalletTheme.brand)
+                        Text(action).font(WalletFont.labelMedium).foregroundStyle(WalletTheme.brand)
                     }
                 }
             }
@@ -136,7 +136,7 @@ private struct QuickAction: View {
         Button(action: action) {
             VStack(spacing: 7) {
                 Image(systemName: system).font(.system(size: 18))
-                Text(label).font(.subheadline.weight(.medium))
+                Text(label).font(WalletFont.labelMedium)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)

@@ -2,9 +2,10 @@ import SwiftUI
 import Wallet
 import WalletAPI
 
-/// OpenID4VCI issuance flow — a 1:1 behavioral mirror of android `IssueScreen`. Steps:
-/// Review → (TxCode) → Issuing → ReviewCredential → Success, or Failed. The auth-code grant opens a
-/// browser (ASWebAuthenticationSession) and resumes via `completeAuthorization`.
+/// OpenID4VCI issuance flow — a 1:1 mirror of android `IssueScreen`, in both behavior and layout:
+/// Review → (TxCode) → Issuing → ReviewCredential → Success, or Failed. Brand palette + Manrope + the shared
+/// credential cards, matching the android screen. The auth-code grant opens a browser
+/// (ASWebAuthenticationSession) and resumes via `completeAuthorization`.
 struct IssueView: View {
     let offer: CredentialOffer
     /// "View in wallet" / success path — dismiss and reload the wallet lists.
@@ -25,16 +26,20 @@ struct IssueView: View {
     enum IssueStep { case review, txCode, issuing, reviewCredential, success, failed }
 
     private var configId: String { offer.credentialConfigurationIds.first ?? "" }
+    private var showsHeader: Bool { step == .review || step == .txCode || step == .reviewCredential }
 
     var body: some View {
         VStack(spacing: 0) {
-            if step == .review || step == .txCode || step == .reviewCredential {
-                header
+            if showsHeader {
+                FlowTopBar(title: step == .reviewCredential ? "Review credential" : "Add document") { back() }
+                Spacer().frame(height: 20)
             }
             content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(.systemBackground).ignoresSafeArea())
+        .padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(WalletTheme.screen.ignoresSafeArea())
         .task { await loadPreview() }
         .alert(cancelTitle, isPresented: $confirmCancel) {
             Button(step == .reviewCredential ? "Discard" : "Cancel adding", role: .destructive) {
@@ -47,151 +52,129 @@ struct IssueView: View {
         .interactiveDismissDisabled(true)
     }
 
-    // MARK: - Header
-
-    private var header: some View {
-        HStack {
-            Button {
-                back()
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.headline)
-                    .frame(width: 36, height: 36)
-                    .background(Color(.secondarySystemBackground), in: Circle())
-            }
-            Spacer()
-            Text(step == .reviewCredential ? "Review credential" : "Add document")
-                .font(.headline)
-            Spacer()
-            Color.clear.frame(width: 36, height: 36)
-        }
-        .padding()
-    }
-
-    // MARK: - Content per step
+    // MARK: - Steps
 
     @ViewBuilder private var content: some View {
         switch step {
         case .review: reviewStep
         case .txCode: txCodeStep
-        case .issuing: CenteredStatus(system: nil, title: "Issuing…", subtitle: "Contacting the issuer and verifying the credential.", showsSpinner: true)
+        case .issuing: FlowLoading(title: "Issuing…", subtitle: "Contacting the issuer and verifying the credential.")
         case .reviewCredential: reviewCredentialStep
-        case .success: successStep
-        case .failed: failedStep
+        case .success: FlowResult(kind: .success, title: "Document added", subtitle: "Saved securely on this device.", buttonTitle: "View in wallet", onButton: onDone)
+        case .failed: FlowResult(kind: .failure, title: "Couldn't add document", subtitle: errorMessage ?? "The issuance failed.", buttonTitle: "Close", onButton: onCancel)
         }
     }
 
     private var reviewStep: some View {
         VStack(spacing: 0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    DocumentHeaderCard(
-                        badge: "NEW DOCUMENT",
-                        format: primaryFormatLabel,
-                        title: primaryTitle,
-                        subtitle: hostOf(offer.credentialIssuer)
-                    )
-
-                    Section2(title: "Issuer") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(preview?.issuerDisplayName ?? hostOf(offer.credentialIssuer))
-                                .font(.body.weight(.semibold))
-                            Text(hostOf(offer.credentialIssuer))
-                                .font(.footnote).foregroundStyle(.secondary)
-                            if previewLoading {
-                                ProgressView().controlSize(.small)
-                            } else {
-                                TrustBadge(ok: preview?.issuerRegistered == true, okText: "Registered", badText: "Unverified")
-                            }
-                        }
-                    }
-
+                VStack(alignment: .leading, spacing: 16) {
+                    newDocumentCard
+                    SectionLabel("Issuer")
+                    issuerCard
                     if let preview, !preview.issuerRegistered, !previewLoading {
-                        NoteText("This issuer isn't on the EU trusted list. You can still add the document.")
+                        FlowNote("This issuer isn't on the EU trusted list. You can still add the document.")
                     }
                     if let preview, preview.credentials.count > 1 {
-                        Section2(title: "You'll receive") {
+                        SectionLabel("You'll receive")
+                        WalletCard(padding: .flush) {
                             ForEach(preview.credentials, id: \.configurationId) { c in
-                                InfoRow(title: c.displayName ?? prettyConfig(c.configurationId), value: formatLabel(c.format))
+                                WalletInfoRow(label: c.displayName ?? prettyConfig(c.configurationId), value: formatLabel(c.format))
                             }
                         }
                     }
                     if offer.requiresTxCode {
-                        NoteText("This issuer will ask for a transaction code.")
+                        FlowNote("This issuer will ask for a transaction code.")
                     }
                 }
-                .padding()
             }
-            Footer(
-                primary: "Continue",
-                secondary: "Cancel",
-                onPrimary: {
-                    if offer.requiresTxCode { step = .txCode } else { Task { await runIssuance(code: nil) } }
-                },
+            FlowFooter(
+                primaryTitle: "Continue",
+                onPrimary: { if offer.requiresTxCode { step = .txCode } else { Task { await runIssuance(code: nil) } } },
+                secondaryTitle: "Cancel",
                 onSecondary: { confirmCancel = true }
             )
         }
     }
 
+    private var newDocumentCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("NEW DOCUMENT").font(WalletFont.labelSmall).tracking(0.6).foregroundStyle(.white.opacity(0.85))
+                Spacer()
+                Pill(text: primaryFormatLabel, bg: .white.opacity(0.12), fg: .white)
+            }
+            Spacer().frame(height: 22)
+            Text(primaryTitle).font(WalletFont.titleMedium).foregroundStyle(.white)
+            Text(hostOf(offer.credentialIssuer)).font(WalletFont.bodySmall).foregroundStyle(.white.opacity(0.75)).padding(.top, 3)
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            LinearGradient(colors: DocGradients.pid, startPoint: .topLeading, endPoint: .bottomTrailing),
+            in: RoundedRectangle(cornerRadius: 20)
+        )
+    }
+
+    private var issuerCard: some View {
+        WalletCard {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(preview?.issuerDisplayName ?? hostOf(offer.credentialIssuer)).font(WalletFont.titleSmall).foregroundStyle(WalletTheme.ink)
+                    Text(hostOf(offer.credentialIssuer)).font(WalletFont.bodySmall).foregroundStyle(WalletTheme.inkMuted)
+                }
+                Spacer()
+                if previewLoading {
+                    ProgressView().tint(WalletTheme.brand).controlSize(.small)
+                } else {
+                    TrustPill(trusted: preview?.issuerRegistered == true, trustedText: "Registered", untrustedText: "Unverified")
+                }
+            }
+        }
+    }
+
     private var txCodeStep: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("Enter the transaction code").font(.title3.weight(.semibold))
-                    Text("The issuer sent you a code to authorise this credential.")
-                        .foregroundStyle(.secondary)
-                    if let desc = offer.txCode?.description {
-                        NoteText(desc)
-                    }
-                    TextField("Transaction code", text: $txCode)
-                        .textFieldStyle(.roundedBorder)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .keyboardType(offer.txCode?.inputMode == "text" ? .default : .numberPad)
-                }
-                .padding()
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Enter the transaction code").font(WalletFont.titleSmall).foregroundStyle(WalletTheme.ink)
+                Text("The issuer sent you a code to authorise this credential.").font(WalletFont.bodyMedium).foregroundStyle(WalletTheme.inkMuted)
+                if let desc = offer.txCode?.description { FlowNote(desc) }
+                TextField("Transaction code", text: $txCode)
+                    .font(WalletFont.bodyLarge)
+                    .padding(.horizontal, 14).padding(.vertical, 12)
+                    .background(WalletTheme.card, in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(WalletTheme.cardBorderStrong, lineWidth: 1))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(offer.txCode?.inputMode == "text" ? .default : .numberPad)
             }
-            Footer(primary: "Issue", secondary: nil,
-                   primaryEnabled: !txCode.trimmingCharacters(in: .whitespaces).isEmpty,
-                   onPrimary: { Task { await runIssuance(code: txCode) } },
-                   onSecondary: {})
+            Spacer()
+            PrimaryButton(title: "Issue", enabled: !txCode.trimmingCharacters(in: .whitespaces).isEmpty) {
+                Task { await runIssuance(code: txCode) }
+            }
         }
     }
 
-    private var reviewCredentialStep: some View {
-        VStack(spacing: 0) {
-            if let issued {
+    @ViewBuilder private var reviewCredentialStep: some View {
+        if let issued {
+            VStack(spacing: 0) {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 16) {
                         Text("Review the credential you received before saving it to your wallet.")
-                            .foregroundStyle(.secondary)
-                        CredentialCard(credential: issued)
-                        Section2(title: "Trust") {
-                            TrustBadge(ok: issued.issuer?.trusted == true, okText: "Issuer verified", badText: "Issuer unverified")
-                        }
-                        ClaimsList(credential: issued)
+                            .font(WalletFont.bodyMedium).foregroundStyle(WalletTheme.inkMuted)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        CredentialGradientCard(cred: issued)
+                        SectionLabel("Trust")
+                        CredentialTrustCard(cred: issued)
+                        CredentialClaimSections(cred: issued, reveal: true)
                     }
-                    .padding()
                 }
-                Footer(primary: "Save to wallet", secondary: "Discard",
-                       onPrimary: { step = .success },
-                       onSecondary: { confirmCancel = true })
-            } else {
-                CenteredStatus(system: nil, title: "Finishing…", subtitle: "", showsSpinner: true)
+                FlowFooter(primaryTitle: "Save to wallet", onPrimary: { step = .success },
+                           secondaryTitle: "Discard", onSecondary: { confirmCancel = true })
             }
+        } else {
+            FlowLoading(title: "Finishing…")
         }
-    }
-
-    private var successStep: some View {
-        CenteredStatus(system: "checkmark.circle.fill", title: "Document added",
-                       subtitle: "Saved securely on this device.", tint: .green,
-                       button: ("View in wallet", onDone))
-    }
-
-    private var failedStep: some View {
-        CenteredStatus(system: "exclamationmark.triangle.fill", title: "Couldn't add document",
-                       subtitle: errorMessage ?? "The issuance failed.", tint: .red,
-                       button: ("Close", onCancel))
     }
 
     // MARK: - Behavior
@@ -210,7 +193,7 @@ struct IssueView: View {
         for await state in session.states {
             switch state {
             case .txCodeRequired:
-                if let code { session.submitTxCode(code) } // latent fallback; code is passed at start()
+                if let code { session.submitTxCode(code) }
             case let .authorizationRequired(url):
                 await authorize(url: url, session: session)
             case .completed:
@@ -252,7 +235,7 @@ struct IssueView: View {
         case .review, .reviewCredential: confirmCancel = true
         case .success: onDone()
         case .failed: onCancel()
-        case .issuing: break // blocked during the round-trip
+        case .issuing: break
         }
     }
 
@@ -277,46 +260,7 @@ struct IssueView: View {
     }
 }
 
-// MARK: - Reusable pieces
-
-struct DocumentHeaderCard: View {
-    let badge: String
-    let format: String
-    let title: String
-    let subtitle: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text(badge).font(.caption2.weight(.bold)).foregroundStyle(.white.opacity(0.85))
-                Spacer()
-                Text(format).font(.caption2.weight(.semibold))
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(.white.opacity(0.2), in: Capsule())
-                    .foregroundStyle(.white)
-            }
-            Spacer(minLength: 24)
-            Text(title).font(.title3.weight(.bold)).foregroundStyle(.white)
-            Text(subtitle).font(.footnote).foregroundStyle(.white.opacity(0.85))
-        }
-        .padding()
-        .frame(maxWidth: .infinity, minHeight: 150, alignment: .leading)
-        .background(LinearGradient(colors: [.blue, .indigo], startPoint: .topLeading, endPoint: .bottomTrailing))
-        .clipShape(RoundedRectangle(cornerRadius: 18))
-    }
-}
-
-private struct CredentialCard: View {
-    let credential: Credential
-    var body: some View {
-        DocumentHeaderCard(
-            badge: "CREDENTIAL",
-            format: formatLabel(formatString(credential.format)),
-            title: credential.display?.name ?? credential.configurationId ?? prettyConfig(docTypeOrVct(credential.format)),
-            subtitle: credential.issuer?.displayName ?? credential.issuer?.url ?? ""
-        )
-    }
-}
+// MARK: - Helpers (shared across flow screens)
 
 func formatString(_ format: CredentialFormat) -> String {
     switch format {
@@ -331,131 +275,6 @@ func docTypeOrVct(_ format: CredentialFormat) -> String {
     case let .sdJwtVc(vct): return vct
     }
 }
-
-struct Section2<Content: View>: View {
-    let title: String
-    @ViewBuilder let content: Content
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title.uppercased()).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            content
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-struct InfoRow: View {
-    let title: String
-    let value: String
-    var body: some View {
-        HStack {
-            Text(title)
-            Spacer()
-            Text(value).foregroundStyle(.secondary)
-        }
-        .font(.subheadline)
-        .padding(.vertical, 4)
-    }
-}
-
-struct NoteText: View {
-    let text: String
-    init(_ text: String) { self.text = text }
-    var body: some View {
-        Text(text).font(.footnote).foregroundStyle(.secondary)
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
-    }
-}
-
-struct TrustBadge: View {
-    let ok: Bool
-    let okText: String
-    let badText: String
-    var body: some View {
-        Label(ok ? okText : badText, systemImage: ok ? "checkmark.seal.fill" : "exclamationmark.shield.fill")
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(ok ? .green : .orange)
-    }
-}
-
-private struct ClaimsList: View {
-    let credential: Credential
-    var body: some View {
-        if case let .issued(claims, _, _) = credential.lifecycle, !claims.isEmpty {
-            Section2(title: "Details") {
-                VStack(spacing: 0) {
-                    ForEach(Array(claims.enumerated()), id: \.offset) { _, claim in
-                        InfoRow(title: claim.path.last ?? claim.path.joined(separator: "."),
-                                value: claim.value.display())
-                    }
-                }
-            }
-        }
-    }
-}
-
-struct Footer: View {
-    let primary: String
-    let secondary: String?
-    var primaryEnabled: Bool = true
-    let onPrimary: () -> Void
-    let onSecondary: () -> Void
-
-    var body: some View {
-        VStack(spacing: 10) {
-            Button(action: onPrimary) {
-                Text(primary).frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(!primaryEnabled)
-
-            if let secondary {
-                Button(role: .cancel, action: onSecondary) {
-                    Text(secondary).frame(maxWidth: .infinity)
-                }
-                .controlSize(.large)
-            }
-        }
-        .padding()
-        .background(.bar)
-    }
-}
-
-struct CenteredStatus: View {
-    var system: String?
-    let title: String
-    let subtitle: String
-    var showsSpinner = false
-    var tint: Color = .accentColor
-    var button: (String, () -> Void)?
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Spacer()
-            if showsSpinner {
-                ProgressView().controlSize(.large)
-            } else if let system {
-                Image(systemName: system).font(.system(size: 64)).foregroundStyle(tint)
-            }
-            Text(title).font(.title2.weight(.bold))
-            if !subtitle.isEmpty {
-                Text(subtitle).foregroundStyle(.secondary).multilineTextAlignment(.center)
-            }
-            Spacer()
-            if let button {
-                Button(action: button.1) { Text(button.0).frame(maxWidth: .infinity) }
-                    .buttonStyle(.borderedProminent).controlSize(.large).padding()
-            }
-        }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-// MARK: - Helpers (mirror android formatLabel / prettyConfig / hostOf)
 
 func formatLabel(_ format: String) -> String {
     let f = format.lowercased()

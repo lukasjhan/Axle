@@ -5,7 +5,7 @@ import Wallet
 
 /// Reader/verifier-side ISO 18013-5 proximity — the iOS counterpart of android `ProximityReaderScreen`.
 /// Scans the holder's QR DeviceEngagement, connects over BLE as the central, requests the PID elements, and
-/// renders the verified result.
+/// renders the verified result. Brand palette + Manrope.
 struct ReaderView: View {
     let onClose: () -> Void
 
@@ -19,18 +19,20 @@ struct ReaderView: View {
     enum Phase { case idle, connecting, reading, results, failed }
 
     var body: some View {
-        NavigationStack {
-            content
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .walletScreenBackground()
-                .navigationTitle("Reader")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Close") { close() } }
-                }
-                .sheet(isPresented: $showScanner) {
-                    ScannerSheet { scanned in Task { await read(scanned) } }
-                }
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                CircleIconButton(system: "xmark") { close() }
+                Text("Reader").font(WalletFont.titleMedium).foregroundStyle(WalletTheme.ink)
+                Spacer()
+            }
+            Spacer().frame(height: 12)
+            content.frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(WalletTheme.screen.ignoresSafeArea())
+        .sheet(isPresented: $showScanner) {
+            ScannerSheet { scanned in Task { await read(scanned) } }
         }
     }
 
@@ -39,13 +41,13 @@ struct ReaderView: View {
         case .idle:
             idleStep
         case .connecting:
-            CenteredStatus(system: nil, title: "Connecting…", subtitle: "Pairing with the wallet over Bluetooth.", showsSpinner: true)
+            FlowLoading(title: "Connecting…", subtitle: "Pairing with the wallet over Bluetooth.")
         case .reading:
-            CenteredStatus(system: nil, title: "Reading…", subtitle: "Requesting and verifying the document.", showsSpinner: true)
+            FlowLoading(title: "Reading…", subtitle: "Requesting and verifying the document.")
         case .results:
             resultsStep
         case .failed:
-            CenteredStatus(system: "exclamationmark.triangle.fill", title: "Couldn't read", subtitle: errorMessage ?? "The read failed.", tint: .red, button: ("Try again", { phase = .idle }))
+            FlowResult(kind: .failure, title: "Couldn't read", subtitle: errorMessage ?? "The read failed.", buttonTitle: "Try again", onButton: { phase = .idle })
         }
     }
 
@@ -53,45 +55,41 @@ struct ReaderView: View {
         VStack(spacing: 16) {
             Spacer()
             Image(systemName: "qrcode.viewfinder").font(.system(size: 56)).foregroundStyle(WalletTheme.brand)
-            Text("Scan a wallet's code").font(.title3.weight(.semibold)).foregroundStyle(WalletTheme.ink)
+            Text("Scan a wallet's code").font(WalletFont.titleMedium).foregroundStyle(WalletTheme.ink)
             Text("Ask the holder to show their in-person sharing QR, then scan it to read and verify their document.")
-                .font(.subheadline).foregroundStyle(WalletTheme.inkMuted).multilineTextAlignment(.center)
+                .font(WalletFont.bodyMedium).foregroundStyle(WalletTheme.inkMuted).multilineTextAlignment(.center)
             Spacer()
-            Button { showScanner = true } label: {
-                Label("Scan holder QR", systemImage: "qrcode.viewfinder").frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent).controlSize(.large).tint(WalletTheme.brand).padding()
+            PrimaryButton(title: "Scan holder QR") { showScanner = true }
         }
-        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var resultsStep: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                ForEach(Array(results.enumerated()), id: \.offset) { _, doc in
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text(prettyConfig(doc.docType)).font(.headline).foregroundStyle(WalletTheme.ink)
-                            Spacer()
-                            TrustPill(trusted: doc.deviceAuthenticated, trustedText: "Verified", untrustedText: "Unverified")
-                        }
-                        WalletCard(padding: .flush) {
-                            if doc.claims.isEmpty {
-                                WalletInfoRow(label: "Claims", value: "—")
-                            } else {
-                                ForEach(Array(doc.claims.enumerated()), id: \.offset) { _, claim in
-                                    WalletInfoRow(label: label(claim.element), value: claim.value)
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    ForEach(Array(results.enumerated()), id: \.offset) { _, doc in
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text(prettyConfig(doc.docType)).font(WalletFont.titleSmall).foregroundStyle(WalletTheme.ink)
+                                Spacer()
+                                TrustPill(trusted: doc.deviceAuthenticated, trustedText: "Verified", untrustedText: "Unverified")
+                            }
+                            WalletCard(padding: .flush) {
+                                if doc.claims.isEmpty {
+                                    WalletInfoRow(label: "Claims", value: "—")
+                                } else {
+                                    ForEach(Array(doc.claims.enumerated()), id: \.offset) { _, claim in
+                                        WalletInfoRow(label: label(claim.element), value: claim.value)
+                                    }
                                 }
                             }
                         }
                     }
                 }
-                Button { phase = .idle; results = [] } label: {
-                    Label("Scan another", systemImage: "qrcode.viewfinder").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered).controlSize(.large).tint(WalletTheme.brand)
             }
-            .padding()
+            SecondaryButton(title: "Scan another") { phase = .idle; results = [] }
+                .padding(.top, 12)
         }
     }
 

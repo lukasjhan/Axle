@@ -1,10 +1,10 @@
 import SwiftUI
-import UIKit
 import Wallet
 import WalletAPI // CredentialId.value
 
-/// The Documents tab — every credential, most-recently-used first, with an add menu. Mirrors android
-/// `DocumentsScreen`. Tapping a row pushes the document detail.
+/// The Documents tab — every credential, most-recently-used first, under an inline title (android
+/// `DocumentsScreen`). Tapping a row pushes the document detail. There is no add button here — scanning is
+/// initiated from Home, matching android.
 struct DocumentsView: View {
     @Environment(WalletModel.self) private var model
     @State private var path: [WalletRoute] = []
@@ -15,6 +15,7 @@ struct DocumentsView: View {
         NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
+                    Text("Documents").font(WalletFont.titleLarge).foregroundStyle(WalletTheme.ink)
                     if ordered.isEmpty {
                         AddFirstDocument { model.showScanner = true }
                     } else {
@@ -23,26 +24,10 @@ struct DocumentsView: View {
                         }
                     }
                 }
-                .padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 24)
+                .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 24)
             }
             .walletScreenBackground()
-            .navigationTitle("Documents")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button { model.showScanner = true } label: {
-                            Label("Scan QR", systemImage: "qrcode.viewfinder")
-                        }
-                        Button {
-                            if let text = UIPasteboard.general.string { model.handleURI(text, source: "Pasted") }
-                        } label: {
-                            Label("Paste offer or request", systemImage: "doc.on.clipboard")
-                        }
-                    } label: {
-                        Image(systemName: "plus")
-                    }
-                }
-            }
+            .toolbar(.hidden, for: .navigationBar)
             .walletRouteDestinations(model)
         }
     }

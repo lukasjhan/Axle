@@ -3,8 +3,9 @@ import SwiftUI
 import Wallet
 
 // Shared UI building blocks — a port of android `ui/components/Components.kt` plus the reused rows from
-// `DocumentRow.kt` / `HomeScreen.kt`. Names that would collide with the issuance-flow pieces in
-// `IssueView.swift` (`InfoRow`, `TrustBadge`) are prefixed here (`WalletInfoRow`, `TrustPill`).
+// `DocumentRow.kt` / `HomeScreen.kt`. Fonts map onto the android `WalletTypography` slots via `WalletFont`.
+// Names that would collide with the issuance-flow pieces in `IssueView.swift` (`InfoRow`, `TrustBadge`) are
+// prefixed here (`WalletInfoRow`, `TrustPill`).
 
 // MARK: - Card & primitives
 
@@ -54,7 +55,7 @@ struct Pill: View {
 
     var body: some View {
         Text(text)
-            .font(.caption2.weight(.semibold))
+            .font(WalletFont.labelSmall)
             .padding(.horizontal, 11).padding(.vertical, 5)
             .background(bg, in: Capsule())
             .overlay { if let border { Capsule().strokeBorder(border, lineWidth: 1) } }
@@ -67,7 +68,7 @@ struct SecuredPill: View {
     var body: some View {
         HStack(spacing: 6) {
             Circle().fill(WalletTheme.trust).frame(width: 7, height: 7)
-            Text("Wallet secured").font(.caption2.weight(.semibold))
+            Text("Wallet secured").font(WalletFont.labelSmall)
         }
         .padding(.horizontal, 11).padding(.vertical, 5)
         .background(WalletTheme.trustBg, in: Capsule())
@@ -97,8 +98,8 @@ struct SectionLabel: View {
     init(_ text: String) { self.text = text }
     var body: some View {
         Text(text.uppercased())
-            .font(.caption.weight(.semibold))
-            .tracking(0.6)
+            .font(WalletFont.sectionLabel)
+            .tracking(0.8)
             .foregroundStyle(WalletTheme.inkFaint)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -112,7 +113,7 @@ struct DocTile: View {
 
     var body: some View {
         Text(glyph)
-            .font(.footnote.weight(.heavy))
+            .font(.custom("Manrope", size: 12).weight(.heavy))
             .foregroundStyle(.white)
             .frame(width: size, height: size)
             .background(
@@ -135,9 +136,9 @@ struct TrustRow: View {
             Image(systemName: "checkmark.shield.fill")
                 .font(.system(size: 13))
                 .foregroundStyle(ok ? WalletTheme.trust : WalletTheme.inkFaint)
-            Text(label).font(.subheadline).foregroundStyle(WalletTheme.inkBody)
+            Text(label).font(WalletFont.bodyMedium).foregroundStyle(WalletTheme.inkBody)
             Spacer()
-            Text(value).font(.subheadline.weight(.bold)).foregroundStyle(ok ? WalletTheme.trust : WalletTheme.inkMuted)
+            Text(value).font(WalletFont.bodyMediumStrong).foregroundStyle(ok ? WalletTheme.trust : WalletTheme.inkMuted)
         }
         .padding(.horizontal, 16).padding(.vertical, 12)
     }
@@ -153,10 +154,10 @@ struct WalletInfoRow: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
-                Text(label).font(.subheadline).foregroundStyle(WalletTheme.inkMuted)
+                Text(label).font(WalletFont.bodySmall).foregroundStyle(WalletTheme.inkMuted)
                 Spacer(minLength: 12)
                 Text(value)
-                    .font(.subheadline.weight(.bold))
+                    .font(WalletFont.bodyMediumStrong)
                     .foregroundStyle(valueColor ?? WalletTheme.ink)
                     .multilineTextAlignment(.trailing)
             }
@@ -177,14 +178,14 @@ struct DocumentRow: View {
             HStack(spacing: 13) {
                 DocTile(glyph: credGlyph(cred), colors: credGradient(cred))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(credTitle(cred)).font(.subheadline.weight(.semibold)).foregroundStyle(WalletTheme.ink).lineLimit(1)
+                    Text(credTitle(cred)).font(WalletFont.titleSmall).foregroundStyle(WalletTheme.ink).lineLimit(1)
                     if let issuer = cred.issuer?.displayName {
-                        Text(issuer).font(.caption).foregroundStyle(WalletTheme.inkMuted).lineLimit(1)
+                        Text(issuer).font(WalletFont.bodySmall).foregroundStyle(WalletTheme.inkMuted).lineLimit(1)
                     }
                 }
                 Spacer(minLength: 4)
                 Pill(text: "Valid", bg: WalletTheme.trustBg, fg: WalletTheme.trustDeep)
-                Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(WalletTheme.cardBorderStrong)
+                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(WalletTheme.cardBorderStrong)
             }
         }
     }
@@ -200,21 +201,21 @@ struct HeroCard: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
                     Text(credKicker(cred).uppercased())
-                        .font(.caption2.weight(.bold)).foregroundStyle(.white.opacity(0.85))
+                        .font(WalletFont.labelSmall).tracking(0.6).foregroundStyle(.white.opacity(0.85))
                     Spacer()
                     Pill(text: "eIDAS 2.0", bg: .white.opacity(0.12), fg: .white)
                 }
                 Spacer().frame(height: 26)
-                Text(credTitle(cred)).font(.title3.weight(.semibold)).foregroundStyle(.white)
+                Text(credTitle(cred)).font(WalletFont.titleMedium).foregroundStyle(.white)
                 if let issuer = cred.issuer?.displayName {
-                    Text(issuer).font(.caption).foregroundStyle(.white.opacity(0.75)).padding(.top, 3)
+                    Text(issuer).font(WalletFont.bodySmall).foregroundStyle(.white.opacity(0.75)).padding(.top, 3)
                 }
                 Spacer().frame(height: 18)
                 HStack {
-                    Text(validityLine(cred)).font(.caption).foregroundStyle(.white.opacity(0.75))
+                    Text(validityLine(cred)).font(WalletFont.bodySmall).foregroundStyle(.white.opacity(0.75))
                     Spacer()
                     if cred.issuer?.trusted == true {
-                        Text("✓ Verified").font(.caption2.weight(.semibold)).foregroundStyle(WalletTheme.gold)
+                        Text("✓ Verified").font(WalletFont.labelSmall).foregroundStyle(WalletTheme.gold)
                     }
                 }
             }
@@ -242,20 +243,20 @@ struct ActivityRow: View {
         WalletCard(padding: EdgeInsets(top: 13, leading: 13, bottom: 13, trailing: 13), onTap: onTap) {
             HStack(spacing: 12) {
                 Text(present ? "↑" : "↓")
-                    .font(.headline)
+                    .font(WalletFont.titleSmall)
                     .foregroundStyle(present ? WalletTheme.brand : WalletTheme.trust)
                     .frame(width: 34, height: 34)
                     .background(present ? WalletTheme.brandSoftBg : WalletTheme.trustBg, in: Circle())
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(counterparty).font(.subheadline.weight(.semibold)).foregroundStyle(WalletTheme.ink).lineLimit(1)
-                    Text(docsLabel).font(.caption).foregroundStyle(WalletTheme.inkMuted).lineLimit(1)
+                    Text(counterparty).font(WalletFont.titleSmall).foregroundStyle(WalletTheme.ink).lineLimit(1)
+                    Text(docsLabel).font(WalletFont.bodySmall).foregroundStyle(WalletTheme.inkMuted).lineLimit(1)
                 }
                 Spacer(minLength: 8)
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(entry.status.rawValue.capitalized)
-                        .font(.caption2.weight(.bold))
+                        .font(WalletFont.labelSmall)
                         .foregroundStyle(ok ? WalletTheme.trust : WalletTheme.danger)
-                    Text(shortTime(entry.timestamp)).font(.caption).foregroundStyle(WalletTheme.inkFaint)
+                    Text(shortTime(entry.timestamp)).font(WalletFont.bodySmall).foregroundStyle(WalletTheme.inkFaint)
                 }
             }
         }
@@ -282,13 +283,15 @@ struct AddFirstDocument: View {
     var body: some View {
         VStack(spacing: 14) {
             Image(systemName: "doc.badge.plus").font(.system(size: 40)).foregroundStyle(WalletTheme.brand)
-            Text("No documents yet").font(.headline).foregroundStyle(WalletTheme.ink)
+            Text("No documents yet").font(WalletFont.titleSmall).foregroundStyle(WalletTheme.ink)
             Text("Scan or paste an issuer offer to add your first document.")
-                .font(.subheadline).foregroundStyle(WalletTheme.inkMuted).multilineTextAlignment(.center)
+                .font(WalletFont.bodyMedium).foregroundStyle(WalletTheme.inkMuted).multilineTextAlignment(.center)
             Button(action: onScan) {
-                Label("Scan QR", systemImage: "qrcode.viewfinder").frame(maxWidth: .infinity)
+                Text("Scan QR").font(WalletFont.labelLarge).foregroundStyle(.white)
+                    .frame(maxWidth: .infinity).padding(.vertical, 14)
+                    .background(WalletTheme.brand, in: RoundedRectangle(cornerRadius: 14))
             }
-            .buttonStyle(.borderedProminent).controlSize(.large).tint(WalletTheme.brand)
+            .buttonStyle(.plain)
         }
         .padding(24)
         .frame(maxWidth: .infinity)
@@ -323,7 +326,7 @@ struct BusyOverlay: View {
             Color.black.opacity(0.35).ignoresSafeArea()
             VStack(spacing: 12) {
                 ProgressView()
-                Text(message).font(.callout)
+                Text(message).font(WalletFont.bodyLarge)
             }
             .padding(24)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))

@@ -2,6 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Manrope-Variable.ttf</string>
+		<string>JetBrainsMono-Variable.ttf</string>
+	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Axle Wallet uses the camera to scan QR codes for credential offers and presentation requests.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>

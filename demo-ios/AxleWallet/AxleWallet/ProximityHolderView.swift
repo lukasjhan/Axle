@@ -6,7 +6,7 @@ import Wallet
 
 /// Holder-side ISO 18013-5 proximity presentation over BLE — the iOS counterpart of android
 /// `ProximityHolderDialog`. Advertises a per-session BLE service, shows the QR DeviceEngagement for the
-/// reader to scan, then drives the `ProximityService.present` session through consent to a result.
+/// reader to scan, then drives `ProximityService.present` through consent to a result. Brand palette + Manrope.
 struct ProximityHolderView: View {
     let onClose: () -> Void
 
@@ -21,39 +21,39 @@ struct ProximityHolderView: View {
     enum Phase { case starting, engaging, consent, sending, done, declined, failed }
 
     var body: some View {
-        VStack(spacing: 0) {
-            content
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(WalletTheme.screen.ignoresSafeArea())
-        .task { await run() }
-        .onDisappear { teardown() }
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 20)
+            .background(WalletTheme.screen.ignoresSafeArea())
+            .task { await run() }
+            .onDisappear { teardown() }
     }
 
     @ViewBuilder private var content: some View {
         switch phase {
         case .starting:
-            CenteredStatus(system: nil, title: "Starting Bluetooth…", subtitle: "Preparing in-person sharing.", showsSpinner: true)
+            FlowLoading(title: "Starting Bluetooth…", subtitle: "Preparing in-person sharing.")
         case .engaging:
             engagingStep
         case .consent:
             if let request { consentStep(request) }
         case .sending:
-            CenteredStatus(system: nil, title: "Sharing…", subtitle: "Sending your document to the reader.", showsSpinner: true)
+            FlowLoading(title: "Sharing…", subtitle: "Sending your document to the reader.")
         case .done:
-            CenteredStatus(system: "checkmark.circle.fill", title: "Shared", subtitle: "Your document was presented in person.", tint: .green, button: ("Done", onClose))
+            FlowResult(kind: .success, title: "Shared", subtitle: "Your document was presented in person.", buttonTitle: "Done", onButton: onClose)
         case .declined:
-            CenteredStatus(system: "hand.raised.fill", title: "Declined", subtitle: "Nothing was shared.", tint: .orange, button: ("Close", onClose))
+            FlowResult(kind: .failure, title: "Declined", subtitle: "Nothing was shared.", buttonTitle: "Close", onButton: onClose)
         case .failed:
-            CenteredStatus(system: "exclamationmark.triangle.fill", title: "Couldn't share", subtitle: errorMessage ?? "The proximity session failed.", tint: .red, button: ("Close", onClose))
+            FlowResult(kind: .failure, title: "Couldn't share", subtitle: errorMessage ?? "The proximity session failed.", buttonTitle: "Close", onButton: onClose)
         }
     }
 
     private var engagingStep: some View {
         VStack(spacing: 20) {
-            Text("Show this to the reader").font(.title3.weight(.semibold)).foregroundStyle(WalletTheme.ink)
+            Spacer().frame(height: 8)
+            Text("Show this to the reader").font(WalletFont.titleMedium).foregroundStyle(WalletTheme.ink)
             Text("The verifier scans this code to connect over Bluetooth.")
-                .font(.subheadline).foregroundStyle(WalletTheme.inkMuted).multilineTextAlignment(.center)
+                .font(WalletFont.bodyMedium).foregroundStyle(WalletTheme.inkMuted).multilineTextAlignment(.center)
             Group {
                 if let qr {
                     Image(uiImage: qr)
@@ -65,41 +65,39 @@ struct ProximityHolderView: View {
                         .background(.white, in: RoundedRectangle(cornerRadius: 20))
                         .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(WalletTheme.cardBorder, lineWidth: 1))
                 } else {
-                    ProgressView()
+                    ProgressView().tint(WalletTheme.brand)
                 }
             }
             HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text("Waiting for the reader…").font(.footnote).foregroundStyle(WalletTheme.inkMuted)
+                ProgressView().controlSize(.small).tint(WalletTheme.brand)
+                Text("Waiting for the reader…").font(WalletFont.bodySmall).foregroundStyle(WalletTheme.inkMuted)
             }
             Spacer()
-            Button(role: .cancel) { cancel() } label: { Text("Cancel").frame(maxWidth: .infinity) }
-                .controlSize(.large).padding(.horizontal)
+            SecondaryButton(title: "Cancel") { cancel() }
         }
-        .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func consentStep(_ request: ProximityRequest) -> some View {
         VStack(spacing: 0) {
+            Text("Sharing request").font(WalletFont.titleMedium).foregroundStyle(WalletTheme.ink)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Spacer().frame(height: 16)
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Sharing request").font(.title2.weight(.bold)).foregroundStyle(WalletTheme.ink)
-
                     SectionLabel("Reader")
                     WalletCard {
                         HStack {
                             Text(request.reader.commonName ?? "Unverified reader")
-                                .font(.subheadline.weight(.semibold)).foregroundStyle(WalletTheme.ink)
+                                .font(WalletFont.titleSmall).foregroundStyle(WalletTheme.ink)
                             Spacer()
                             TrustPill(trusted: request.reader.trusted, trustedText: "Verified", untrustedText: "Unverified")
                         }
                     }
-
                     SectionLabel("Requested")
                     ForEach(Array(request.documents.enumerated()), id: \.offset) { _, doc in
                         WalletCard(padding: .flush) {
-                            Text(prettyConfig(doc.docType)).font(.subheadline.weight(.semibold)).foregroundStyle(WalletTheme.ink)
+                            Text(prettyConfig(doc.docType)).font(WalletFont.titleSmall).foregroundStyle(WalletTheme.ink)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 16).padding(.vertical, 12)
                             Rectangle().fill(WalletTheme.divider).frame(height: 1)
@@ -109,18 +107,13 @@ struct ProximityHolderView: View {
                         }
                     }
                     if !request.satisfiable {
-                        NoteText("You don't hold the requested document, so nothing can be shared.")
+                        FlowNote("You don't hold the requested document, so nothing can be shared.")
                     }
                 }
-                .padding()
             }
-            Footer(
-                primary: "Share",
-                secondary: "Decline",
-                primaryEnabled: request.satisfiable,
-                onPrimary: { session?.respond(ProximitySelection.auto(request)) },
-                onSecondary: { session?.decline() }
-            )
+            FlowFooter(primaryTitle: "Share", primaryEnabled: request.satisfiable,
+                       onPrimary: { session?.respond(ProximitySelection.auto(request)) },
+                       secondaryTitle: "Decline", onSecondary: { session?.decline() })
         }
     }
 
@@ -134,7 +127,7 @@ struct ProximityHolderView: View {
     // MARK: - Behavior
 
     private func run() async {
-        guard transport == nil else { return } // task can re-fire; start once
+        guard transport == nil else { return }
         let t = BlePeripheralTransport()
         transport = t
         do {

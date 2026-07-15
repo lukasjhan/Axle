@@ -3,15 +3,13 @@ import UIKit
 import Wallet
 import WalletAPI
 
-/// OpenID4VP remote presentation — a behavioral mirror of android `PresentScreen`. Drives the session
-/// from `.resolvingRequest` through consent (`.requestResolved`) to submit (`.submitting`) and the
-/// terminal `.completed`/`.failed`. On completion with a `redirectUri` the verifier's result URL is
-/// opened in the browser; otherwise an in-wallet "Shared" success is shown.
+/// OpenID4VP remote presentation — a 1:1 mirror of android `PresentScreen`, in behavior and layout. Drives
+/// the session from `.resolvingRequest` through consent (`.requestResolved`) to submit and the terminal
+/// `.completed`/`.failed`. Brand palette + Manrope + the shared cards. On completion with a `redirectUri`
+/// the verifier's result URL is opened; otherwise an in-wallet "Shared" success is shown.
 struct PresentView: View {
     let session: PresentationSession
-    /// Shared / opened-redirect path — dismiss and reload the wallet lists.
     let onDone: () -> Void
-    /// Declined or failed — dismiss without reload.
     let onCancel: () -> Void
 
     @State private var step: PresentStep = .resolving
@@ -26,11 +24,16 @@ struct PresentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if step == .review { header }
-            content
+            if step == .review {
+                Text("Sharing request").font(WalletFont.titleMedium).foregroundStyle(WalletTheme.ink)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Spacer().frame(height: 16)
+            }
+            content.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(.systemBackground).ignoresSafeArea())
+        .padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(WalletTheme.screen.ignoresSafeArea())
         .task { await loadCreds() }
         .task { await drive() }
         .alert("Decline this request?", isPresented: $confirmDecline) {
@@ -42,37 +45,18 @@ struct PresentView: View {
         .interactiveDismissDisabled(true)
     }
 
-    private var header: some View {
-        HStack {
-            Button { confirmDecline = true } label: {
-                Image(systemName: "chevron.left").font(.headline)
-                    .frame(width: 36, height: 36)
-                    .background(Color(.secondarySystemBackground), in: Circle())
-            }
-            Spacer()
-            Text("Sharing request").font(.headline)
-            Spacer()
-            Color.clear.frame(width: 36, height: 36)
-        }
-        .padding()
-    }
-
     @ViewBuilder private var content: some View {
         switch step {
         case .resolving:
-            CenteredStatus(system: nil, title: "Resolving request…", subtitle: "Verifying who is asking.", showsSpinner: true)
+            FlowLoading(title: "Resolving request…", subtitle: "Verifying who is asking.")
         case .review:
-            if let request { reviewStep(request) } else { EmptyView() }
+            if let request { reviewStep(request) }
         case .sharing:
-            CenteredStatus(system: nil, title: "Sharing…", subtitle: "Sending the selected data to the verifier.", showsSpinner: true)
+            FlowLoading(title: "Sharing…", subtitle: "Sending the selected data to the verifier.")
         case .shared:
-            CenteredStatus(system: "checkmark.circle.fill", title: "Shared",
-                           subtitle: "The verifier received the selected data.", tint: .green,
-                           button: ("Done", onDone))
+            FlowResult(kind: .success, title: "Shared", subtitle: "The verifier received the selected data.", buttonTitle: "Done", onButton: onDone)
         case .failed:
-            CenteredStatus(system: "exclamationmark.triangle.fill", title: "Couldn't share",
-                           subtitle: errorMessage ?? "The presentation failed.", tint: .red,
-                           button: ("Close", onCancel))
+            FlowResult(kind: .failure, title: "Couldn't share", subtitle: errorMessage ?? "The presentation failed.", buttonTitle: "Close", onButton: onCancel)
         }
     }
 
@@ -81,63 +65,58 @@ struct PresentView: View {
     private func reviewStep(_ request: PresentationRequest) -> some View {
         VStack(spacing: 0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 16) {
                     verifierCard(request.verifier)
-                    trustSection(request.verifier)
-                    if let purpose = purposeText(request.verifier.registration?.purpose) {
-                        Section2(title: "Purpose") { NoteText(purpose) }
-                    }
-                    if let reg = request.verifier.registration, !reg.unregisteredClaims.isEmpty {
-                        NoteText("⚠ This verifier is requesting attributes it isn't registered for.")
-                    }
-                    Section2(title: "You'll share") {
-                        VStack(spacing: 12) {
-                            ForEach(sortedQueries(request), id: \.queryId) { query in
-                                queryCard(query)
-                            }
-                        }
-                    }
-                    Text("Required attributes are always shared; optional ones are off unless you turn them on. Everything else stays on this device.")
-                        .font(.footnote).foregroundStyle(.secondary)
+                    SectionLabel("Trust")
+                    trustCard(request.verifier)
+                    if let reg = request.verifier.registration { purposeSection(reg) }
+                    SectionLabel("You'll share")
+                    ForEach(sortedQueries(request), id: \.queryId) { queryCard($0) }
+                    FlowNote("Required attributes are always shared; optional ones are off unless you turn them on. Everything else stays on this device.")
                 }
-                .padding()
             }
-            Footer(primary: "Share", secondary: "Decline",
-                   primaryEnabled: request.satisfiable,
-                   onPrimary: { share() },
-                   onSecondary: { confirmDecline = true })
+            FlowFooter(primaryTitle: "Share", primaryEnabled: request.satisfiable,
+                       onPrimary: { share() }, secondaryTitle: "Decline", onSecondary: { confirmDecline = true })
         }
     }
 
     private func verifierCard(_ verifier: VerifierInfo) -> some View {
-        HStack(spacing: 12) {
-            Text(String(rpName(verifier).prefix(1)).uppercased())
-                .font(.title3.weight(.bold)).foregroundStyle(.white)
-                .frame(width: 42, height: 42)
-                .background(Color.blue, in: RoundedRectangle(cornerRadius: 10))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(rpName(verifier)).font(.body.weight(.semibold))
-                Text(rpSubtitle(verifier)).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
+        WalletCard {
+            HStack(spacing: 12) {
+                Text(String(rpName(verifier).prefix(1)).uppercased())
+                    .font(WalletFont.titleMedium).foregroundStyle(.white)
+                    .frame(width: 42, height: 42)
+                    .background(WalletTheme.ink, in: RoundedRectangle(cornerRadius: 12))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(rpName(verifier)).font(WalletFont.titleSmall).foregroundStyle(WalletTheme.ink)
+                    Text(rpSubtitle(verifier)).font(WalletFont.bodySmall).foregroundStyle(WalletTheme.inkMuted).lineLimit(1)
+                }
+                Spacer()
+                TrustPill(trusted: verifier.trusted, trustedText: "Verified", untrustedText: "Unverified")
             }
-            Spacer()
-            TrustBadge(ok: verifier.trusted, okText: "Verified", badText: "Unverified")
         }
-        .padding()
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
     }
 
-    private func trustSection(_ verifier: VerifierInfo) -> some View {
-        Section2(title: "Trust") {
-            VStack(spacing: 0) {
-                InfoRow(title: "Signed request", value: verifier.trusted ? "Verified" : "Not verified")
-                if let reg = verifier.registration {
-                    InfoRow(title: "Registration",
-                            value: reg.attested ? "Verified by registrar" : reg.registrarVerified ? "Confirmed online" : "Self-declared")
-                    if let statusValid = reg.statusValid {
-                        InfoRow(title: "Registration status", value: statusValid ? "Valid" : "Revoked")
-                    }
-                } else {
-                    InfoRow(title: "Registration", value: "None")
+    private func trustCard(_ verifier: VerifierInfo) -> some View {
+        WalletCard(padding: .flush) {
+            TrustRow(label: "Signed request", value: verifier.trusted ? "Verified" : "Not verified", ok: verifier.trusted)
+            Rectangle().fill(WalletTheme.divider).frame(height: 1)
+            let reg = verifier.registration
+            let (text, ok) = registrationVerdict(reg)
+            TrustRow(label: "Registration (WRPRC)", value: text, ok: ok)
+        }
+    }
+
+    private func purposeSection(_ reg: VerifierRegistration) -> some View {
+        let overAsking = !reg.unregisteredClaims.isEmpty
+        return VStack(alignment: .leading, spacing: 8) {
+            SectionLabel("Purpose")
+            WalletCard {
+                HStack(spacing: 10) {
+                    Text(purposeText(reg.purpose) ?? "Attribute request")
+                        .font(WalletFont.bodyMedium).foregroundStyle(WalletTheme.ink)
+                    Spacer()
+                    TrustPill(trusted: !overAsking, trustedText: "In scope", untrustedText: "Out of scope")
                 }
             }
         }
@@ -145,58 +124,106 @@ struct PresentView: View {
 
     private func queryCard(_ query: QueryPresentation) -> some View {
         let willShare = query.required || (included[query.queryId] ?? false)
-        let selectedId = chosen[query.queryId]?.first ?? query.candidates.first?.credentialId
-        let candidate = query.candidates.first { $0.credentialId == selectedId } ?? query.candidates.first
-        return VStack(alignment: .leading, spacing: 10) {
+        let selectedIds = chosen[query.queryId] ?? []
+        let primaryId = selectedIds.first ?? query.candidates.first?.credentialId
+        let primaryCand = query.candidates.first { $0.credentialId == primaryId } ?? query.candidates.first
+        let primaryCred = primaryId.flatMap { credsById[$0] }
+        let leaves = sharedLeaves(primaryCred, primaryCand?.disclosedPaths ?? [])
+
+        return WalletCard(padding: .flush) {
+            // header: document + optional toggle
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(credTitle(selectedId)).font(.body.weight(.semibold))
-                    Text(query.required ? "Required" : "Optional").font(.caption).foregroundStyle(.secondary)
+                    Text(primaryCred.map { credTitle($0) } ?? query.queryId)
+                        .font(WalletFont.titleSmall).foregroundStyle(willShare ? WalletTheme.ink : WalletTheme.inkFaint)
+                    Text(query.required ? "Required" : "Optional").font(WalletFont.bodySmall).foregroundStyle(WalletTheme.inkMuted)
                 }
                 Spacer()
                 if !query.required {
-                    Toggle("", isOn: Binding(
-                        get: { included[query.queryId] ?? false },
-                        set: { included[query.queryId] = $0 }
-                    )).labelsHidden()
+                    Toggle("", isOn: Binding(get: { included[query.queryId] ?? false }, set: { included[query.queryId] = $0 }))
+                        .labelsHidden().tint(WalletTheme.brand)
                 }
             }
+            .padding(.horizontal, 16).padding(.vertical, 12)
+
             if query.candidates.isEmpty {
-                Text("No matching document in your wallet.").font(.footnote).foregroundStyle(.red)
+                cardDivider
+                Text("No matching document in your wallet.")
+                    .font(WalletFont.bodySmall).foregroundStyle(WalletTheme.danger)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16).padding(.vertical, 12)
             } else {
                 if query.candidates.count > 1 {
+                    cardDivider
+                    groupHeader("Choose a document")
                     ForEach(query.candidates, id: \.credentialId) { cand in
-                        candidateRow(query, cand)
+                        candidateCard(query, cand, selectedIds: selectedIds)
                     }
+                    Spacer().frame(height: 6)
                 }
-                if let candidate {
-                    Divider()
-                    ForEach(Array(candidate.disclosedPaths.enumerated()), id: \.offset) { _, path in
-                        InfoRow(title: claimLabel(path), value: willShare ? "Shared" : "Off")
+                cardDivider
+                groupHeader(query.required ? "Shared" : "Optional")
+                if leaves.isEmpty {
+                    Text("No personal attributes.")
+                        .font(WalletFont.bodySmall).foregroundStyle(WalletTheme.inkMuted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16).padding(.bottom, 12)
+                } else {
+                    ForEach(Array(leaves.enumerated()), id: \.offset) { _, claim in
+                        WalletInfoRow(label: claimLabel(claim.path),
+                                      value: willShare ? claim.value.display() : "Off",
+                                      valueColor: willShare ? WalletTheme.ink : WalletTheme.inkFaint)
                     }
                 }
             }
         }
-        .padding()
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
     }
 
-    private func candidateRow(_ query: QueryPresentation, _ candidate: PresentationCandidate) -> some View {
-        let isSelected = (chosen[query.queryId] ?? []).contains(candidate.credentialId)
-        let icon = query.multiple
-            ? (isSelected ? "checkmark.square.fill" : "square")
-            : (isSelected ? "largecircle.fill.circle" : "circle")
+    private func candidateCard(_ query: QueryPresentation, _ candidate: PresentationCandidate, selectedIds: [CredentialId]) -> some View {
+        let checked = selectedIds.contains(candidate.credentialId)
+        let cred = credsById[candidate.credentialId]
+        let shape = RoundedRectangle(cornerRadius: 12)
         return Button {
             toggleCandidate(query, candidate.credentialId)
         } label: {
-            HStack {
-                Image(systemName: icon).foregroundStyle(isSelected ? Color.accentColor : .secondary)
-                Text(credTitle(candidate.credentialId))
+            HStack(spacing: 12) {
+                if let cred { DocTile(glyph: credGlyph(cred), colors: credGradient(cred), size: 40) }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(cred.map { credTitle($0) } ?? "Credential").font(WalletFont.titleSmall).foregroundStyle(WalletTheme.ink)
+                    let subtitle = candidateSubtitle(cred, candidate.disclosedPaths)
+                    if !subtitle.isEmpty {
+                        Text(subtitle).font(WalletFont.bodySmall).foregroundStyle(WalletTheme.inkMuted).lineLimit(1)
+                    }
+                }
                 Spacer()
+                selectionIndicator(checked: checked, multiple: query.multiple)
             }
+            .padding(10)
+            .background(checked ? WalletTheme.brand.opacity(0.06) : WalletTheme.card, in: shape)
+            .overlay(shape.strokeBorder(checked ? WalletTheme.brand : WalletTheme.cardBorder, lineWidth: checked ? 1.5 : 1))
         }
         .buttonStyle(.plain)
+        .padding(.horizontal, 12).padding(.vertical, 5)
     }
+
+    private func selectionIndicator(checked: Bool, multiple: Bool) -> some View {
+        let shape = RoundedRectangle(cornerRadius: multiple ? 6 : 99)
+        return ZStack {
+            shape.fill(checked ? WalletTheme.brand : Color.clear)
+            shape.strokeBorder(checked ? WalletTheme.brand : WalletTheme.cardBorderStrong, lineWidth: 2)
+            if checked { Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.white) }
+        }
+        .frame(width: 20, height: 20)
+    }
+
+    private func groupHeader(_ text: String) -> some View {
+        Text(text.uppercased())
+            .font(WalletFont.labelSmall).tracking(0.6).foregroundStyle(WalletTheme.inkFaint)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 4)
+    }
+
+    private var cardDivider: some View { Rectangle().fill(WalletTheme.divider).frame(height: 1) }
 
     // MARK: - Behavior
 
@@ -257,7 +284,7 @@ struct PresentView: View {
             var ids = chosen[query.queryId] ?? []
             if let idx = ids.firstIndex(of: id) {
                 ids.remove(at: idx)
-                if ids.isEmpty { ids = [id] } // never below one (§6.1)
+                if ids.isEmpty { ids = [id] }
             } else {
                 ids.append(id)
             }
@@ -268,8 +295,6 @@ struct PresentView: View {
     }
 
     private func share() {
-        // Biometric confirm-to-share is gated on onboarding (Phase 6); with biometrics not yet enabled the
-        // android flow also skips the prompt, so we submit directly.
         step = .sharing
         session.respond(buildSelection())
     }
@@ -290,6 +315,26 @@ struct PresentView: View {
 
     // MARK: - Display helpers
 
+    private func registrationVerdict(_ reg: VerifierRegistration?) -> (String, Bool) {
+        guard let reg else { return ("None", false) }
+        let sigOk = reg.attested || reg.registrarVerified
+        if !sigOk { return ("Self-declared", false) }
+        if reg.statusValid == false { return ("Revoked", false) }
+        return ("Verified by registrar", true)
+    }
+
+    private func sharedLeaves(_ cred: Credential?, _ disclosed: [[String]]) -> [Claim] {
+        guard let cred, case let .issued(claims, _, _) = cred.lifecycle else { return [] }
+        func isDisclosed(_ path: [String]) -> Bool {
+            disclosed.contains { d in d.count <= path.count && Array(path.prefix(d.count)) == d }
+        }
+        return claims.filter { $0.category == .subject && isDisclosed($0.path) }
+    }
+
+    private func candidateSubtitle(_ cred: Credential?, _ disclosed: [[String]]) -> String {
+        sharedLeaves(cred, disclosed).map { $0.value.display() }.filter { !$0.isEmpty }.prefix(2).joined(separator: " · ")
+    }
+
     private func rpName(_ verifier: VerifierInfo) -> String {
         if let name = verifier.registration?.subjectName, !name.isEmpty { return name }
         if let subject = verifier.registration?.subject, !subject.isEmpty { return subject }
@@ -309,11 +354,6 @@ struct PresentView: View {
 
     private func sortedQueries(_ request: PresentationRequest) -> [QueryPresentation] {
         request.queries.sorted { $0.required && !$1.required }
-    }
-
-    private func credTitle(_ id: CredentialId?) -> String {
-        guard let id, let cred = credsById[id] else { return "Credential" }
-        return cred.display?.name ?? cred.configurationId ?? prettyConfig(docTypeOrVct(cred.format))
     }
 
     private func claimLabel(_ path: [String]) -> String {

@@ -25,7 +25,7 @@ struct TransactionDetailView: View {
                 counterparty
                 documentsSection
                 if let error = entry.error {
-                    WalletCard { Text(error).font(.subheadline).foregroundStyle(WalletTheme.danger) }
+                    WalletCard { Text(error).font(WalletFont.bodyMedium).foregroundStyle(WalletTheme.danger) }
                 }
             }
             .padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 28)
@@ -37,7 +37,7 @@ struct TransactionDetailView: View {
     private var topBar: some View {
         HStack(spacing: 10) {
             CircleIconButton(system: "chevron.left") { dismiss() }
-            Text(present ? "Shared" : "Issued").font(.headline).foregroundStyle(WalletTheme.ink)
+            Text(present ? "Shared" : "Issued").font(WalletFont.titleMedium).foregroundStyle(WalletTheme.ink)
             Spacer()
         }
     }
@@ -46,18 +46,18 @@ struct TransactionDetailView: View {
         WalletCard {
             HStack(spacing: 13) {
                 Text(present ? "↑" : "↓")
-                    .font(.title3)
+                    .font(WalletFont.titleMedium)
                     .foregroundStyle(present ? WalletTheme.brand : WalletTheme.trust)
                     .frame(width: 44, height: 44)
                     .background(present ? WalletTheme.brandSoftBg : WalletTheme.trustBg, in: Circle())
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(WalletTheme.ink)
-                    Text(fullTime(entry.timestamp)).font(.caption).foregroundStyle(WalletTheme.inkMuted)
+                    Text(title).font(WalletFont.titleSmall).foregroundStyle(WalletTheme.ink)
+                    Text(fullTime(entry.timestamp)).font(WalletFont.bodySmall).foregroundStyle(WalletTheme.inkMuted)
                 }
                 Spacer(minLength: 8)
                 VStack(alignment: .trailing, spacing: 6) {
                     Text(entry.status.rawValue.capitalized)
-                        .font(.caption2.weight(.bold))
+                        .font(WalletFont.labelSmall)
                         .foregroundStyle(ok ? WalletTheme.trust : WalletTheme.danger)
                     if let transport = entry.transport {
                         Pill(text: transportLabel(transport), bg: WalletTheme.screen, fg: WalletTheme.inkMuted)
@@ -94,7 +94,7 @@ struct TransactionDetailView: View {
                     WalletCard {
                         HStack(spacing: 10) {
                             Text(purpose.isEmpty ? "Attribute request" : purpose)
-                                .font(.subheadline).foregroundStyle(WalletTheme.ink)
+                                .font(WalletFont.bodyMedium).foregroundStyle(WalletTheme.ink)
                             Spacer()
                             if let outOfScope = rp.outOfScope {
                                 TrustPill(trusted: !outOfScope, trustedText: "In scope", untrustedText: "Out of scope")
@@ -110,7 +110,7 @@ struct TransactionDetailView: View {
                     WalletCard(padding: .flush) {
                         ForEach(Array(rp.entitlements.enumerated()), id: \.offset) { i, ent in
                             if i > 0 { Rectangle().fill(WalletTheme.divider).frame(height: 1) }
-                            Text(ent).font(.subheadline).foregroundStyle(WalletTheme.inkBody)
+                            Text(ent).font(WalletFont.bodyMedium).foregroundStyle(WalletTheme.inkBody)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 16).padding(.vertical, 13)
                         }
@@ -137,7 +137,7 @@ struct TransactionDetailView: View {
                 SectionLabel(present ? "Data shared" : "Data received")
                 ForEach(Array(entry.documents.enumerated()), id: \.offset) { _, doc in
                     WalletCard(padding: .flush) {
-                        Text(doc.type ?? doc.format).font(.subheadline.weight(.semibold)).foregroundStyle(WalletTheme.ink)
+                        Text(doc.type ?? doc.format).font(WalletFont.titleSmall).foregroundStyle(WalletTheme.ink)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 16).padding(.vertical, 12)
                         Rectangle().fill(WalletTheme.divider).frame(height: 1)
