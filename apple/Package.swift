@@ -57,6 +57,8 @@ let package = Package(
         .target(
             name: "AppleDcApi",
             dependencies: [
+                // Shared App Group / keychain group constants (reader-anchor cache location).
+                "AppleCore",
                 // The facade the app + extension drive: credentials list/changes + proximity.respondDcApiMdoc.
                 .product(name: "Wallet", package: "swift"),
                 // Credential / CredentialFormat / CredentialId the registrar reads.

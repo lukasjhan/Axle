@@ -19,6 +19,16 @@
 		AAE0000000000000000000D4 /* AxleWalletIDProvider.appex in Embed ExtensionKit Extensions */ = {isa = PBXBuildFile; fileRef = AAE0000000000000000000F6 /* AxleWalletIDProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		AAE0000000000000000000BB /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 8024B7723007647900996FD8 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AAE0000000000000000000F2;
+			remoteInfo = AxleWalletIDProvider;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXCopyFilesBuildPhase section */
 		AAE0000000000000000000CA /* Embed ExtensionKit Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
@@ -252,16 +262,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
-
-/* Begin PBXContainerItemProxy section */
-		AAE0000000000000000000BB /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 8024B7723007647900996FD8 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = AAE0000000000000000000F2;
-			remoteInfo = AxleWalletIDProvider;
-		};
-/* End PBXContainerItemProxy section */
 
 /* Begin PBXTargetDependency section */
 		AAE0000000000000000000BA /* PBXTargetDependency */ = {

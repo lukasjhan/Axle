@@ -1,5 +1,6 @@
 import AppleAttestation
 import AppleCore
+import AppleDcApi
 import Foundation
 import Wallet
 
@@ -41,6 +42,9 @@ enum DemoWallet {
             cacheDir: cacheDirectory().appendingPathComponent("trust"),
             log: { message in Task { @MainActor in LogStore.shared.log(message) } }
         )
+        // Share the reader anchors with the DC API provider extension (a separate, offline process) so its consent
+        // screen can mark a requester verified (reader authentication chained to a trusted reader anchor).
+        DcApiReaderTrust.cache(readerAnchorsDer: trust.reader)
 
         // Wallet Provider backend: the client-auth WUA (attestation-based client auth) and the per-issuance key
         // attestation the local issuer requires. App Attest proves a genuine instance of our app at registration
