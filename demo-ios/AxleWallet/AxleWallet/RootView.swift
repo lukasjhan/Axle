@@ -13,7 +13,7 @@ struct RootView: View {
         content
             .environment(appLock)
             .preferredColorScheme(.light)
-            .task { await DemoWallet.boot(); walletReady = true }
+            .task { WalletSecurity.syncSharedGroup(); await DemoWallet.boot(); walletReady = true }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .background { appLock.lock() }
             }

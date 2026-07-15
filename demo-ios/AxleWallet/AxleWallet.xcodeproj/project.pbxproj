@@ -13,12 +13,12 @@
 		AA30000000000000000000C4 /* AppleProximity in Frameworks */ = {isa = PBXBuildFile; productRef = AA20000000000000000000B4 /* AppleProximity */; };
 		AA30000000000000000000C5 /* AppleAttestation in Frameworks */ = {isa = PBXBuildFile; productRef = AA20000000000000000000B5 /* AppleAttestation */; };
 		AA30000000000000000000C6 /* AppleDcApi in Frameworks */ = {isa = PBXBuildFile; productRef = AA20000000000000000000B6 /* AppleDcApi */; };
+		AA30000000000000000000C7 /* MDoc in Frameworks */ = {isa = PBXBuildFile; productRef = AA20000000000000000000B7 /* MDoc */; };
+		AA30000000000000000000C8 /* CborCose in Frameworks */ = {isa = PBXBuildFile; productRef = AA20000000000000000000B8 /* CborCose */; };
 		AAE0000000000000000000D1 /* AppleDcApi in Frameworks */ = {isa = PBXBuildFile; productRef = AAE0000000000000000000E1 /* AppleDcApi */; };
 		AAE0000000000000000000D2 /* AppleCore in Frameworks */ = {isa = PBXBuildFile; productRef = AAE0000000000000000000E2 /* AppleCore */; };
 		AAE0000000000000000000D3 /* Wallet in Frameworks */ = {isa = PBXBuildFile; productRef = AAE0000000000000000000E3 /* Wallet */; };
 		AAE0000000000000000000D4 /* AxleWalletIDProvider.appex in Embed ExtensionKit Extensions */ = {isa = PBXBuildFile; fileRef = AAE0000000000000000000F6 /* AxleWalletIDProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		AA30000000000000000000C7 /* MDoc in Frameworks */ = {isa = PBXBuildFile; productRef = AA20000000000000000000B7 /* MDoc */; };
-		AA30000000000000000000C8 /* CborCose in Frameworks */ = {isa = PBXBuildFile; productRef = AA20000000000000000000B8 /* CborCose */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -585,16 +585,6 @@
 			package = AA10000000000000000000A1 /* XCLocalSwiftPackageReference "../../swift" */;
 			productName = WalletTestKit;
 		};
-		AA20000000000000000000B7 /* MDoc */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = AA10000000000000000000A1 /* XCLocalSwiftPackageReference "../../swift" */;
-			productName = MDoc;
-		};
-		AA20000000000000000000B8 /* CborCose */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = AA10000000000000000000A1 /* XCLocalSwiftPackageReference "../../swift" */;
-			productName = CborCose;
-		};
 		AA20000000000000000000B3 /* AppleCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = AA10000000000000000000A2 /* XCLocalSwiftPackageReference "../../apple" */;
@@ -614,6 +604,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = AA10000000000000000000A2 /* XCLocalSwiftPackageReference "../../apple" */;
 			productName = AppleDcApi;
+		};
+		AA20000000000000000000B7 /* MDoc */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA10000000000000000000A1 /* XCLocalSwiftPackageReference "../../swift" */;
+			productName = MDoc;
+		};
+		AA20000000000000000000B8 /* CborCose */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA10000000000000000000A1 /* XCLocalSwiftPackageReference "../../swift" */;
+			productName = CborCose;
 		};
 		AAE0000000000000000000E1 /* AppleDcApi */ = {
 			isa = XCSwiftPackageProductDependency;

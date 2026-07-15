@@ -4,6 +4,8 @@
 <dict>
 	<key>CFBundleDisplayName</key>
 	<string>Axle Wallet</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Axle Wallet uses Face ID to confirm before sharing your ID.</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>Manrope-Variable.ttf</string>

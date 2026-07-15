@@ -1,3 +1,4 @@
+import AppleCore
 import CommonCrypto
 import Foundation
 
@@ -9,10 +10,20 @@ enum WalletSecurity {
     private static let iterations: UInt32 = 120_000
     private static let onboardedKey = "wallet.onboarded"
     private static let biometricKey = "wallet.biometric"
+    /// The biometric flag is mirrored into the shared App Group so the DC API provider extension (a separate
+    /// process that can't read the app's `standard` defaults) can honour the same "require Face ID to share" setting.
+    private static let sharedDefaults = UserDefaults(suiteName: AppleSharedGroups.appGroup)
 
     static var isOnboarded: Bool { UserDefaults.standard.bool(forKey: onboardedKey) }
     static var biometricEnabled: Bool { UserDefaults.standard.bool(forKey: biometricKey) }
-    static func setBiometricEnabled(_ enabled: Bool) { UserDefaults.standard.set(enabled, forKey: biometricKey) }
+    static func setBiometricEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: biometricKey)
+        sharedDefaults?.set(enabled, forKey: biometricKey)
+    }
+
+    /// Mirror the current biometric preference into the shared App Group — call once on launch so an already
+    /// onboarded install populates it for the extension (write-through covers subsequent changes).
+    static func syncSharedGroup() { sharedDefaults?.set(biometricEnabled, forKey: biometricKey) }
 
     static func setPin(_ pin: String) {
         var salt = [UInt8](repeating: 0, count: 16)
@@ -31,6 +42,7 @@ enum WalletSecurity {
         setPin(pin)
         UserDefaults.standard.set(biometric, forKey: biometricKey)
         UserDefaults.standard.set(true, forKey: onboardedKey)
+        sharedDefaults?.set(biometric, forKey: biometricKey)
     }
 
     /// Factory reset: clear the PIN and flags so the wallet re-onboards.
@@ -39,6 +51,7 @@ enum WalletSecurity {
         keychainDelete("hash")
         UserDefaults.standard.removeObject(forKey: onboardedKey)
         UserDefaults.standard.removeObject(forKey: biometricKey)
+        sharedDefaults?.removeObject(forKey: biometricKey)
     }
 
     // MARK: - PBKDF2 (SHA-256, 120k iterations — matches android)

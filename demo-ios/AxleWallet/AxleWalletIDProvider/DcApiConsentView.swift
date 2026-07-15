@@ -131,7 +131,6 @@ struct DcApiConsentView: View {
     }
 
     private func share() {
-        phase = .sharing
         // Hoist to locals so the @Sendable response closure captures Sendable values, not the MainActor view.
         let context = self.context
         let wallet = ExtensionWallet.shared
@@ -142,7 +141,14 @@ struct DcApiConsentView: View {
             for claim in doc.claims { namespaces[claim.namespace, default: []].insert(claim.element) }
             acc[doc.docType] = namespaces
         }
+        let reason = "Confirm to share your ID with \(readerTitle)"
         Task {
+            // Biometric confirm before sharing, matching the app's remote / in-person present flows.
+            if ExtensionBiometrics.required, await !ExtensionBiometrics.authenticate(reason: reason) {
+                phase = .failed("Authentication cancelled")
+                return
+            }
+            phase = .sharing
             do {
                 try await context.sendResponse { rawRequest in
                     let data = try await DcApiResponder.responseData(
