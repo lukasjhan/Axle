@@ -4,6 +4,13 @@
 <dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Axle Wallet uses the camera to scan QR codes for credential offers and presentation requests.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Axle Wallet uses Bluetooth to present and read documents in person (ISO 18013-5 proximity).</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-peripheral</string>
+		<string>bluetooth-central</string>
+	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

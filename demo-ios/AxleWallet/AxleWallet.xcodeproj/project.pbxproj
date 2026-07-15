@@ -10,6 +10,7 @@
 		AA30000000000000000000C1 /* Wallet in Frameworks */ = {isa = PBXBuildFile; productRef = AA20000000000000000000B1 /* Wallet */; };
 		AA30000000000000000000C2 /* WalletTestKit in Frameworks */ = {isa = PBXBuildFile; productRef = AA20000000000000000000B2 /* WalletTestKit */; };
 		AA30000000000000000000C3 /* AppleCore in Frameworks */ = {isa = PBXBuildFile; productRef = AA20000000000000000000B3 /* AppleCore */; };
+		AA30000000000000000000C4 /* AppleProximity in Frameworks */ = {isa = PBXBuildFile; productRef = AA20000000000000000000B4 /* AppleProximity */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -45,6 +46,7 @@
 				AA30000000000000000000C1 /* Wallet in Frameworks */,
 				AA30000000000000000000C2 /* WalletTestKit in Frameworks */,
 				AA30000000000000000000C3 /* AppleCore in Frameworks */,
+				AA30000000000000000000C4 /* AppleProximity in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -90,6 +92,7 @@
 				AA20000000000000000000B1 /* Wallet */,
 				AA20000000000000000000B2 /* WalletTestKit */,
 				AA20000000000000000000B3 /* AppleCore */,
+				AA20000000000000000000B4 /* AppleProximity */,
 			);
 			productName = AxleWallet;
 			productReference = 8024B77A3007647900996FD8 /* AxleWallet.app */;
@@ -394,6 +397,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = AA10000000000000000000A2 /* XCLocalSwiftPackageReference "../../apple" */;
 			productName = AppleCore;
+		};
+		AA20000000000000000000B4 /* AppleProximity */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA10000000000000000000A2 /* XCLocalSwiftPackageReference "../../apple" */;
+			productName = AppleProximity;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

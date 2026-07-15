@@ -11,6 +11,8 @@ let package = Package(
     products: [
         // Mirrors android/core: SecureArea, StorageDriver, TransactionLogStore, HttpTransport, WalletLogger.
         .library(name: "AppleCore", targets: ["AppleCore"]),
+        // Mirrors android/proximity: ISO 18013-5 BLE ProximityTransport (peripheral holder + central reader).
+        .library(name: "AppleProximity", targets: ["AppleProximity"]),
     ],
     dependencies: [
         .package(path: "../swift"),
@@ -24,6 +26,18 @@ let package = Package(
                 .product(name: "CborCose", package: "swift"),
                 // FileTransactionLogStore persists entries; re-exported so the app sees the txlog types.
                 .product(name: "TransactionLog", package: "swift"),
+            ]
+        ),
+        .target(
+            name: "AppleProximity",
+            dependencies: [
+                // ProximityTransport port + NfcCarrier.
+                .product(name: "WalletAPI", package: "swift"),
+                // DeviceEngagement.bleRetrievalMethod / parseBle — the ISO 18013-5 BLE engagement helpers.
+                .product(name: "Proximity", package: "swift"),
+                // RequestedDocument / VerifiedDocument so the reader helpers keep MDoc/Cbor out of the app.
+                .product(name: "MDoc", package: "swift"),
+                .product(name: "CborCose", package: "swift"),
             ]
         ),
     ]

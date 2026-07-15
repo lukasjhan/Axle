@@ -9,6 +9,8 @@ import WalletAPI // CredentialId.value
 struct HomeView: View {
     @Environment(WalletModel.self) private var model
     @State private var path: [WalletRoute] = []
+    @State private var showReader = false
+    @State private var showProximity = false
 
     private var ordered: [Credential] { model.credentials.byRecentUse(model.transactions) }
     private var hero: Credential? { ordered.first { credIsPid($0) } ?? ordered.first }
@@ -50,6 +52,12 @@ struct HomeView: View {
             .navigationBarHidden(true)
             .walletRouteDestinations(model)
         }
+        .fullScreenCover(isPresented: $showReader) {
+            ReaderView { showReader = false }
+        }
+        .fullScreenCover(isPresented: $showProximity) {
+            ProximityHolderView { showProximity = false }
+        }
     }
 
     private var header: some View {
@@ -64,12 +72,12 @@ struct HomeView: View {
     }
 
     private var quickActions: some View {
+        // Scan (issuer offer / verifier request), Present (show a document in person over BLE), Reader
+        // (verify someone else's document). Paste lives in the Documents "+" menu. Mirrors android's trio.
         HStack(spacing: 10) {
             QuickAction(label: "Scan", system: "qrcode.viewfinder", primary: true) { model.showScanner = true }
-            QuickAction(label: "Paste", system: "doc.on.clipboard", primary: false) {
-                if let text = UIPasteboard.general.string { model.handleURI(text, source: "Pasted") }
-            }
-            // Proximity + Reader quick actions arrive with AppleProximity (Phase 4).
+            QuickAction(label: "Present", system: "dot.radiowaves.left.and.right", primary: false) { showProximity = true }
+            QuickAction(label: "Reader", system: "doc.text.viewfinder", primary: false) { showReader = true }
         }
     }
 
