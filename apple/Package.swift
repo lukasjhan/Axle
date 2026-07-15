@@ -20,6 +20,8 @@ let package = Package(
             name: "AppleCore",
             dependencies: [
                 .product(name: "WalletAPI", package: "swift"),
+                // EcPublicKey / EcCurve live in CborCose (the SecureArea port references them).
+                .product(name: "CborCose", package: "swift"),
             ]
         ),
     ]

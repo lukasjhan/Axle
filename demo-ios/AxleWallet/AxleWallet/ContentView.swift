@@ -1,13 +1,17 @@
+import AppleCore
 import SwiftUI
 import Wallet
+import WalletTestKit
 
-/// Phase-1 milestone screen: lists stored credentials via `wallet.credentials.list()`. Proves the SDK
-/// compiles and runs on iOS. The full Documents/Home/Activity/Settings UI (mirroring android `demo`)
-/// arrives in Phase 3.
+/// Phase-1/2 milestone screen: lists stored credentials via `wallet.credentials.list()`, plus a debug
+/// action that qualifies the real Secure Enclave / Keychain adapters against the SDK's contract suites
+/// on-device. The full Documents/Home/Activity/Settings UI (mirroring android `demo`) arrives in Phase 3.
 struct ContentView: View {
     @State private var credentials: [Credential] = []
     @State private var loadError: String?
     @State private var isLoading = true
+    @State private var contractResult: String?
+    @State private var isTesting = false
 
     var body: some View {
         NavigationStack {
@@ -33,8 +37,28 @@ struct ContentView: View {
                 }
             }
             .navigationTitle("Documents")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Task { await runContractTests() }
+                    } label: {
+                        Image(systemName: "checkmark.seal")
+                    }
+                    .disabled(isTesting)
+                    .accessibilityLabel("Test adapters")
+                }
+            }
+            .alert("Adapter check", isPresented: showingResult) {
+                Button("OK", role: .cancel) { contractResult = nil }
+            } message: {
+                Text(contractResult ?? "")
+            }
         }
         .task { await load() }
+    }
+
+    private var showingResult: Binding<Bool> {
+        Binding(get: { contractResult != nil }, set: { if !$0 { contractResult = nil } })
     }
 
     private func load() async {
@@ -46,6 +70,19 @@ struct ContentView: View {
             loadError = String(describing: error)
         }
         isLoading = false
+    }
+
+    /// Phase-2 on-device qualification: "adapter qualification = passing the shared contract suite."
+    private func runContractTests() async {
+        isTesting = true
+        defer { isTesting = false }
+        do {
+            try await SecureAreaContract.verify(SecureEnclaveSecureArea())
+            try await StorageDriverContract.verify(KeychainStorageDriver())
+            contractResult = "✅ Secure Enclave + Keychain adapters pass the SDK contract suites."
+        } catch {
+            contractResult = "❌ \(error)"
+        }
     }
 }
 

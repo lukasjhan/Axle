@@ -2,14 +2,13 @@ import AppleCore
 import Foundation
 import Wallet
 import WalletAPI
-import WalletTestKit
 
-/// Phase-1 bootstrap of the EUDI Wallet SDK on iOS — the iOS counterpart of android `DemoWallet.kt`.
+/// Assembles the EUDI Wallet SDK on iOS — the iOS counterpart of android `DemoWallet.kt`.
 ///
-/// TEMPORARY adapters: `SoftwareSecureArea` + `InMemoryStorageDriver` (from WalletTestKit) exist only
-/// to prove `Wallet.create` compiles and runs on-device; they hold nothing across a relaunch. Phase 2
-/// replaces them with `SecureEnclaveSecureArea` + a Keychain `StorageDriver`. Only the network adapter
-/// (`URLSessionTransport`, from AppleCore) is already production-shaped.
+/// Ports are the real Apple-platform adapters from `AppleCore`: keys live in the Secure Enclave and
+/// credentials in the shared keychain group, so both survive relaunch and are reachable by the DC API
+/// provider extension. The transaction log is still the in-memory default (a persistent App Group store
+/// lands with the Activity screen).
 enum DemoWallet {
     static let shared: Wallet = build()
 
@@ -22,9 +21,10 @@ enum DemoWallet {
                 )
             ),
             ports: WalletPorts(
-                secureAreas: [SoftwareSecureArea()],
-                storage: InMemoryStorageDriver(),
-                http: URLSessionTransport()
+                secureAreas: [SecureEnclaveSecureArea()],
+                storage: KeychainStorageDriver(),
+                http: URLSessionTransport(),
+                logger: OSLogWalletLogger()
             )
         )
     }
