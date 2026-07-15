@@ -264,7 +264,7 @@ async function issueWrprc(token, rpId, credentials) {
     body: {
       support_uri: SUPPORT_URI,
       privacy_policy: PRIVACY_URI,
-      purpose: [{ lang: 'en', content: 'Age verification' }],
+      purpose: [{ lang: 'en', content: 'Identity verification' }],
       credentials,
     },
   });

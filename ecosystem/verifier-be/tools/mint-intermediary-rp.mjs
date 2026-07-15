@@ -236,7 +236,7 @@ async function createMediatedRP(token, intermediaryId) {
     },
     intendedUse: [
       {
-        purpose: [{ lang: 'en', content: 'Age verification' }],
+        purpose: [{ lang: 'en', content: 'Identity verification' }],
         privacyPolicy: [{ type: 'url', policyURI: PRIVACY_URI }],
         credential: [],
       },
@@ -296,7 +296,7 @@ async function issueWrprc(token, intermediaryId, rpId) {
       body: {
         support_uri: SUPPORT_URI,
         privacy_policy: PRIVACY_URI,
-        purpose: [{ lang: 'en', content: 'Age verification' }],
+        purpose: [{ lang: 'en', content: 'Identity verification' }],
       },
     },
   );
