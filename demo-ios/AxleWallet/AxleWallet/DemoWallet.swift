@@ -20,9 +20,11 @@ enum DemoWallet {
     /// Held so a wallet reset can wipe persisted activity (`WalletModel.reset`).
     static let txStore = FileTransactionLogStore()
 
-    // Shared across the wallet ports and the attestation provider (same secure area / storage / transport).
-    private static let secureArea = SecureEnclaveSecureArea()
-    private static let storage = KeychainStorageDriver()
+    // Shared across the wallet ports and the attestation provider (same secure area / storage / transport). The
+    // Secure Enclave keys + keychain blobs are created under the shared keychain access group so the DC API
+    // provider extension (a separate process) can read the credentials and sign with their device keys.
+    private static let secureArea = SecureEnclaveSecureArea(accessGroup: AppleSharedGroups.keychainAccessGroup)
+    private static let storage = KeychainStorageDriver(accessGroup: AppleSharedGroups.keychainAccessGroup)
     private static let http = URLSessionTransport()
 
     private static let clientId = "wallet-dev"

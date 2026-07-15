@@ -1,4 +1,5 @@
 import AppleCore // TransactionLogEntry (re-exported)
+import AppleDcApi // DcApiRegistrar — registers mdocs with the OS Digital Credentials registry
 import Foundation
 import Observation
 import Wallet
@@ -34,8 +35,19 @@ final class WalletModel {
     /// issuance/deletion without manual refresh tokens (android `credentials.changes.collect`).
     func start() async {
         await refresh()
+        await syncDcApi()
         for await _ in await wallet.credentials.changes() {
             await refresh()
+            await syncDcApi()
+        }
+    }
+
+    /// Register the wallet's mdoc credentials with the OS Digital Credentials registry (iOS 26+) so Safari can
+    /// offer Axle Wallet for an `org-iso-mdoc` request — on first load and on every credential change (android
+    /// `MainActivity` re-registers the same way). No-op if the OS lacks the registry or the entitlement.
+    private func syncDcApi() async {
+        if #available(iOS 26.0, *) {
+            await DcApiRegistrar.sync(wallet: wallet) { LogStore.shared.log($0) }
         }
     }
 

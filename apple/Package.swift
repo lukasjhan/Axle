@@ -15,6 +15,8 @@ let package = Package(
         .library(name: "AppleProximity", targets: ["AppleProximity"]),
         // Mirrors android/attestation: App Attest integrity token + WalletProviderAttestation (WUA + key attestation).
         .library(name: "AppleAttestation", targets: ["AppleAttestation"]),
+        // Mirrors android/dcapi: registers mdoc credentials with IdentityDocumentServices + builds DC API responses.
+        .library(name: "AppleDcApi", targets: ["AppleDcApi"]),
     ],
     dependencies: [
         .package(path: "../swift"),
@@ -51,6 +53,16 @@ let package = Package(
                 .product(name: "WalletProvider", package: "swift"),
                 .product(name: "WalletAPI", package: "swift"),
             ]
+        ),
+        .target(
+            name: "AppleDcApi",
+            dependencies: [
+                // The facade the app + extension drive: credentials list/changes + proximity.respondDcApiMdoc.
+                .product(name: "Wallet", package: "swift"),
+                // Credential / CredentialFormat / CredentialId the registrar reads.
+                .product(name: "WalletAPI", package: "swift"),
+            ]
+            // Imports IdentityDocumentServices (iOS 26); the system framework autolinks from the SDK.
         ),
     ]
 )
