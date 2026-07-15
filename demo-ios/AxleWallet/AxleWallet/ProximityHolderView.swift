@@ -3,11 +3,11 @@ import CoreImage.CIFilterBuiltins
 import SwiftUI
 import UIKit
 import Wallet
-import WalletAPI // ProximityTransport
+import WalletAPI // ProximityTransport, CredentialId
 
-/// Holder-side ISO 18013-5 proximity presentation over BLE — the iOS counterpart of android
-/// `ProximityHolderDialog`. Advertises a per-session BLE service, shows the QR DeviceEngagement for the
-/// reader to scan, then drives `ProximityService.present` through consent to a result. Brand palette + Manrope.
+/// Holder-side ISO 18013-5 proximity presentation over BLE — a 1:1 mirror of android `ProximityHolderDialog`
+/// (top bar "Present in person" → engagement QR → consent → result). Advertises/connects per the Settings
+/// "Bluetooth role", drives `ProximityService.present`, and requires biometric confirmation before sharing.
 struct ProximityHolderView: View {
     let onClose: () -> Void
 
@@ -15,6 +15,8 @@ struct ProximityHolderView: View {
     @State private var phase: Phase = .starting
     @State private var qr: UIImage?
     @State private var request: ProximityRequest?
+    @State private var chosen: [String: CredentialId] = [:]
+    @State private var credsById: [CredentialId: Credential] = [:]
     @State private var errorMessage: String?
     @State private var transport: (any ProximityTransport)?
     @State private var session: ProximitySession?
@@ -35,13 +37,13 @@ struct ProximityHolderView: View {
         case .starting:
             FlowLoading(title: "Starting Bluetooth…", subtitle: "Preparing in-person sharing.")
         case .engaging:
-            engagingStep
+            interactive { engagingBody }
         case .consent:
-            if let request { consentStep(request) }
+            if let request { interactive { consentBody(request) } }
         case .sending:
             FlowLoading(title: "Sharing…", subtitle: "Sending your document to the reader.")
         case .done:
-            FlowResult(kind: .success, title: "Shared", subtitle: "Your document was presented in person.", buttonTitle: "Done", onButton: onClose)
+            FlowResult(kind: .success, title: "Shared", subtitle: "The reader received your document.", buttonTitle: "Done", onButton: onClose)
         case .declined:
             FlowResult(kind: .failure, title: "Declined", subtitle: "Nothing was shared.", buttonTitle: "Close", onButton: onClose)
         case .failed:
@@ -49,80 +51,183 @@ struct ProximityHolderView: View {
         }
     }
 
-    private var engagingStep: some View {
-        VStack(spacing: 20) {
-            Spacer().frame(height: 8)
-            Text("Show this to the reader").font(WalletFont.titleMedium).foregroundStyle(WalletTheme.ink)
-            Text("The verifier scans this code to connect over Bluetooth.")
-                .font(WalletFont.bodyMedium).foregroundStyle(WalletTheme.inkMuted).multilineTextAlignment(.center)
-            Group {
-                if let qr {
-                    Image(uiImage: qr)
-                        .interpolation(.none)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: 280, maxHeight: 280)
-                        .padding(16)
-                        .background(.white, in: RoundedRectangle(cornerRadius: 20))
-                        .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(WalletTheme.cardBorder, lineWidth: 1))
-                } else {
-                    ProgressView().tint(WalletTheme.brand)
-                }
+    /// A top bar ("Present in person" + back) with the phase content below (android `ProximityHolderDialog`).
+    private func interactive<C: View>(@ViewBuilder content: () -> C) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                CircleIconButton(system: "chevron.left") { cancel() }
+                Text("Present in person").font(WalletFont.titleMedium).foregroundStyle(WalletTheme.ink)
+                Spacer()
             }
+            Spacer().frame(height: 16)
+            content()
+        }
+    }
+
+    private var engagingBody: some View {
+        VStack(spacing: 16) {
+            Spacer()
+            if let qr {
+                Image(uiImage: qr)
+                    .interpolation(.none).resizable().scaledToFit()
+                    .frame(width: 240, height: 240)
+                    .frame(width: 280, height: 280)
+                    .background(WalletTheme.card, in: RoundedRectangle(cornerRadius: 16))
+                    .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(WalletTheme.cardBorder, lineWidth: 1))
+            } else {
+                ProgressView().tint(WalletTheme.brand)
+            }
+            Text("Show this to the reader to connect.").font(WalletFont.bodyMedium).foregroundStyle(WalletTheme.inkBody)
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small).tint(WalletTheme.brand)
                 Text("Waiting for the reader…").font(WalletFont.bodySmall).foregroundStyle(WalletTheme.inkMuted)
             }
             Spacer()
-            SecondaryButton(title: "Cancel") { cancel() }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func consentStep(_ request: ProximityRequest) -> some View {
+    private func consentBody(_ request: ProximityRequest) -> some View {
         VStack(spacing: 0) {
-            Text("Sharing request").font(WalletFont.titleMedium).foregroundStyle(WalletTheme.ink)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Spacer().frame(height: 16)
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    SectionLabel("Reader")
+                    // Reader
                     WalletCard {
-                        HStack {
-                            Text(request.reader.commonName ?? "Unverified reader")
-                                .font(WalletFont.titleSmall).foregroundStyle(WalletTheme.ink)
+                        HStack(spacing: 12) {
+                            Text(String((request.reader.commonName ?? "R").prefix(1)).uppercased())
+                                .font(WalletFont.titleMedium).foregroundStyle(.white)
+                                .frame(width: 42, height: 42)
+                                .background(WalletTheme.ink, in: RoundedRectangle(cornerRadius: 12))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(request.reader.commonName ?? "In-person reader").font(WalletFont.titleSmall).foregroundStyle(WalletTheme.ink)
+                                Text("ISO 18013-5 · in person").font(WalletFont.bodySmall).foregroundStyle(WalletTheme.inkMuted)
+                            }
                             Spacer()
                             TrustPill(trusted: request.reader.trusted, trustedText: "Verified", untrustedText: "Unverified")
                         }
                     }
-                    SectionLabel("Requested")
+                    // Trust (reader authentication only — no OpenID4VP registration in proximity)
+                    SectionLabel("Trust")
+                    WalletCard(padding: .flush) {
+                        TrustRow(label: "Reader authentication", value: request.reader.trusted ? "Verified" : "Not verified", ok: request.reader.trusted)
+                    }
+                    // Shared attributes per requested document
+                    SectionLabel("You'll share")
                     ForEach(Array(request.documents.enumerated()), id: \.offset) { _, doc in
-                        WalletCard(padding: .flush) {
-                            Text(prettyConfig(doc.docType)).font(WalletFont.titleSmall).foregroundStyle(WalletTheme.ink)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 16).padding(.vertical, 12)
-                            Rectangle().fill(WalletTheme.divider).frame(height: 1)
-                            ForEach(elementLabels(doc), id: \.self) { label in
-                                WalletInfoRow(label: label, value: doc.candidates.isEmpty ? "Not held" : "Will share")
-                            }
-                        }
+                        docCard(doc)
                     }
-                    if !request.satisfiable {
-                        FlowNote("You don't hold the requested document, so nothing can be shared.")
-                    }
+                    FlowNote("Only the shown attributes are shared. Your full documents never leave this device.")
                 }
             }
             FlowFooter(primaryTitle: "Share", primaryEnabled: request.satisfiable,
-                       onPrimary: { session?.respond(ProximitySelection.auto(request)) },
-                       secondaryTitle: "Decline", onSecondary: { session?.decline() })
+                       onPrimary: { confirmAndShare() }, secondaryTitle: "Decline", onSecondary: { session?.decline() })
         }
     }
 
-    private func elementLabels(_ doc: RequestedDocumentView) -> [String] {
-        doc.requestedElements.flatMap { _, els in els }.sorted().map { seg in
-            let spaced = seg.replacingOccurrences(of: "_", with: " ")
-            return spaced.prefix(1).uppercased() + spaced.dropFirst()
+    private func docCard(_ doc: RequestedDocumentView) -> some View {
+        let selectedId = chosen[doc.docType] ?? doc.candidates.first
+        let cred = selectedId.flatMap { credsById[$0] }
+        let requestedPaths = doc.requestedElements.flatMap { ns, els in els.map { [ns, $0] } }
+        let shared = sharedValues(cred, requestedPaths)
+
+        return WalletCard(padding: .flush) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(cred.map { credTitle($0) } ?? docTypeLabel(doc.docType))
+                        .font(WalletFont.titleSmall).foregroundStyle(cred != nil ? WalletTheme.ink : WalletTheme.inkFaint)
+                    Text(cred != nil ? "Required" : "No matching document")
+                        .font(WalletFont.bodySmall).foregroundStyle(cred != nil ? WalletTheme.inkMuted : WalletTheme.danger)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 16).padding(.vertical, 12)
+
+            if doc.candidates.count > 1 {
+                cardDivider
+                groupHeader("Choose a document")
+                ForEach(doc.candidates, id: \.value) { candId in
+                    candidateCard(doc, candId, checked: candId == selectedId)
+                }
+                Spacer().frame(height: 6)
+            }
+
+            cardDivider
+            groupHeader("Shared")
+            if shared.isEmpty {
+                Text("No matching attributes in this document.")
+                    .font(WalletFont.bodySmall).foregroundStyle(WalletTheme.inkMuted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16).padding(.bottom, 12)
+            } else {
+                ForEach(Array(shared.enumerated()), id: \.offset) { _, entry in
+                    WalletInfoRow(label: elementLabel(entry.path), value: entry.value)
+                }
+            }
         }
+    }
+
+    private func candidateCard(_ doc: RequestedDocumentView, _ candId: CredentialId, checked: Bool) -> some View {
+        let cred = credsById[candId]
+        let requestedPaths = doc.requestedElements.flatMap { ns, els in els.map { [ns, $0] } }
+        let subtitle = sharedValues(cred, requestedPaths).prefix(2).map { $0.value }.joined(separator: " · ")
+        let shape = RoundedRectangle(cornerRadius: 12)
+        return Button {
+            chosen[doc.docType] = candId
+        } label: {
+            HStack(spacing: 12) {
+                if let cred { DocTile(glyph: credGlyph(cred), colors: credGradient(cred), size: 40) }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(cred.map { credTitle($0) } ?? "Credential").font(WalletFont.titleSmall).foregroundStyle(WalletTheme.ink)
+                    if !subtitle.isEmpty {
+                        Text(subtitle).font(WalletFont.bodySmall).foregroundStyle(WalletTheme.inkMuted).lineLimit(1)
+                    }
+                }
+                Spacer()
+                ZStack {
+                    Circle().fill(checked ? WalletTheme.brand : .clear)
+                    Circle().strokeBorder(checked ? WalletTheme.brand : WalletTheme.cardBorderStrong, lineWidth: 2)
+                    if checked { Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.white) }
+                }.frame(width: 20, height: 20)
+            }
+            .padding(10)
+            .background(checked ? WalletTheme.brand.opacity(0.06) : WalletTheme.card, in: shape)
+            .overlay(shape.strokeBorder(checked ? WalletTheme.brand : WalletTheme.cardBorder, lineWidth: checked ? 1.5 : 1))
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 12).padding(.vertical, 5)
+    }
+
+    private func groupHeader(_ text: String) -> some View {
+        Text(text.uppercased())
+            .font(WalletFont.labelSmall).tracking(0.6).foregroundStyle(WalletTheme.inkFaint)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 4)
+    }
+
+    private var cardDivider: some View { Rectangle().fill(WalletTheme.divider).frame(height: 1) }
+
+    /// The requested element paths the chosen credential actually holds, with their rendered values
+    /// (ISO 18013-5 partial disclosure — absent elements are simply omitted).
+    private func sharedValues(_ cred: Credential?, _ requestedPaths: [[String]]) -> [(path: [String], value: String)] {
+        guard let cred, case let .issued(claims, _, _) = cred.lifecycle else { return [] }
+        var byPath: [[String]: String] = [:]
+        for claim in claims { byPath[claim.path] = claim.value.display() }
+        return requestedPaths.compactMap { path in byPath[path].map { (path, $0) } }
+    }
+
+    private func elementLabel(_ path: [String]) -> String {
+        let segment = path.count > 1 ? path[path.count - 1] : (path.first ?? "")
+        let spaced = segment.replacingOccurrences(of: "_", with: " ")
+        return spaced.prefix(1).uppercased() + spaced.dropFirst()
+    }
+
+    private func docTypeLabel(_ docType: String) -> String {
+        let d = docType.lowercased()
+        if d.contains("pid") { return "Personal ID" }
+        if d.contains("mdl") || d.contains("18013.5.1") { return "Mobile Driving Licence" }
+        let tail = docType.split(separator: ".").last.map(String.init) ?? docType
+        let spaced = tail.replacingOccurrences(of: "_", with: " ")
+        return spaced.prefix(1).uppercased() + spaced.dropFirst()
     }
 
     // MARK: - Behavior
@@ -131,18 +236,29 @@ struct ProximityHolderView: View {
         { m in Task { @MainActor in LogStore.shared.log("BLE ▸ \(m)") } }
     }
 
+    /// Biometric confirm-to-share (android `PresentScreen.share`), gated on the enabled biometric.
+    private func confirmAndShare() {
+        let selection = ProximitySelection(chosen: chosen)
+        if WalletSecurity.biometricEnabled && BiometricAuth.canUse() {
+            BiometricAuth.prompt(reason: "Confirm to share in person", onSuccess: { session?.respond(selection) })
+        } else {
+            session?.respond(selection)
+        }
+    }
+
     private func run() async {
         guard transport == nil else { return }
-        // Settings "Bluetooth role": Central = this device connects out (central-client mode); Peripheral =
-        // this device advertises (peripheral-server mode, the default).
+        let list = (try? await wallet.credentials.list()) ?? []
+        credsById = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+
         let central = UserDefaults.standard.bool(forKey: "bleCentral")
         let session: ProximitySession
-        var centralHolder: BleCentralTransport? // for arming Ident on engagementReady
+        var centralHolder: BleCentralTransport?
         if central {
             let t = BleCentralTransport.holder(logger: bleLogger)
             transport = t
             centralHolder = t
-            session = wallet.proximity.present(t) // connects lazily on the first receive()
+            session = wallet.proximity.present(t)
         } else {
             let t = BlePeripheralTransport.holder(logger: bleLogger)
             transport = t
@@ -167,6 +283,9 @@ struct ProximityHolderView: View {
                 LogStore.shared.log("present: QR ready — waiting for reader")
             case let .requestReceived(req):
                 request = req
+                chosen = Dictionary(uniqueKeysWithValues: req.documents.compactMap { doc in
+                    doc.candidates.first.map { (doc.docType, $0) }
+                })
                 phase = .consent
                 LogStore.shared.log("present: reader request received")
             case .submitting:

@@ -13,6 +13,8 @@ let package = Package(
         .library(name: "AppleCore", targets: ["AppleCore"]),
         // Mirrors android/proximity: ISO 18013-5 BLE ProximityTransport (peripheral holder + central reader).
         .library(name: "AppleProximity", targets: ["AppleProximity"]),
+        // Mirrors android/attestation: App Attest integrity token + WalletProviderAttestation (WUA + key attestation).
+        .library(name: "AppleAttestation", targets: ["AppleAttestation"]),
     ],
     dependencies: [
         .package(path: "../swift"),
@@ -26,6 +28,8 @@ let package = Package(
                 .product(name: "CborCose", package: "swift"),
                 // FileTransactionLogStore persists entries; re-exported so the app sees the txlog types.
                 .product(name: "TransactionLog", package: "swift"),
+                // AppleTrust fetches CA anchors from the JAdES trusted lists; re-exported for the app.
+                .product(name: "TrustList", package: "swift"),
             ]
         ),
         .target(
@@ -38,6 +42,14 @@ let package = Package(
                 // RequestedDocument / VerifiedDocument so the reader helpers keep MDoc/Cbor out of the app.
                 .product(name: "MDoc", package: "swift"),
                 .product(name: "CborCose", package: "swift"),
+            ]
+        ),
+        .target(
+            name: "AppleAttestation",
+            dependencies: [
+                // WalletProviderAttestation + IntegrityTokenProvider (re-exported so the app sees them).
+                .product(name: "WalletProvider", package: "swift"),
+                .product(name: "WalletAPI", package: "swift"),
             ]
         ),
     ]

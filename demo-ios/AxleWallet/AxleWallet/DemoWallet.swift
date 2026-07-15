@@ -1,34 +1,84 @@
+import AppleAttestation
 import AppleCore
 import Foundation
 import Wallet
-import WalletAPI
 
-/// Assembles the EUDI Wallet SDK on iOS — the iOS counterpart of android `DemoWallet.kt`.
+/// Assembles the EUDI Wallet SDK on iOS — the iOS counterpart of android `DemoWallet`.
 ///
-/// Ports are the real Apple-platform adapters from `AppleCore`: keys live in the Secure Enclave, credentials
-/// in the shared keychain group, and the activity log in the shared App Group container — so all three
-/// survive relaunch and are reachable by the DC API provider extension. Logs are routed to the in-app
-/// Debug screen (and OSLog) via `LogStoreLogger`.
+/// Ports are the real Apple-platform adapters: keys in the Secure Enclave, credentials in the shared keychain
+/// group, activity in the App Group container. On first `boot()` the wallet also pulls its CA anchors from the
+/// sandbox JAdES trusted lists (so it can verify issuers / verifiers / the registrar) and wires the Wallet
+/// Provider backend (WUA client-auth + per-issuance key attestation) — both do network, so `boot()` is async
+/// and `shared` is only valid after it completes (the app shows a splash until then).
 enum DemoWallet {
-    static let shared: Wallet = build()
+    private static var built: Wallet?
+
+    /// Valid only after `boot()`. The app gates the wallet UI on `boot()` completing (see `RootView`), so
+    /// every access here is post-boot; non-optional so views can keep `let wallet = DemoWallet.shared`.
+    static var shared: Wallet { built! }
+
     /// Held so a wallet reset can wipe persisted activity (`WalletModel.reset`).
     static let txStore = FileTransactionLogStore()
 
-    private static func build() -> Wallet {
-        Wallet.create(
+    // Shared across the wallet ports and the attestation provider (same secure area / storage / transport).
+    private static let secureArea = SecureEnclaveSecureArea()
+    private static let storage = KeychainStorageDriver()
+    private static let http = URLSessionTransport()
+
+    private static let clientId = "wallet-dev"
+    private static let walletProviderBase = "https://dev.api.hopae.com/wp"
+
+    private static var booted = false
+
+    /// Builds the wallet once (fetching trust anchors + wiring attestation). Idempotent; call before using `shared`.
+    static func boot() async {
+        guard !booted else { return }
+
+        let trust = await AppleTrust.resolve(
+            http: http,
+            cacheDir: cacheDirectory().appendingPathComponent("trust"),
+            log: { message in Task { @MainActor in LogStore.shared.log(message) } }
+        )
+
+        // Wallet Provider backend: the client-auth WUA (attestation-based client auth) and the per-issuance key
+        // attestation the local issuer requires. App Attest proves a genuine instance of our app at registration
+        // (the backend's IosVerifier verifies the attestation); it falls back to the dev integrity token on the
+        // Simulator or if App Attest is unavailable.
+        let walletAttestation = WalletProviderAttestation(
+            baseUrl: walletProviderBase,
+            http: http,
+            secureArea: secureArea,
+            integrity: AppAttestIntegrityTokenProvider(),
+            clientId: clientId,
+            storage: storage
+        )
+
+        built = Wallet.create(
             config: WalletConfig(
-                issuance: IssuanceConfig(
-                    clientId: "wallet-dev",
-                    redirectUri: "eu.europa.ec.euidi://authorization"
-                )
+                issuance: IssuanceConfig(clientId: clientId, redirectUri: "eu.europa.ec.euidi://authorization"),
+                trust: TrustConfig(
+                    issuerAnchorsDer: trust.issuer,
+                    readerAnchorsDer: trust.reader,
+                    registrarAnchorsDer: trust.registrar
+                ),
+                transactionLog: TransactionLogConfig(recordFailures: true)
             ),
             ports: WalletPorts(
-                secureAreas: [SecureEnclaveSecureArea()],
-                storage: KeychainStorageDriver(),
-                http: URLSessionTransport(),
+                secureAreas: [secureArea],
+                storage: storage,
+                http: http,
+                walletAttestation: walletAttestation,
                 logger: LogStoreLogger(),
                 transactionLogStore: txStore
             )
         )
+        booted = true
+        LogStore.shared.log("Wallet assembled — trust anchors: \(trust.summary)")
+    }
+
+    private static func cacheDirectory() -> URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        return base
     }
 }

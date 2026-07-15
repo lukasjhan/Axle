@@ -294,9 +294,18 @@ struct PresentView: View {
         }
     }
 
+    /// Biometric confirm-to-share (android `PresentScreen.share`), gated on the enabled biometric.
     private func share() {
-        step = .sharing
-        session.respond(buildSelection())
+        let selection = buildSelection()
+        if WalletSecurity.biometricEnabled && BiometricAuth.canUse() {
+            BiometricAuth.prompt(reason: "Confirm to share the selected data", onSuccess: {
+                step = .sharing
+                session.respond(selection)
+            })
+        } else {
+            step = .sharing
+            session.respond(selection)
+        }
     }
 
     private func decline() {
