@@ -32,6 +32,7 @@ public final class BlePeripheralTransport: NSObject, ProximityTransport, @unchec
     private let serviceUuid: CBUUID
     private let serviceUuidBytes: [UInt8]
     private let uuids = Ble.peripheralServer
+    private let log: (@Sendable (String) -> Void)?
 
     private let queue = DispatchQueue(label: "com.hopae.axle.wallet.ble.peripheral")
     private var manager: CBPeripheralManager!
@@ -55,16 +56,20 @@ public final class BlePeripheralTransport: NSObject, ProximityTransport, @unchec
 
     /// - Parameter serviceUuid: the per-session GATT service UUID (default: a fresh random one). Its
     ///   big-endian bytes go into the engagement so the reader knows where to connect.
-    public init(serviceUuid: UUID = UUID()) {
+    /// - Parameter logger: optional sink for BLE lifecycle events (wired to the app's Debug console).
+    public init(serviceUuid: UUID = UUID(), logger: (@Sendable (String) -> Void)? = nil) {
         self.serviceUuid = CBUUID(nsuuid: serviceUuid)
         self.serviceUuidBytes = Ble.uuidBytes(serviceUuid)
+        self.log = logger
         super.init()
     }
 
     /// Powers up CoreBluetooth, publishes the GATT service, and starts advertising. Call before `present`.
     public func start() async throws {
+        log?("holder: starting Bluetooth…")
         manager = CBPeripheralManager(delegate: self, queue: queue)
         try await awaitPoweredOn()
+        log?("holder: Bluetooth powered on")
         await publish()
     }
 
@@ -164,6 +169,7 @@ public final class BlePeripheralTransport: NSObject, ProximityTransport, @unchec
 
     private func beginSend(_ message: [UInt8], _ cont: CheckedContinuation<Void, Error>) {
         guard let central, !closed else { cont.resume(throwing: ProximityTransportError.notConnected); return }
+        log?("holder: sending \(message.count)B response")
         let payload = max(central.maximumUpdateValueLength - 1, 1)
         sendState = (Ble.chunk(message, payloadSize: payload), 0, cont)
         pumpSend()
@@ -194,12 +200,15 @@ extension BlePeripheralTransport: CBPeripheralManagerDelegate {
     }
 
     public func peripheralManager(_ peripheral: CBPeripheralManager, didAdd service: CBService, error: Error?) {
+        if let error { log?("holder: ❌ add service: \(error.localizedDescription)") }
         peripheral.startAdvertising([CBAdvertisementDataServiceUUIDsKey: [serviceUuid]])
+        log?("holder: advertising \(serviceUuid.uuidString)")
         if let waiter = addServiceWaiter { addServiceWaiter = nil; waiter.resume() }
     }
 
     public func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didSubscribeTo characteristic: CBCharacteristic) {
         self.central = central
+        log?("holder: reader subscribed to \(characteristic.uuid == uuids.state ? "state" : "server2client") (mtu \(central.maximumUpdateValueLength))")
     }
 
     public func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
@@ -209,6 +218,7 @@ extension BlePeripheralTransport: CBPeripheralManagerDelegate {
                 if let value = request.value, value.count == 1, value.first == Ble.stateStart {
                     if central == nil { central = request.central }
                     peripheral.stopAdvertising()
+                    log?("holder: session START from reader")
                     markConnected()
                 }
             } else if uuid == uuids.client2Server {
@@ -217,6 +227,7 @@ extension BlePeripheralTransport: CBPeripheralManagerDelegate {
                     if prefix == Ble.chunkLast {
                         let message = reassembly
                         reassembly = []
+                        log?("holder: received \(message.count)B message")
                         deliver(message)
                     }
                 }

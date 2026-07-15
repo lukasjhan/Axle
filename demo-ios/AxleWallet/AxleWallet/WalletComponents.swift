@@ -230,8 +230,8 @@ struct HeroCard: View {
     }
 }
 
-/// An activity list row (arrow badge + counterparty + docs + status/time). Shared by Home and Activity
-/// (android `ActivityRow` / `ActivityCard`).
+/// The Activity-tab row (arrow badge + counterparty + docs + status/time on the right). A 1:1 port of
+/// android `ActivityScreen.ActivityCard`.
 struct ActivityRow: View {
     let entry: TransactionLogEntry
     let onTap: () -> Void
@@ -253,24 +253,59 @@ struct ActivityRow: View {
                 }
                 Spacer(minLength: 8)
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text(entry.status.rawValue.capitalized)
+                    Text(entry.status.rawValue) // "SUCCESS" / "ERROR" — uppercase, like android
                         .font(WalletFont.labelSmall)
                         .foregroundStyle(ok ? WalletTheme.trust : WalletTheme.danger)
-                    Text(shortTime(entry.timestamp)).font(WalletFont.bodySmall).foregroundStyle(WalletTheme.inkFaint)
+                    Text(activityTime(entry.timestamp)).font(WalletFont.bodySmall).foregroundStyle(WalletTheme.inkFaint)
                 }
             }
         }
     }
 
     private var counterparty: String {
-        entry.relyingParty?.name ?? entry.relyingParty?.id ?? entry.issuerName
-            ?? (present ? "Presentation" : "Issuance")
+        entry.relyingParty?.name ?? entry.relyingParty?.id ?? (present ? "Presentation" : "Issuance")
     }
 
     private var docsLabel: String {
         let names = entry.documents.map { $0.type ?? $0.format }.filter { !$0.isEmpty }
         if names.isEmpty { return "\(entry.documents.count) document(s)" }
         return names.joined(separator: ", ")
+    }
+}
+
+/// The compact Home "Recent activity" row (arrow badge + title + "Status · relative time" + chevron). A
+/// 1:1 port of android `HomeScreen.ActivityRow`, distinct from the Activity-tab card above.
+struct HomeActivityRow: View {
+    let entry: TransactionLogEntry
+    let onTap: () -> Void
+
+    private var present: Bool { entry.type == .presentation }
+    private var issued: Bool { entry.type == .issuance }
+
+    var body: some View {
+        WalletCard(padding: EdgeInsets(top: 14, leading: 11, bottom: 14, trailing: 11), onTap: onTap) {
+            HStack(spacing: 12) {
+                Text(arrow)
+                    .font(WalletFont.titleSmall)
+                    .foregroundStyle(tint)
+                    .frame(width: 32, height: 32)
+                    .background(badgeBg, in: Circle())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(WalletFont.bodyMedium).foregroundStyle(WalletTheme.ink).lineLimit(1)
+                    Text("\(entry.status.rawValue.capitalized) · \(shortTime(entry.timestamp))")
+                        .font(WalletFont.bodySmall).foregroundStyle(WalletTheme.inkFaint)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(WalletTheme.cardBorderStrong)
+            }
+        }
+    }
+
+    private var arrow: String { present ? "↑" : issued ? "↓" : "✓" }
+    private var tint: Color { present ? WalletTheme.brand : issued ? WalletTheme.trust : WalletTheme.inkMuted }
+    private var badgeBg: Color { present ? WalletTheme.brandSoftBg : issued ? WalletTheme.trustBg : WalletTheme.screen }
+    private var title: String {
+        entry.relyingParty?.name ?? entry.relyingParty?.id ?? (issued ? "Credential issued" : present ? "Presentation" : "Verification")
     }
 }
 
@@ -358,4 +393,15 @@ func shortTime(_ epochSeconds: Int64) -> String {
 /// Absolute timestamp for the activity/detail screens.
 func absoluteTime(_ epochSeconds: Int64, style: Date.FormatStyle) -> String {
     Date(timeIntervalSince1970: TimeInterval(epochSeconds)).formatted(style)
+}
+
+private let activityTimeFormatter: DateFormatter = {
+    let f = DateFormatter()
+    f.dateFormat = "MMM d, HH:mm"
+    return f
+}()
+
+/// The Activity-tab timestamp — absolute "MMM d, HH:mm" (android `timeFmt`).
+func activityTime(_ epochSeconds: Int64) -> String {
+    activityTimeFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(epochSeconds)))
 }

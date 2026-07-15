@@ -14,6 +14,7 @@ import WalletAPI
 public final class BleCentralTransport: NSObject, ProximityTransport, @unchecked Sendable {
     private let serviceUuid: CBUUID
     private let uuids = Ble.peripheralServer // reader connects to the holder's peripheral-server service
+    private let log: (@Sendable (String) -> Void)?
 
     private let queue = DispatchQueue(label: "com.hopae.axle.wallet.ble.central")
     private var manager: CBCentralManager!
@@ -35,23 +36,26 @@ public final class BleCentralTransport: NSObject, ProximityTransport, @unchecked
     private var connectWaiter: CheckedContinuation<Void, Error>?
     private var receiveWaiter: CheckedContinuation<[UInt8], Error>?
 
-    public init(serviceUuid: CBUUID) {
+    public init(serviceUuid: CBUUID, logger: (@Sendable (String) -> Void)? = nil) {
         self.serviceUuid = serviceUuid
+        self.log = logger
         super.init()
     }
 
     /// Reader convenience: derive the holder's peripheral-server service UUID from the scanned engagement.
-    public convenience init(engagement: [UInt8]) throws {
+    public convenience init(engagement: [UInt8], logger: (@Sendable (String) -> Void)? = nil) throws {
         guard let ble = DeviceEngagement.parseBle(engagement), let uuidBytes = ble.peripheralServerUuid else {
             throw ProximityTransportError.engagementMissingBle
         }
-        self.init(serviceUuid: CBUUID(data: Data(uuidBytes)))
+        self.init(serviceUuid: CBUUID(data: Data(uuidBytes)), logger: logger)
     }
 
     /// Powers up CoreBluetooth, scans for and connects to the holder, and completes the BLE handshake.
     public func connect() async throws {
+        log?("reader: starting Bluetooth…")
         manager = CBCentralManager(delegate: self, queue: queue)
         try await awaitPoweredOn()
+        log?("reader: scanning for \(serviceUuid.uuidString)")
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             queue.async { [self] in
                 if closed { cont.resume(throwing: ProximityTransportError.closed); return }
@@ -119,6 +123,7 @@ public final class BleCentralTransport: NSObject, ProximityTransport, @unchecked
         guard stateNotifying, s2cNotifying, !connected, let peripheral, let stateChar else { return }
         connected = true
         peripheral.writeValue(Data([Ble.stateStart]), for: stateChar, type: .withoutResponse)
+        log?("reader: subscribed + wrote START — session open")
         if let waiter = connectWaiter { connectWaiter = nil; waiter.resume() }
     }
 
@@ -165,10 +170,12 @@ extension BleCentralTransport: CBCentralManagerDelegate {
         self.peripheral = peripheral
         peripheral.delegate = self
         central.stopScan()
+        log?("reader: found holder, connecting")
         central.connect(peripheral, options: nil)
     }
 
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        log?("reader: connected, discovering services")
         peripheral.discoverServices([serviceUuid])
     }
 
@@ -199,8 +206,10 @@ extension BleCentralTransport: CBPeripheralDelegate {
             }
         }
         guard let stateChar, let s2cChar, c2sChar != nil else {
+            log?("reader: ❌ missing characteristics on holder service")
             failConnect(ProximityTransportError.notConnected); return
         }
+        log?("reader: characteristics found, subscribing")
         peripheral.setNotifyValue(true, for: stateChar)
         peripheral.setNotifyValue(true, for: s2cChar)
     }

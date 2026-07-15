@@ -41,7 +41,7 @@ struct HomeView: View {
                     if !recent.isEmpty {
                         section(title: "Recent activity", action: "See all") { model.selectedTab = .activity } content: {
                             ForEach(recent, id: \.id) { entry in
-                                ActivityRow(entry: entry) { path.append(.transaction(entry.id)) }
+                                HomeActivityRow(entry: entry) { path.append(.transaction(entry.id)) }
                             }
                         }
                     }

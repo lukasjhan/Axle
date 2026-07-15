@@ -128,7 +128,7 @@ struct ProximityHolderView: View {
 
     private func run() async {
         guard transport == nil else { return }
-        let t = BlePeripheralTransport()
+        let t = BlePeripheralTransport(logger: { m in Task { @MainActor in LogStore.shared.log("BLE ▸ \(m)") } })
         transport = t
         do {
             try await t.start()
@@ -146,13 +146,16 @@ struct ProximityHolderView: View {
             case let .engagementReady(engagement, _):
                 qr = Self.qrImage(mdocQR(engagement))
                 phase = .engaging
+                LogStore.shared.log("present: QR ready — waiting for reader")
             case let .requestReceived(req):
                 request = req
                 phase = .consent
+                LogStore.shared.log("present: reader request received")
             case .submitting:
                 phase = .sending
             case .completed:
                 phase = .done
+                LogStore.shared.log("present: ✅ shared")
                 return
             case .declined:
                 phase = .declined
@@ -160,6 +163,7 @@ struct ProximityHolderView: View {
             case let .failed(error):
                 errorMessage = String(describing: error)
                 phase = .failed
+                LogStore.shared.log("present: ❌ \(error)")
                 return
             }
         }

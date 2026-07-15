@@ -108,7 +108,7 @@ struct ReaderView: View {
         }
         phase = .connecting
         do {
-            let t = try BleCentralTransport(engagement: engagement)
+            let t = try BleCentralTransport(engagement: engagement, logger: { m in Task { @MainActor in LogStore.shared.log("BLE ▸ \(m)") } })
             transport = t
             try await t.connect()
             phase = .reading
