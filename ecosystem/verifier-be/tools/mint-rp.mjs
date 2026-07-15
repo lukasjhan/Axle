@@ -191,6 +191,11 @@ async function createRelyingParty(token) {
             claim: [['org.iso.18013.5.1', 'given_name'], ['org.iso.18013.5.1', 'family_name'], ['org.iso.18013.5.1', 'birth_date'], ['org.iso.18013.5.1', 'driving_privileges']].map((path) => ({ path })),
           },
           {
+            format: 'mso_mdoc',
+            meta: { doctype_value: 'eu.europa.ec.eudi.pid.1' },
+            claim: [['eu.europa.ec.eudi.pid.1', 'given_name'], ['eu.europa.ec.eudi.pid.1', 'family_name'], ['eu.europa.ec.eudi.pid.1', 'birth_date']].map((path) => ({ path })),
+          },
+          {
             format: 'dc+sd-jwt',
             meta: { vct_values: ['urn:eudi:pid:1'] },
             claim: [['given_name'], ['family_name'], ['birthdate']].map((path) => ({ path })),

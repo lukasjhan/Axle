@@ -238,7 +238,25 @@ async function createMediatedRP(token, intermediaryId) {
       {
         purpose: [{ lang: 'en', content: 'Identity verification' }],
         privacyPolicy: [{ type: 'url', policyURI: PRIVACY_URI }],
-        credential: [],
+        // Register the same credentials/claims the verifier requests (mDL + PID mdoc + PID SD-JWT), so every
+        // DCQL query is within the mediated RP's registration scope (RPRC_21) just like the direct RP.
+        credential: [
+          {
+            format: 'mso_mdoc',
+            meta: { doctype_value: 'org.iso.18013.5.1.mDL' },
+            claim: [['org.iso.18013.5.1', 'given_name'], ['org.iso.18013.5.1', 'family_name'], ['org.iso.18013.5.1', 'birth_date'], ['org.iso.18013.5.1', 'driving_privileges']].map((path) => ({ path })),
+          },
+          {
+            format: 'mso_mdoc',
+            meta: { doctype_value: 'eu.europa.ec.eudi.pid.1' },
+            claim: [['eu.europa.ec.eudi.pid.1', 'given_name'], ['eu.europa.ec.eudi.pid.1', 'family_name'], ['eu.europa.ec.eudi.pid.1', 'birth_date']].map((path) => ({ path })),
+          },
+          {
+            format: 'dc+sd-jwt',
+            meta: { vct_values: ['urn:eudi:pid:1'] },
+            claim: [['given_name'], ['family_name'], ['birthdate']].map((path) => ({ path })),
+          },
+        ],
       },
     ],
     // usesIntermediary + isIntermediary=false are forced by the controller from the intermediary record.
@@ -287,7 +305,7 @@ async function issueIntermediaryWrpac(token, intermediaryId) {
  * `intermediary: {sub, sname}` and `act: {sub}` derived from the intermediary's identifier[0].identifier.
  * Response is { id, jwt, intendedUse }; the compact JWS string we want is `.jwt`.
  */
-async function issueWrprc(token, intermediaryId, rpId) {
+async function issueWrprc(token, intermediaryId, rpId, credentials) {
   const res = await api(
     'POST',
     `/portal/intermediary/${intermediaryId}/mediated-rps/${rpId}/registration-certs`,
@@ -297,6 +315,7 @@ async function issueWrprc(token, intermediaryId, rpId) {
         support_uri: SUPPORT_URI,
         privacy_policy: PRIVACY_URI,
         purpose: [{ lang: 'en', content: 'Identity verification' }],
+        credentials,
       },
     },
   );
@@ -316,7 +335,7 @@ async function main() {
   // Sign with the INTERMEDIARY's own WRPAC (TS 119 475 §5.1); the WRPRC is the mediated RP's (sub=final RP,
   // intermediary/act = the intermediary). This is the binding the wallet's WRPRCVerifier enforces.
   const wrpac = await issueIntermediaryWrpac(token, intermediaryId);
-  const wrprc = await issueWrprc(token, intermediaryId, rpId);
+  const wrprc = await issueWrprc(token, intermediaryId, rpId, rp.intendedUse?.[0]?.credential ?? []);
 
   // Registrar CA (trust anchor) in both encodings.
   const registrarCaPem = (await api('GET', '/ca-certificate', { accept: 'application/x-pem-file' })).trim();
