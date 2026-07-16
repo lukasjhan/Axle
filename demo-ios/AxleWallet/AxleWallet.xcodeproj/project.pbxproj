@@ -222,7 +222,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				AA10000000000000000000A1 /* XCLocalSwiftPackageReference "../../swift" */,
-				AA10000000000000000000A2 /* XCLocalSwiftPackageReference "../../apple" */,
+				AA10000000000000000000A2 /* XCLocalSwiftPackageReference "../../ios" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 8024B77B3007647900996FD8 /* Products */;
@@ -568,9 +568,9 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../../swift;
 		};
-		AA10000000000000000000A2 /* XCLocalSwiftPackageReference "../../apple" */ = {
+		AA10000000000000000000A2 /* XCLocalSwiftPackageReference "../../ios" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../../apple;
+			relativePath = ../../ios;
 		};
 /* End XCLocalSwiftPackageReference section */
 
@@ -587,22 +587,22 @@
 		};
 		AA20000000000000000000B3 /* AppleCore */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = AA10000000000000000000A2 /* XCLocalSwiftPackageReference "../../apple" */;
+			package = AA10000000000000000000A2 /* XCLocalSwiftPackageReference "../../ios" */;
 			productName = AppleCore;
 		};
 		AA20000000000000000000B4 /* AppleProximity */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = AA10000000000000000000A2 /* XCLocalSwiftPackageReference "../../apple" */;
+			package = AA10000000000000000000A2 /* XCLocalSwiftPackageReference "../../ios" */;
 			productName = AppleProximity;
 		};
 		AA20000000000000000000B5 /* AppleAttestation */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = AA10000000000000000000A2 /* XCLocalSwiftPackageReference "../../apple" */;
+			package = AA10000000000000000000A2 /* XCLocalSwiftPackageReference "../../ios" */;
 			productName = AppleAttestation;
 		};
 		AA20000000000000000000B6 /* AppleDcApi */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = AA10000000000000000000A2 /* XCLocalSwiftPackageReference "../../apple" */;
+			package = AA10000000000000000000A2 /* XCLocalSwiftPackageReference "../../ios" */;
 			productName = AppleDcApi;
 		};
 		AA20000000000000000000B7 /* MDoc */ = {
@@ -617,12 +617,12 @@
 		};
 		AAE0000000000000000000E1 /* AppleDcApi */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = AA10000000000000000000A2 /* XCLocalSwiftPackageReference "../../apple" */;
+			package = AA10000000000000000000A2 /* XCLocalSwiftPackageReference "../../ios" */;
 			productName = AppleDcApi;
 		};
 		AAE0000000000000000000E2 /* AppleCore */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = AA10000000000000000000A2 /* XCLocalSwiftPackageReference "../../apple" */;
+			package = AA10000000000000000000A2 /* XCLocalSwiftPackageReference "../../ios" */;
 			productName = AppleCore;
 		};
 		AAE0000000000000000000E3 /* Wallet */ = {
