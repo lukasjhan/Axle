@@ -116,4 +116,4 @@ open demo-ios/AxleWallet/AxleWallet.xcodeproj
 
 툴체인: Xcode 26+, iOS 26 배포 타깃, 실기기(Secure Enclave, App Attest, App Group 공유, DC API 익스텐션은
 하드웨어가 필요합니다). DC API doctype 기능은 Apple이 승인하는 특수 엔타이틀먼트입니다 —
-[DC API — iOS](./guides/dc-api-ios#1-entitlements--capabilities) 가이드를 참고하세요.
+[DC API — iOS](./guides/dc-api-ios) 가이드를 참고하세요.

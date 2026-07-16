@@ -55,7 +55,7 @@ SDK 기본값을 쓰고, `WalletLogger`는 앱이 제공합니다(`OSLogWalletLo
 - **`SecureEnclaveSecureArea(accessGroup:)`** → `SecureArea`. Secure Enclave 내의 하드웨어 바인딩
   **P-256** 키입니다(`SecKey`, 하나의 키가 ECDSA 서명과 ECDH 양쪽에 쓰임). Android 대비 한 가지 유의점:
   SE는 P-256만 지원하므로 `capabilities.algorithms = [.es256]`입니다. DC API 익스텐션이 같은 키로 서명할
-  수 있도록 **공유 keychain access group**을 넘기세요(생성 시 고정 — [DC API 가이드](./dc-api-ios#2-shared-key-custody-prerequisite) 참고).
+  수 있도록 **공유 keychain access group**을 넘기세요(생성 시 고정 — [DC API 가이드](./dc-api-ios) 참고).
 - **`KeychainStorageDriver(accessGroup:)`** → `StorageDriver`. 공유 access group 아래의 generic-password
   Keychain 항목입니다. Keychain에는 트랜잭션이 없으므로 트랜잭션 스코프는 에뮬레이트됩니다.
 - **`URLSessionTransport`** → `HttpTransport`. `URLSession` 기반으로, 요청별 리다이렉트 정책을 적용합니다.
@@ -185,4 +185,4 @@ let walletAttestation = WalletProviderAttestation(
 프로토콜을 구현하고, `WalletPorts`로 주입한 뒤, 테스트 킷의 공유 **계약 테스트 스위트**(`SecureAreaContract.verify(_:)`,
 `StorageDriverContract.verify(_:)`)로 자격을 검증하세요 — 소프트웨어 참조 어댑터에 대해 Linux CI에서 도는
 것과 동일한 검사입니다. [Ports](../reference/ports), [Architecture](../architecture), 그리고
-[Getting started](../getting-started#your-own-adapters)를 참고하세요.
+[Getting started](../getting-started)를 참고하세요.
