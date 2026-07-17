@@ -27,3 +27,11 @@ DerivedData/
 
 # iOS demo reader-auth WRPAC (local secret, mirrors android assets/reader_wrpac.json)
 demo-ios/AxleWallet/AxleWallet/reader_wrpac.json
+
+# iOS release / TestFlight — secrets & build artifacts, never committed (see demo-ios/RELEASE.md)
+AuthKey_*.p8
+*.xcarchive
+*.ipa
+demo-ios/**/ExportOptions.plist
+demo-ios/fastlane/.env*
+demo-ios/fastlane/report.xml
