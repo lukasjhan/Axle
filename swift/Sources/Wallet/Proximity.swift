@@ -29,6 +29,22 @@ public struct RequestedDocumentView {
     public let requestedElements: [String: [String]]
     /// Stored credentials that can answer this doctype; the holder chooses one when there is more than one.
     public let candidates: [CredentialId]
+    /// The subset of `requestedElements` the reader flagged `IntentToRetain` (ISO 18013-5 §8.3.2.1.2.1):
+    /// namespace -> element identifiers it intends to keep beyond the transaction. Everything else the reader
+    /// "shall not retain … including digests and signatures".
+    ///
+    /// The flag is per data element in the CDDL and it is the only thing distinguishing a look-at-me check from
+    /// a record the verifier files away, so it belongs on the consent screen next to the element it qualifies
+    /// (Annex E: "Consent applies to both selective disclosure and authorization for intent-to-retain").
+    public let retainedElements: [String: [String]]
+
+    public init(docType: String, requestedElements: [String: [String]], candidates: [CredentialId],
+                retainedElements: [String: [String]] = [:]) {
+        self.docType = docType
+        self.requestedElements = requestedElements
+        self.candidates = candidates
+        self.retainedElements = retainedElements
+    }
 }
 
 /// An org-iso-mdoc (ISO 18013-7) Digital Credentials API request, resolved for the consent screen: the requested

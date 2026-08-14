@@ -102,7 +102,8 @@ public struct ProximityService {
         for dr in deviceRequest.docRequests {
             var requestedElements: [String: [String]] = [:]
             for (ns, elems) in dr.requested { requestedElements[ns] = elems.map { $0.identifier } }
-            documents.append(RequestedDocumentView(docType: dr.docType, requestedElements: requestedElements, candidates: try await findMdocs(dr.docType)))
+            documents.append(RequestedDocumentView(docType: dr.docType, requestedElements: requestedElements,
+                                                  candidates: try await findMdocs(dr.docType), retainedElements: dr.retained()))
         }
         let reader = await verifyReader(deviceRequest, transcript)
         return ProximityRequest(documents: documents, satisfiable: documents.allSatisfy { !$0.candidates.isEmpty },
@@ -120,7 +121,8 @@ public struct ProximityService {
         for dr in deviceRequest.docRequests {
             var elements: [String: [String]] = [:]
             for (ns, els) in dr.requested { elements[ns] = els.map { $0.identifier } }
-            documents.append(RequestedDocumentView(docType: dr.docType, requestedElements: elements, candidates: try await findMdocs(dr.docType)))
+            documents.append(RequestedDocumentView(docType: dr.docType, requestedElements: elements,
+                                                  candidates: try await findMdocs(dr.docType), retainedElements: dr.retained()))
         }
         let reader = await verifyReader(deviceRequest, transcript)
         return DcApiMdocRequest(documents: documents, satisfiable: documents.allSatisfy { !$0.candidates.isEmpty }, reader: reader)

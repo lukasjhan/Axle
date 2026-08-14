@@ -10,6 +10,8 @@ import MDoc
 public struct ReaderResultDoc: Sendable {
     public let docType: String
     public let deviceAuthenticated: Bool
+    /// Why the document is unverified (issuer signature, digest, validity or holder binding), when known.
+    public let verificationError: String?
     public let claims: [Claim]
 
     public struct Claim: Sendable {
@@ -83,6 +85,7 @@ public enum MdocReaderRequests {
             return ReaderResultDoc(
                 docType: doc.docType,
                 deviceAuthenticated: doc.deviceAuthenticated,
+                verificationError: doc.verificationError,
                 claims: claims.sorted { $0.element < $1.element }
             )
         }

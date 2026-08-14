@@ -3,7 +3,14 @@ package com.hopae.eudi.wallet.proximity
 /** A parsed ISO 18013-5 NFC static handover: the DeviceEngagement + the BLE carrier (service UUID, mode). */
 class NfcEngagement(val deviceEngagement: ByteArray, val serviceUuid: ByteArray, val peripheralServerMode: Boolean)
 
-/** A parsed ISO 18013-5 NFC negotiated Handover Request: the reader's BLE carrier + optional ReaderEngagement. */
+/**
+ * A parsed ISO 18013-5 NFC negotiated Handover Request: the reader's BLE carrier + optional ReaderEngagement.
+ *
+ * [peripheralServerMode] is the carrier record's LE Role read from its **sender**, the mdoc reader — true means
+ * *the reader* is the BLE peripheral, which per §8.3.3.1.1.2 is the reader offering **mdoc central client mode**.
+ * It is not the mdoc's mode; on a Handover Select ([NfcEngagement.peripheralServerMode]) the same flag does mean
+ * the mdoc's mode, because there the mdoc is the sender.
+ */
 class NfcHandoverRequest(val serviceUuid: ByteArray, val peripheralServerMode: Boolean, val readerEngagement: ByteArray?)
 
 /**
@@ -52,6 +59,14 @@ object MdocNfcEngagement {
      * BLE carrier-configuration record, and optionally a `ReaderEngagement` auxiliary record.
      * [collisionResolution] is the 2-byte random the reader picks (NFC Forum CH); [serviceUuid] is the
      * 16-byte big-endian BLE service UUID.
+     *
+     * **[peripheralServerMode] means the opposite thing here than in [buildHandoverSelect].** The LE Role in a
+     * carrier-configuration record describes the *sender's* role, and §8.3.3.1.1.2 pins each message's meaning:
+     * a UUID in the Handover **Request** is "the mdoc reader supports **mdoc central client mode**", a UUID in
+     * the Handover **Select** is "the mdoc chooses **mdoc peripheral server mode**". So on this (reader) side
+     * `true` emits LE Role = Peripheral, i.e. *the reader* is the peripheral / GATT server and the mdoc is the
+     * central client — the mdoc-mode reading of the flag is inverted. [parseHandoverRequest] returns the same
+     * sender-relative value. Pass `true` unless the reader intends to be the BLE central.
      */
     fun buildHandoverRequest(
         serviceUuid: ByteArray,
