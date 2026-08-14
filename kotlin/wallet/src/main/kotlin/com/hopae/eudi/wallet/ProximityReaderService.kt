@@ -74,11 +74,14 @@ class ProximityReaderService internal constructor(
                         SessionEncryption.deriveEMacKey(eReader, deviceKey, transcriptBytes)
                     }
                 } else {
-                    parseUnverified(deviceResponse)
+                    // No issuer anchors configured — nothing was checked, which is not the same as a failed check.
+                    parseUnverified(deviceResponse, reason = "no issuer trust configured — nothing was verified")
                 }
             } catch (e: Throwable) {
-                // Untrusted issuer or holder-binding failure — still surface what the wallet disclosed, marked unverified.
-                parseUnverified(deviceResponse)
+                // Issuer signature, digest integrity, validity or holder binding failed. Still surface what the
+                // wallet disclosed, but carry *why* it is unverified — §9.3.1 failures are forgery signals, and a
+                // caller that cannot tell them from a missing trust anchor cannot act on either.
+                parseUnverified(deviceResponse, reason = e.message ?: e::class.simpleName ?: "verification failed")
             }
         } finally {
             // §9.1.1.4: signal termination, destroy session keys, close. Best-effort on the wire.
@@ -88,11 +91,11 @@ class ProximityReaderService internal constructor(
         }
     }
 
-    private fun parseUnverified(deviceResponse: ByteArray): List<VerifiedDocument> =
+    private fun parseUnverified(deviceResponse: ByteArray, reason: String): List<VerifiedDocument> =
         DeviceResponse.decode(deviceResponse).documents.map { doc ->
             val elements = doc.issuerSigned.nameSpaces.mapValues { (_, items) ->
                 items.associate { it.item.elementIdentifier to it.item.elementValue }
             }
-            VerifiedDocument(doc.docType, elements, deviceAuthenticated = false)
+            VerifiedDocument(doc.docType, elements, deviceAuthenticated = false, verificationError = reason)
         }
 }

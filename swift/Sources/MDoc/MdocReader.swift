@@ -3,12 +3,25 @@ import Foundation
 import WalletAPI
 
 /// A document (and its elements) the reader wants from a wallet.
+///
+/// `intentToRetain` is the default flag for every requested element; `retainedElements` overrides it per element
+/// (namespace -> identifiers), which is the granularity ISO 18013-5 §8.3.2.1.2.1 actually defines — the CDDL is
+/// `DataElementIdentifier => IntentToRetain`, so a reader that keeps the customer's name but only glances at
+/// their photo has to say so element by element.
 public struct RequestedDocument {
     public let docType: String
     public let elements: [(String, [String])]
     public let intentToRetain: Bool
-    public init(docType: String, elements: [(String, [String])], intentToRetain: Bool = false) {
+    public let retainedElements: [String: Set<String>]
+    public init(docType: String, elements: [(String, [String])], intentToRetain: Bool = false,
+                retainedElements: [String: Set<String>] = [:]) {
         self.docType = docType; self.elements = elements; self.intentToRetain = intentToRetain
+        self.retainedElements = retainedElements
+    }
+
+    /// The `IntentToRetain` value to emit for `elementId` in `namespace`.
+    func retains(_ namespace: String, _ elementId: String) -> Bool {
+        retainedElements[namespace]?.contains(elementId) ?? intentToRetain
     }
 }
 
@@ -28,11 +41,21 @@ public struct VerifiedDocument {
     public let elements: [String: [String: Cbor]]
     /// True once the `deviceSignature` bound to this SessionTranscript verified (holder binding).
     public let deviceAuthenticated: Bool
+    /// Why verification did not complete, when `deviceAuthenticated` is false — e.g. `"digest mismatch for
+    /// org.iso.18013.5.1/portrait"`, `"issuerAuth signature invalid"`, `"mdoc expired (validUntil=…)"`. Nil
+    /// when the document verified, or when the reader was configured without an issuer trust and never tried.
+    ///
+    /// "Untrusted issuer" and "forged response" are not the same finding: a caller that treats every
+    /// unverified document alike cannot tell a missing trust anchor from a tampered digest, so the reason
+    /// travels with the document rather than being swallowed where verification failed.
+    public let verificationError: String?
 
-    public init(docType: String, elements: [String: [String: Cbor]], deviceAuthenticated: Bool) {
+    public init(docType: String, elements: [String: [String: Cbor]], deviceAuthenticated: Bool,
+                verificationError: String? = nil) {
         self.docType = docType
         self.elements = elements
         self.deviceAuthenticated = deviceAuthenticated
+        self.verificationError = verificationError
     }
 }
 
@@ -53,8 +76,16 @@ public struct MdocReader {
     public func buildDeviceRequest(_ documents: [RequestedDocument], sessionTranscript: Cbor) async throws -> [UInt8] {
         var docRequests: [Cbor] = []
         for doc in documents {
+            // ISO 18013-5 §7.2.5: "an mDL reader shall not request more than two age_over_NN data elements".
+            // Scoped per document — the clause governs a data model's own age attestations, and a request for
+            // several doctypes that each carry one is not the ladder (16/18/21/25) the cap exists to stop.
+            let ageElements = doc.elements.reduce(0) { $0 + AgeAttestation.requestedCount($1.1) }
+            guard ageElements <= AgeAttestation.maxRequested else {
+                throw MdocError("ISO 18013-5 §7.2.5 allows at most \(AgeAttestation.maxRequested) age_over_NN " +
+                                "elements per request; \(doc.docType) asks for \(ageElements)")
+            }
             let nameSpaces = Cbor.map(doc.elements.map { ns, elems in
-                (.text(ns), .map(elems.map { (.text($0), .bool(doc.intentToRetain)) }))
+                (.text(ns), .map(elems.map { (.text($0), .bool(doc.retains(ns, $0))) }))
             })
             let itemsRequest = Cbor.map([(.text("docType"), .text(doc.docType)), (.text("nameSpaces"), nameSpaces)])
             let itemsRequestBytes = Cbor.tagged(tag24, .bytes(try CborEncoder.encode(itemsRequest)))

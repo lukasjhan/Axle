@@ -86,9 +86,18 @@ object NfcReader {
         NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK or NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS
 
     /**
-     * The Handover Request to offer if the mdoc uses negotiated handover. Our reader connects as BLE central
-     * to the carrier the mdoc names in its Handover Select, so this proposes a peripheral-server BLE carrier
-     * with a fresh UUID (the mdoc's own carrier is authoritative); the collision-resolution random is per tap.
+     * The Handover Request to offer if the mdoc uses negotiated handover.
+     *
+     * ISO 18013-5 §8.3.3.1.1.2 fixes what a UUID in each message means: "if the mdoc **reader** supports mdoc
+     * central client mode, it shall include a UUID in the Handover **Request**"; "if the **mdoc** chooses to use
+     * mdoc peripheral server mode, it shall include a UUID in the Handover **Select**". So the carrier offered
+     * here is by definition the *mdoc central client mode* one — the reader is the BLE peripheral / GATT server
+     * and the mdoc connects to it, which is why the LE Role in this record is Peripheral. `peripheralServerMode`
+     * below is that LE Role seen from the record's sender (this reader), **not** the mdoc's mode; the two are
+     * opposite on this side of the exchange (see [MdocNfcEngagement.buildHandoverRequest]).
+     *
+     * The mdoc may still answer with a Handover Select naming its own peripheral-server carrier; that Select is
+     * authoritative and the caller follows it. The collision-resolution random is fresh per tap.
      */
     private fun negotiatedHandoverRequest(): ByteArray {
         val uuid = ByteArray(16).also { u ->

@@ -16,13 +16,37 @@ public struct DocRequest {
     public let itemsRequestBytes: Cbor
     public let readerAuth: CoseSign1?
 
-    /// All requested element identifiers the given mdoc actually holds.
+    /// The requested elements flagged `IntentToRetain` (ISO 18013-5 §8.3.2.1.2.1): namespace -> element
+    /// identifiers the reader declared it will keep beyond the transaction. Namespaces with nothing retained
+    /// are omitted. Surfaced so a holder can put the declaration in front of the user before consenting.
+    public func retained() -> [String: [String]] {
+        var out: [String: [String]] = [:]
+        for (ns, elems) in requested {
+            let retained = elems.filter(\.intentToRetain).map(\.identifier)
+            if !retained.isEmpty { out[ns] = retained }
+        }
+        return out
+    }
+
+    /// The element identifiers to disclose from `issuerSigned` for this request: the requested elements the
+    /// mdoc actually holds, with `age_over_NN` resolved per `AgeAttestation` (ISO 18013-5 §7.2.5) rather than
+    /// matched literally — so `age_over_18` can be answered by a held `age_over_21: true`, and a held
+    /// `age_over_16: true` does *not* answer it.
     public func disclosable(_ issuerSigned: IssuerSigned) -> [String: [String]] {
         let held = issuerSigned.elements()
         var out: [String: [String]] = [:]
         for (ns, elems) in requested {
-            let heldNs = held.first { $0.0 == ns }?.1.map { $0.0 } ?? []
-            let disclosable = elems.map { $0.identifier }.filter { heldNs.contains($0) }
+            let heldNs = Dictionary(held.first { $0.0 == ns }?.1 ?? [], uniquingKeysWith: { first, _ in first })
+            var disclosable: [String] = []
+            for element in elems {
+                // §7.2.5 governs age attestations; everything else is a literal "do you hold this element".
+                // A malformed attestation (non-boolean value) falls back to the literal match.
+                let literal = heldNs[element.identifier] != nil ? element.identifier : nil
+                let resolved = AgeAttestation.age(of: element.identifier)
+                    .flatMap { AgeAttestation.resolve(requestedAge: $0, held: heldNs) } ?? literal
+                // two age_over_NN requests can resolve to the same attestation
+                if let resolved, !disclosable.contains(resolved) { disclosable.append(resolved) }
+            }
             if !disclosable.isEmpty { out[ns] = disclosable }
         }
         return out

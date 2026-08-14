@@ -104,14 +104,17 @@ public struct ProximityReaderService: Sendable {
                     try SessionEncryption.deriveEMacKey(ephemeral: eReader, deviceKey: deviceKey, sessionTranscriptBytes: transcriptBytes)
                 }
             }
-            return try parseUnverified(deviceResponse)
+            // No issuer anchors configured — nothing was checked, which is not the same as a failed check.
+            return try parseUnverified(deviceResponse, reason: "no issuer trust configured — nothing was verified")
         } catch {
-            // Untrusted issuer or holder-binding failure — still surface what the wallet disclosed, unverified.
-            return try parseUnverified(deviceResponse)
+            // Issuer signature, digest integrity, validity or holder binding failed. Still surface what the wallet
+            // disclosed, but carry *why* it is unverified — §9.3.1 failures are forgery signals, and a caller that
+            // cannot tell them from a missing trust anchor cannot act on either.
+            return try parseUnverified(deviceResponse, reason: "\(error)")
         }
     }
 
-    private func parseUnverified(_ deviceResponse: [UInt8]) throws -> [VerifiedDocument] {
+    private func parseUnverified(_ deviceResponse: [UInt8], reason: String) throws -> [VerifiedDocument] {
         try DeviceResponse.decode(deviceResponse).documents.map { doc in
             var elements: [String: [String: Cbor]] = [:]
             for (ns, items) in doc.issuerSigned.nameSpaces {
@@ -119,7 +122,8 @@ public struct ProximityReaderService: Sendable {
                 for e in items { m[e.item.elementIdentifier] = e.item.elementValue }
                 elements[ns] = m
             }
-            return VerifiedDocument(docType: doc.docType, elements: elements, deviceAuthenticated: false)
+            return VerifiedDocument(docType: doc.docType, elements: elements, deviceAuthenticated: false,
+                                    verificationError: reason)
         }
     }
 }

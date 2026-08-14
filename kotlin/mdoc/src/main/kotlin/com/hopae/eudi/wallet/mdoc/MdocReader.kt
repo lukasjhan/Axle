@@ -10,8 +10,24 @@ import com.hopae.eudi.wallet.spi.SigningAlgorithm
 import com.hopae.eudi.wallet.spi.coseAlgorithm
 import java.time.Instant
 
-/** A document (and its elements) the reader wants from a wallet. */
-class RequestedDocument(val docType: String, val elements: Map<String, List<String>>, val intentToRetain: Boolean = false)
+/**
+ * A document (and its elements) the reader wants from a wallet.
+ *
+ * [intentToRetain] is the default flag for every requested element; [retainedElements] overrides it per element
+ * (namespace -> identifiers), which is the granularity ISO 18013-5 §8.3.2.1.2.1 actually defines — the CDDL is
+ * `DataElementIdentifier => IntentToRetain`, so a reader that keeps the customer's name but only glances at
+ * their photo has to say so element by element.
+ */
+class RequestedDocument(
+    val docType: String,
+    val elements: Map<String, List<String>>,
+    val intentToRetain: Boolean = false,
+    val retainedElements: Map<String, Set<String>> = emptyMap(),
+) {
+    /** The `IntentToRetain` value to emit for [elementId] in [namespace]. */
+    internal fun retains(namespace: String, elementId: String): Boolean =
+        retainedElements[namespace]?.contains(elementId) ?: intentToRetain
+}
 
 /** Reader authentication material: signs `readerAuth` and presents the reader certificate chain. */
 class ReaderAuthSigner(val signer: CoseSigner, val x5chain: List<ByteArray>, val algorithm: SigningAlgorithm = SigningAlgorithm.ES256)
@@ -22,6 +38,16 @@ class VerifiedDocument(
     val elements: Map<String, Map<String, Cbor>>,
     /** True once the `deviceSignature` bound to this SessionTranscript verified (holder binding). */
     val deviceAuthenticated: Boolean,
+    /**
+     * Why verification did not complete, when [deviceAuthenticated] is false — e.g. `"digest mismatch for
+     * org.iso.18013.5.1/portrait"`, `"issuerAuth signature invalid"`, `"mdoc expired (validUntil=…)"`. Null
+     * when the document verified, or when the reader was configured without an issuer trust and never tried.
+     *
+     * "Untrusted issuer" and "forged response" are not the same finding: a caller that treats every
+     * unverified document alike cannot tell a missing trust anchor from a tampered digest, so the reason
+     * travels with the document rather than being swallowed where verification failed.
+     */
+    val verificationError: String? = null,
 )
 
 /**
@@ -37,8 +63,16 @@ class MdocReader(
 ) {
     suspend fun buildDeviceRequest(documents: List<RequestedDocument>, sessionTranscript: Cbor): ByteArray {
         val docRequests = documents.map { doc ->
+            // ISO 18013-5 §7.2.5: "an mDL reader shall not request more than two age_over_NN data elements".
+            // Scoped per document — the clause governs a data model's own age attestations, and a request for
+            // several doctypes that each carry one is not the ladder (16/18/21/25) the cap exists to stop.
+            val ageElements = doc.elements.values.sumOf { AgeAttestation.requestedCount(it) }
+            require(ageElements <= AgeAttestation.MAX_REQUESTED) {
+                "ISO 18013-5 §7.2.5 allows at most ${AgeAttestation.MAX_REQUESTED} age_over_NN elements per " +
+                    "request; ${doc.docType} asks for $ageElements"
+            }
             val nameSpaces = Cbor.CborMap(doc.elements.map { (ns, elems) ->
-                Cbor.Text(ns) to Cbor.CborMap(elems.map { Cbor.Text(it) to Cbor.Bool(doc.intentToRetain) })
+                Cbor.Text(ns) to Cbor.CborMap(elems.map { Cbor.Text(it) to Cbor.Bool(doc.retains(ns, it)) })
             })
             val itemsRequest = Cbor.CborMap(listOf(Cbor.Text("docType") to Cbor.Text(doc.docType), Cbor.Text("nameSpaces") to nameSpaces))
             val itemsRequestBytes = Cbor.Tagged(TAG_ENCODED_CBOR, Cbor.Bytes(CborEncoder.encode(itemsRequest)))

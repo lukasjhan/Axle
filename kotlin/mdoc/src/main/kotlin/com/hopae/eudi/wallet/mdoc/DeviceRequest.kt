@@ -18,11 +18,33 @@ class DocRequest(
     val itemsRequestBytes: Cbor,
     val readerAuth: CoseSign1?,
 ) {
-    /** All requested element identifiers the given mdoc actually holds. */
+    /**
+     * The requested elements flagged `IntentToRetain` (ISO 18013-5 §8.3.2.1.2.1): namespace -> element
+     * identifiers the reader declared it will keep beyond the transaction. Namespaces with nothing retained
+     * are omitted. Surfaced so a holder can put the declaration in front of the user before consenting.
+     */
+    fun retained(): Map<String, List<String>> =
+        requested.mapValues { (_, elems) -> elems.filter { it.intentToRetain }.map { it.identifier } }
+            .filterValues { it.isNotEmpty() }
+
+    /**
+     * The element identifiers to disclose from [issuerSigned] for this request: the requested elements the
+     * mdoc actually holds, with `age_over_NN` resolved per [AgeAttestation] (ISO 18013-5 §7.2.5) rather than
+     * matched literally — so `age_over_18` can be answered by a held `age_over_21: true`, and a held
+     * `age_over_16: true` does *not* answer it.
+     */
     fun disclosable(issuerSigned: IssuerSigned): Map<String, List<String>> {
         val held = issuerSigned.elements()
-        return requested.mapValues { (ns, elems) -> elems.map { it.identifier }.filter { held[ns]?.containsKey(it) == true } }
-            .filterValues { it.isNotEmpty() }
+        return requested.mapValues { (ns, elems) ->
+            val heldNs = held[ns].orEmpty()
+            elems.mapNotNull { element ->
+                val age = AgeAttestation.ageOf(element.identifier)
+                // §7.2.5 governs age attestations; everything else is a literal "do you hold this element".
+                // A malformed attestation (non-boolean value) falls back to the literal match.
+                if (age != null) AgeAttestation.resolve(age, heldNs) ?: element.identifier.takeIf { it in heldNs }
+                else element.identifier.takeIf { it in heldNs }
+            }.distinct() // two age_over_NN requests can resolve to the same attestation
+        }.filterValues { it.isNotEmpty() }
     }
 }
 

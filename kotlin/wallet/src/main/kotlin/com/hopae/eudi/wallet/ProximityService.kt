@@ -137,7 +137,12 @@ class ProximityService internal constructor(
         val deviceRequest = catchingProximity { DeviceRequest.decode(Base64Url.decode(deviceRequestBase64)) }
         val transcript = MdocSessionTranscript.dcApiIsoMdoc(encryptionInfoBase64, origin)
         val documents = deviceRequest.docRequests.map { dr ->
-            RequestedDocumentView(dr.docType, dr.requested.mapValues { (_, elems) -> elems.map { it.identifier } }, findMdocs(dr.docType))
+            RequestedDocumentView(
+                dr.docType,
+                dr.requested.mapValues { (_, elems) -> elems.map { it.identifier } },
+                findMdocs(dr.docType),
+                retainedElements = dr.retained(),
+            )
         }
         val reader = verifyReader(deviceRequest, transcript)
         return DcApiMdocRequest(documents, satisfiable = documents.all { it.candidates.isNotEmpty() }, reader)
@@ -205,6 +210,7 @@ class ProximityService internal constructor(
                 docType = dr.docType,
                 requestedElements = dr.requested.mapValues { (_, elems) -> elems.map { it.identifier } },
                 candidates = findMdocs(dr.docType),
+                retainedElements = dr.retained(),
             )
         }
         val reader = verifyReader(deviceRequest, transcript)
