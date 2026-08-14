@@ -86,6 +86,31 @@ class MdocNfcEngagementTest {
         assertNull(MdocNfcEngagement.parseHandover(hs, central))
     }
 
+    /** Offering both modes: a second, UUID-less carrier lets the mdoc answer as the peripheral if it prefers. */
+    @Test
+    fun handoverRequestCanOfferBothModes() {
+        val uuid = ByteArray(16) { (it + 1).toByte() }
+        val hr = MdocNfcEngagement.buildHandoverRequest(uuid, byteArrayOf(0x12, 0x34), alsoOfferMdocPeripheralServer = true)
+        val records = Ndef.decodeMessage(hr)
+
+        // The reader's own carrier is still the one either side can dial…
+        val parsed = assertNotNull(MdocNfcEngagement.parseHandoverRequest(hr))
+        assertContentEquals(uuid, parsed.serviceUuid)
+        assertTrue(parsed.peripheralServerMode)
+
+        // …and the offer for the mdoc to be the peripheral rides along under its own record id, repeating the UUID:
+        // that is the service the reader proposes the mdoc advertise, and carriers without one are not expected.
+        val carriers = records.filter { it.tnf == Ndef.TNF_MIME_MEDIA }
+        assertEquals(2, carriers.size)
+        assertContentEquals("1".toByteArray(), carriers[1].id)
+        assertContentEquals(byteArrayOf(0x02, 0x1C, 0x01, 0x11, 0x07) + uuid.reversedArray(), carriers[1].payload)
+
+        // Each carrier needs an Alternative Carrier record pointing at it, or the mdoc cannot select it.
+        val hrPayload = records.first { it.type.contentEquals("Hr".toByteArray()) }.payload
+        val acs = Ndef.decodeMessage(hrPayload.copyOfRange(1, hrPayload.size)).filter { it.type.contentEquals("ac".toByteArray()) }
+        assertContentEquals(listOf("0", "1"), acs.map { String(it.payload.copyOfRange(2, 2 + it.payload[1].toInt())) })
+    }
+
     /** The mdoc's own carrier stays authoritative whenever its Select carries one. */
     @Test
     fun selectCarrierOutranksTheRequestCarrier() {

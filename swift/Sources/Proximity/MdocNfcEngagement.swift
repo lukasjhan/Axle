@@ -87,20 +87,33 @@ public enum MdocNfcEngagement {
     /// `true` emits LE Role = Peripheral, i.e. *the reader* is the peripheral / GATT server and the mdoc is the
     /// central client — the mdoc-mode reading of the flag is inverted. `parseHandoverRequest` returns the same
     /// sender-relative value. Pass `true` unless the reader intends to be the BLE central.
+    ///
+    /// `alsoOfferMdocPeripheralServer` appends a second Alternative Carrier that puts the *mdoc* in the peripheral
+    /// role, so an mdoc that cannot do the mode named first still has one it can take. It repeats `serviceUuid`:
+    /// the reader proposes the service the mdoc will then advertise, and a carrier record with no UUID is not
+    /// something implementations expect (the Multipaz test app dereferences it and dies). Carriers are listed in
+    /// the reader's order of preference — mdocs seen so far take the first one they support rather than ranking
+    /// them — and either reply is read the same way: a Select naming a UUID chose its own carrier, one without it
+    /// took the carrier offered here.
     public static func buildHandoverRequest(
         serviceUuid: [UInt8],
         collisionResolution: [UInt8],
         peripheralServerMode: Bool = true,
-        readerEngagement: [UInt8]? = nil
+        readerEngagement: [UInt8]? = nil,
+        alsoOfferMdocPeripheralServer: Bool = false
     ) -> [UInt8] {
+        var carriers = [bleOobRecord(serviceUuid, peripheralServerMode, id: "0")]
+        if alsoOfferMdocPeripheralServer { carriers.append(bleOobRecord(serviceUuid, false, id: "1")) }
+        let auxRef = readerEngagement != nil ? "mdocreader" : nil
         let cr = NdefRecord(tnf: Ndef.tnfWellKnown, type: Array("cr".utf8), payload: collisionResolution)
+        let acs = carriers.indices.map { acRecord(auxRef, carrierRef: String($0)) }
         let hr = NdefRecord(tnf: Ndef.tnfWellKnown, type: Array("Hr".utf8),
-                            payload: [handoverVersion] + Ndef.encodeMessage([cr, acRecord(readerEngagement != nil ? "mdocreader" : nil)]))
+                            payload: [handoverVersion] + Ndef.encodeMessage([cr] + acs))
         var records = [hr]
         if let re = readerEngagement {
             records.append(NdefRecord(tnf: Ndef.tnfExternal, type: reType, id: Array("mdocreader".utf8), payload: re))
         }
-        records.append(bleOobRecord(serviceUuid, peripheralServerMode))
+        records.append(contentsOf: carriers)
         return Ndef.encodeMessage(records)
     }
 
@@ -123,39 +136,42 @@ public enum MdocNfcEngagement {
         return h.payload.first == handoverVersion
     }
 
-    /// An Alternative Carrier record: active carrier, data reference "0", optional single aux-data reference.
-    private static func acRecord(_ auxRef: String?) -> NdefRecord {
-        let head: [UInt8] = [0x01, 0x01, UInt8(ascii: "0")] // CPS=active, carrier-data-ref "0"
+    /// An Alternative Carrier record: active carrier, its carrier-data reference, optional single aux-data reference.
+    private static func acRecord(_ auxRef: String?, carrierRef: String = "0") -> NdefRecord {
+        let head: [UInt8] = [0x01, UInt8(carrierRef.utf8.count)] + Array(carrierRef.utf8) // CPS=active + carrier-data-ref
         let aux: [UInt8] = auxRef.map { [0x01, UInt8($0.utf8.count)] + Array($0.utf8) } ?? [0x00]
         return NdefRecord(tnf: Ndef.tnfWellKnown, type: Array("ac".utf8), payload: head + aux)
     }
 
-    /// BLE carrier-config record (id "0"): LE Role + the 128-bit service UUID written little-endian.
-    private static func bleOobRecord(_ serviceUuid: [UInt8], _ peripheralServerMode: Bool) -> NdefRecord {
+    /// BLE carrier-config record: LE Role + the 128-bit service UUID written little-endian, under record id `id`.
+    private static func bleOobRecord(_ serviceUuid: [UInt8], _ peripheralServerMode: Bool, id: String = "0") -> NdefRecord {
         let leRole: UInt8 = peripheralServerMode ? 0x00 : 0x01
-        let oobPayload: [UInt8] = [0x02, UInt8(adLeRole), leRole, 0x11, UInt8(adUuid128)] + serviceUuid.reversed()
-        return NdefRecord(tnf: Ndef.tnfMimeMedia, type: oobMime, id: [UInt8(ascii: "0")], payload: oobPayload)
+        return NdefRecord(tnf: Ndef.tnfMimeMedia, type: oobMime, id: Array(id.utf8),
+                          payload: [0x02, UInt8(adLeRole), leRole, 0x11, UInt8(adUuid128)] + serviceUuid.reversed())
     }
 
-    /// Reads the BLE service UUID (returned big-endian) and mode from the OOB carrier-config record.
+    /// Reads the BLE service UUID (returned big-endian) and mode from the carrier-config records. A message may
+    /// carry several — a reader offering both modes sends a UUID-less one alongside — so this returns the first
+    /// carrier that actually names a UUID, which is the only one either side can dial.
     private static func parseOob(_ records: [NdefRecord]) -> ([UInt8], Bool)? {
-        guard let oob = records.first(where: { $0.tnf == Ndef.tnfMimeMedia && $0.type == oobMime }) else { return nil }
-        var i = 0
-        var leRole = 0
-        var uuid: [UInt8]?
-        let p = oob.payload
-        while i < p.count {
-            let len = Int(p[i])
-            if len == 0 || i + 1 + len > p.count { break }
-            let data = Array(p[(i + 2)..<(i + 1 + len)])
-            switch Int(p[i + 1]) {
-            case adLeRole: if let first = data.first { leRole = Int(first) }
-            case adUuid128: if data.count == 16 { uuid = data.reversed() } // little-endian → canonical big-endian
-            default: break
+        for oob in records where oob.tnf == Ndef.tnfMimeMedia && oob.type == oobMime {
+            var i = 0
+            var leRole = 0
+            var uuid: [UInt8]?
+            let p = oob.payload
+            while i < p.count {
+                let len = Int(p[i])
+                if len == 0 || i + 1 + len > p.count { break }
+                let data = Array(p[(i + 2)..<(i + 1 + len)])
+                switch Int(p[i + 1]) {
+                case adLeRole: if let first = data.first { leRole = Int(first) }
+                case adUuid128: if data.count == 16 { uuid = data.reversed() } // little-endian → canonical big-endian
+                default: break
+                }
+                i += 1 + len
             }
-            i += 1 + len
+            if let serviceUuid = uuid { return (serviceUuid, leRole == 0x00) }
         }
-        guard let serviceUuid = uuid else { return nil }
-        return (serviceUuid, leRole == 0x00)
+        return nil
     }
 }

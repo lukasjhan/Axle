@@ -86,22 +86,34 @@ object MdocNfcEngagement {
      * `true` emits LE Role = Peripheral, i.e. *the reader* is the peripheral / GATT server and the mdoc is the
      * central client — the mdoc-mode reading of the flag is inverted. [parseHandoverRequest] returns the same
      * sender-relative value. Pass `true` unless the reader intends to be the BLE central.
+     *
+     * [alsoOfferMdocPeripheralServer] appends a second Alternative Carrier that puts the *mdoc* in the peripheral
+     * role, so an mdoc that cannot do the mode named first still has one it can take. It repeats [serviceUuid]:
+     * the reader proposes the service the mdoc will then advertise, and a carrier record with no UUID is not
+     * something implementations expect (the Multipaz test app dereferences it and dies). Carriers are listed in
+     * the reader's order of preference — mdocs seen so far take the first one they support rather than ranking
+     * them — and either reply is read the same way: a Select naming a UUID chose its own carrier, one without it
+     * took the carrier offered here.
      */
     fun buildHandoverRequest(
         serviceUuid: ByteArray,
         collisionResolution: ByteArray,
         peripheralServerMode: Boolean = true,
         readerEngagement: ByteArray? = null,
+        alsoOfferMdocPeripheralServer: Boolean = false,
     ): ByteArray {
+        val carriers = mutableListOf(bleOobRecord(serviceUuid, peripheralServerMode, id = "0"))
+        if (alsoOfferMdocPeripheralServer) carriers.add(bleOobRecord(serviceUuid, peripheralServerMode = false, id = "1"))
+        val auxRef = readerEngagement?.let { "mdocreader" }
         val cr = NdefRecord(Ndef.TNF_WELL_KNOWN, "cr".toByteArray(), payload = collisionResolution)
         val hr = NdefRecord(
             Ndef.TNF_WELL_KNOWN, "Hr".toByteArray(),
             payload = byteArrayOf(HANDOVER_VERSION.toByte()) +
-                Ndef.encodeMessage(listOf(cr, acRecord(readerEngagement?.let { "mdocreader" }))),
+                Ndef.encodeMessage(listOf(cr) + carriers.mapIndexed { i, _ -> acRecord(auxRef, carrierRef = i.toString()) }),
         )
         val records = mutableListOf(hr)
         readerEngagement?.let { records.add(NdefRecord(Ndef.TNF_EXTERNAL, RE_TYPE, "mdocreader".toByteArray(), it)) }
-        records.add(bleOobRecord(serviceUuid, peripheralServerMode))
+        records.addAll(carriers)
         return Ndef.encodeMessage(records)
     }
 
@@ -128,37 +140,42 @@ object MdocNfcEngagement {
         return h.payload.isNotEmpty() && h.payload[0].toInt() == HANDOVER_VERSION
     }
 
-    /** An Alternative Carrier record: active carrier, data reference "0", optional single aux-data reference. */
-    private fun acRecord(auxRef: String?): NdefRecord {
-        val head = byteArrayOf(0x01, 0x01, '0'.code.toByte()) // CPS=active, carrier-data-ref "0"
+    /** An Alternative Carrier record: active carrier, its carrier-data reference, optional single aux-data reference. */
+    private fun acRecord(auxRef: String?, carrierRef: String = "0"): NdefRecord {
+        val head = byteArrayOf(0x01, carrierRef.length.toByte()) + carrierRef.toByteArray() // CPS=active + carrier-data-ref
         val aux = auxRef?.let { byteArrayOf(0x01, it.length.toByte()) + it.toByteArray() } ?: byteArrayOf(0x00)
         return NdefRecord(Ndef.TNF_WELL_KNOWN, "ac".toByteArray(), payload = head + aux)
     }
 
-    /** BLE carrier-config record (id "0"): LE Role + the 128-bit service UUID written little-endian. */
-    private fun bleOobRecord(serviceUuid: ByteArray, peripheralServerMode: Boolean): NdefRecord {
-        val leRole = if (peripheralServerMode) 0x00 else 0x01
-        val oobPayload = byteArrayOf(0x02, AD_LE_ROLE.toByte(), leRole.toByte(), 0x11, AD_UUID128.toByte()) + serviceUuid.reversedArray()
-        return NdefRecord(Ndef.TNF_MIME_MEDIA, OOB_MIME, "0".toByteArray(), oobPayload)
-    }
+    /** BLE carrier-config record: LE Role + the 128-bit service UUID written little-endian, under record id [id]. */
+    private fun bleOobRecord(serviceUuid: ByteArray, peripheralServerMode: Boolean, id: String = "0"): NdefRecord =
+        NdefRecord(
+            Ndef.TNF_MIME_MEDIA, OOB_MIME, id.toByteArray(),
+            byteArrayOf(0x02, AD_LE_ROLE.toByte(), (if (peripheralServerMode) 0x00 else 0x01).toByte(), 0x11, AD_UUID128.toByte()) +
+                serviceUuid.reversedArray(),
+        )
 
-    /** Reads the BLE service UUID (returned big-endian) and mode from the OOB carrier-config record. */
-    private fun parseOob(records: List<NdefRecord>): Pair<ByteArray, Boolean>? {
-        val oob = records.firstOrNull { it.tnf == Ndef.TNF_MIME_MEDIA && it.type.contentEquals(OOB_MIME) } ?: return null
-        var i = 0
-        var leRole = 0
-        var uuid: ByteArray? = null
-        val p = oob.payload
-        while (i < p.size) {
-            val len = p[i].toInt() and 0xFF
-            if (len == 0 || i + 1 + len > p.size) break
-            val data = p.copyOfRange(i + 2, i + 1 + len)
-            when (p[i + 1].toInt() and 0xFF) {
-                AD_LE_ROLE -> if (data.isNotEmpty()) leRole = data[0].toInt() and 0xFF
-                AD_UUID128 -> if (data.size == 16) uuid = data.reversedArray() // little-endian → canonical big-endian
+    /**
+     * Reads the BLE service UUID (returned big-endian) and mode from the carrier-config records. A message may
+     * carry several — a reader offering both modes sends a UUID-less one alongside — so this returns the first
+     * carrier that actually names a UUID, which is the only one either side can dial.
+     */
+    private fun parseOob(records: List<NdefRecord>): Pair<ByteArray, Boolean>? =
+        records.filter { it.tnf == Ndef.TNF_MIME_MEDIA && it.type.contentEquals(OOB_MIME) }.firstNotNullOfOrNull { oob ->
+            var i = 0
+            var leRole = 0
+            var uuid: ByteArray? = null
+            val p = oob.payload
+            while (i < p.size) {
+                val len = p[i].toInt() and 0xFF
+                if (len == 0 || i + 1 + len > p.size) break
+                val data = p.copyOfRange(i + 2, i + 1 + len)
+                when (p[i + 1].toInt() and 0xFF) {
+                    AD_LE_ROLE -> if (data.isNotEmpty()) leRole = data[0].toInt() and 0xFF
+                    AD_UUID128 -> if (data.size == 16) uuid = data.reversedArray() // little-endian → canonical big-endian
+                }
+                i += 1 + len
             }
-            i += 1 + len
+            uuid?.let { it to (leRole == 0x00) }
         }
-        return (uuid ?: return null) to (leRole == 0x00)
-    }
 }

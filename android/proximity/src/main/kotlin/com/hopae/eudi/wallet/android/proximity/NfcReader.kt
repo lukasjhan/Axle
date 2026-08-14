@@ -96,8 +96,9 @@ object NfcReader {
      * below is that LE Role seen from the record's sender (this reader), **not** the mdoc's mode; the two are
      * opposite on this side of the exchange (see [MdocNfcEngagement.buildHandoverRequest]).
      *
-     * The mdoc may still answer with a Handover Select naming its own peripheral-server carrier; that Select is
-     * authoritative and the caller follows it. The collision-resolution random is fresh per tap.
+     * A second carrier goes out alongside it, offering the mdoc the peripheral role — an mdoc picks from what the
+     * reader put on the table, so naming only one mode is what keeps the other unreachable. Either way the mdoc's
+     * Handover Select is authoritative and the caller follows it. The collision-resolution random is fresh per tap.
      */
     private fun negotiatedHandoverRequest(): ByteArray {
         val uuid = ByteArray(16).also { u ->
@@ -111,6 +112,7 @@ object NfcReader {
             collisionResolution = collisionResolution,
             peripheralServerMode = true,
             readerEngagement = MdocNfcEngagement.readerEngagement(),
+            alsoOfferMdocPeripheralServer = true,
         )
     }
 }
