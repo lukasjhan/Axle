@@ -71,6 +71,31 @@ final class MdocNfcEngagementTests: XCTestCase {
         XCTAssertNil(MdocNfcEngagement.parseHandover(hs, handoverRequest: central))
     }
 
+    /// Offering both modes: a second, UUID-less carrier lets the mdoc answer as the peripheral if it prefers.
+    func testHandoverRequestCanOfferBothModes() {
+        let uuid = (1...16).map { UInt8($0) }
+        let hr = MdocNfcEngagement.buildHandoverRequest(serviceUuid: uuid, collisionResolution: [0x12, 0x34],
+                                                        alsoOfferMdocPeripheralServer: true)
+        let records = Ndef.decodeMessage(hr)
+
+        // The reader's own carrier is still the one either side can dial…
+        let parsed = MdocNfcEngagement.parseHandoverRequest(hr)
+        XCTAssertEqual(parsed?.serviceUuid, uuid)
+        XCTAssertEqual(parsed?.peripheralServerMode, true)
+
+        // …and the offer for the mdoc to be the peripheral rides along under its own record id, repeating the UUID:
+        // that is the service the reader proposes the mdoc advertise, and carriers without one are not expected.
+        let carriers = records.filter { $0.tnf == Ndef.tnfMimeMedia }
+        XCTAssertEqual(carriers.count, 2)
+        XCTAssertEqual(carriers.last?.id, Array("1".utf8))
+        XCTAssertEqual(carriers.last?.payload, [0x02, 0x1C, 0x01, 0x11, 0x07] + uuid.reversed())
+
+        // Each carrier needs an Alternative Carrier record pointing at it, or the mdoc cannot select it.
+        let hrPayload = records.first { $0.type == Array("Hr".utf8) }?.payload ?? []
+        let acs = Ndef.decodeMessage(Array(hrPayload.dropFirst())).filter { $0.type == Array("ac".utf8) }
+        XCTAssertEqual(acs.map { String(decoding: $0.payload[2..<(2 + Int($0.payload[1]))], as: UTF8.self) }, ["0", "1"])
+    }
+
     /// The mdoc's own carrier stays authoritative whenever its Select carries one.
     func testSelectCarrierOutranksTheRequestCarrier() {
         let mdocUuid = (1...16).map { UInt8($0) }
