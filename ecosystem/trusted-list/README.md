@@ -11,6 +11,9 @@ config/
   scheme.json          shared Scheme Operator info + siteUrl (distribution-point origin)
   lists/*.json         one file per Trusted List: loteType, scheme name, entities, cert refs
   certs/*.pem          public CA certificates listed in the lists (the trust anchors)
+  certs/mdl-iaca/      mirrored mDL IACA + ID-Pass roots — US states, Apple, Google   ┐
+  certs/ref-pid/       mirrored EU reference PID / Age Verification issuer CAs        ├ see below
+  certs/sandbox-test/  test + conformance roots — Multipaz, Animo, OIDF, Google       ┘
 tools/
   gen-so-keystore.mjs  mint the Scheme Operator signing key   → secrets/so-keystore.json
   gen-issuer-ca.mjs    mint an issuer/attestation CA           → config/certs + secrets/
@@ -45,6 +48,40 @@ git commit … && git push   # Vercel deploys the static site
    `entities[]` referencing the cert).
 3. `npm run gen:tl && npm run verify:tl`, commit, push. The portal picks it up from `lists.json` — no app
    code change.
+
+## Mirrored and test anchors
+
+`pid-issuers` and `attestation-issuers` each carry entities the scheme operates *and* entities it merely
+republishes. `serviceTypeIdentifier` tells them apart — consumers ignore it, so it costs nothing to be honest:
+
+| | `serviceTypeIdentifier` | What it is |
+| --- | --- | --- |
+| Scheme-certified | `http://uri.etsi.org/19602/SvcType/…` | A CA this sandbox operates and is answerable for |
+| **Mirrored — production** | `…/svctype/EAA/Issuance/{mDL,PhotoID}/mirrored-iaca` | A live issuing authority root (US state DMV IACAs, Apple, Google), observed from its public source |
+| **Mirrored — reference** | `…/svctype/PID/Issuance/mirrored-reference` | The EU reference implementation's PID and Age Verification issuer CAs |
+| **Sandbox / test** | `…/svctype/Test/Issuance/sandbox-only` | Test and conformance roots: OWF Multipaz, Animo, OpenID Foundation, Google staging |
+
+Together these let the sandbox verifier and the demo reader verify **real** credentials — from Apple Wallet,
+Google Wallet, the US state wallets, the EU reference wallet and `issuer.ageverification.dev` — instead of
+only the ones this sandbox issued itself. The whole ecosystem is a demo, so the test roots are listed for the
+same reason the production ones are.
+
+The Scheme Operator does not certify, audit or supervise any mirrored entity — it only republishes a
+certificate it observed, and cannot vouch for what that authority signs. In a production ecosystem the IACA
+roots belong in an ISO/IEC 18013-5 Annex C **VICAL** and the test roots belong nowhere near a live list; this
+is a sandbox shortcut, tracked as such.
+
+Adding or rotating one: drop the PEM under the matching `config/certs/` subdirectory, add a service to that
+authority's entity in the list JSON (`serviceName` carries CN + expiry, plus country or SKI where several
+certs share a CN), bump `loteSequenceNumber`, then regenerate, verify, commit and push as above. Consumers
+need no code change — `verifier-be` re-reads the list every 15 min, the demo wallet every 24 h.
+
+Superseded roots stay listed while credentials signed under them are still in the field; expired ones are
+dropped, as are leaf certificates — a trust anchor must be a CA.
+
+One caveat worth knowing: a third-party certificate can carry an extension `@peculiar/x509` cannot parse (the
+EU AV reference CA's issuerAltName is malformed — openssl renders it as raw bytes too). `build-lote.mjs`
+therefore treats the optional `x509Ski` as best-effort and warns rather than failing the build.
 
 ## Develop
 
